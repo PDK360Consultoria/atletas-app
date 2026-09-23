@@ -12,8 +12,9 @@ const { parseActivityFile } = require('./lib/gpx');
 const { analyzeActivity } = require('./lib/anthropic');
 const strava = require('./lib/strava');
 const { computeEvolution } = require('./lib/stats');
-const { buildContext, chatWithAssistant } = require('./lib/assistant');
+const { buildContext, streamChatWithAssistant } = require('./lib/assistant');
 const { fetchNearbyRaces } = require('./lib/races');
+const { buildMonthCalendar } = require('./lib/calendar');
 const views = require('./views');
 const { coachPage } = require('./views_coach');
 
@@ -139,15 +140,23 @@ try {
     const allActivities = db.prepare('SELECT * FROM activities WHERE user_id = ?').all(user.id);
     const evolution = computeEvolution(allActivities);
     const weekKm = evolution.weeks[evolution.weeks.length - 1].km;
-    return html(res, 200, views.dashboardPage({ user, nextRace, daysToRace, recentActivities, weekKm, evolution }));
+
+  let calYear = today.getFullYear(), calMonth = today.getMonth() + 1;
+    if (parsed.query.month && /^\d{4}-\d{2}$/.test(parsed.query.month)) {
+      const [y, mo] = parsed.query.month.split('-').map((n) => parseInt(n, 10));
+      if (y >= 2000 && mo >= 1 && mo <= 12) { calYear = y; calMonth = mo; }
+    }
+    const calendar = buildMonthCalendar(calYear, calMonth, allActivities, races);
+
+  return html(res, 200, views.dashboardPage({ user, nextRace, daysToRace, recentActivities, weekKm, evolution, calendar }));
   }
 
   // ---------- races ----------
   if (method === 'GET' && pathname === '/races') {
     if (!requireAuth()) return;
     const races = db.prepare('SELECT * FROM races WHERE user_id = ? ORDER BY race_date ASC').all(user.id);
-    const nearbyRaces = await fetchNearbyRaces(user.city);
-    return html(res, 200, views.racesPage(user, races, nearbyRaces));
+    const nearbyRaces = await fetchNearbyRaces(user.city, 60);
+    return html(res, 200, views.racesPage(user, races, nearbyRaces, parsed.query.added));
   }
   if (method === 'POST' && pathname === '/races') {
     if (!requireAuth()) return;
@@ -155,6 +164,17 @@ try {
     db.prepare('INSERT INTO races (user_id, name, race_date, distance_km, city, goal_time_sec) VALUES (?,?,?,?,?,?)')
     .run(user.id, fields.name, fields.race_date || null, fields.distance_km ? parseFloat(fields.distance_km) : null, fields.city || null, goalSec);
     return redirect(res, '/races');
+  }
+  if (method === 'POST' && pathname === '/races/quickadd') {
+    if (!requireAuth()) return;
+    if (fields.name && fields.race_date) {
+      const exists = db.prepare('SELECT id FROM races WHERE user_id = ? AND name = ? AND race_date = ?').get(user.id, fields.name, fields.race_date);
+      if (!exists) {
+        db.prepare('INSERT INTO races (user_id, name, race_date, distance_km, city) VALUES (?,?,?,?,?)')
+        .run(user.id, fields.name, fields.race_date, fields.distance_km ? parseFloat(fields.distance_km) : null, fields.city || null);
+      }
+    }
+    return redirect(res, '/races?added=1');
   }
   let m;
   if (method === 'POST' && (m = /^\/races\/(\d+)\/delete$/.exec(pathname))) {
@@ -389,19 +409,51 @@ try {
     }
   }
 
-  // ---------- assistant ----------
+  // ---------- coach chat ----------
   if (method === 'GET' && pathname === '/assistant') {
     if (!requireAuth()) return;
     const messages = db.prepare('SELECT * FROM chat_messages WHERE user_id = ? ORDER BY created_at ASC, id ASC').all(user.id);
-    return html(res, 200, views.assistantPage(user, messages, { aiEnabled: !!user.anthropic_api_key, error: parsed.query.error }));
+    return html(res, 200, views.coachChatPage(user, messages, { aiEnabled: !!user.anthropic_api_key, error: parsed.query.error }));
   }
-  if (method === 'POST' && pathname === '/assistant') {
+  if (method === 'POST' && pathname === '/assistant/clear') {
     if (!requireAuth()) return;
-    const text = (fields.message || '').trim();
-    if (!text) return redirect(res, '/assistant');
-    if (!user.anthropic_api_key) return redirect(res, '/assistant?error=missing_key');
+    db.prepare('DELETE FROM chat_messages WHERE user_id = ?').run(user.id);
+    return redirect(res, '/assistant');
+  }
+
+  // JSON history for the floating coach widget (lazy-loaded so it doesn't
+  // slow down every page load).
+  if (method === 'GET' && pathname === '/api/coach/history') {
+    if (!user) { res.writeHead(401); return res.end('{"error":"auth"}'); }
+    const messages = db.prepare('SELECT role, content, created_at FROM chat_messages WHERE user_id = ? ORDER BY created_at ASC, id ASC').all(user.id);
+    res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+    return res.end(JSON.stringify({ messages, aiEnabled: !!user.anthropic_api_key }));
+  }
+
+  // Streams the coach's reply as plain chunked text so the client can type
+  // it out live, word by word — used by both the full chat page and the
+  // floating widget. The body is raw JSON ({message}); the response body
+  // is the raw streamed answer text (no SSE framing needed client-side).
+  if (method === 'POST' && pathname === '/api/coach/send') {
+    if (!user) { res.writeHead(401); return res.end('auth'); }
+    let body = {};
+    try {
+      const raw = await readBody(req);
+      body = JSON.parse(raw.toString('utf8') || '{}');
+    } catch (e) { body = {}; }
+    const text = (body.message || '').trim();
+    if (!text) { res.writeHead(400); return res.end('empty'); }
+    if (!user.anthropic_api_key) { res.writeHead(412); return res.end('missing_key'); }
 
   db.prepare('INSERT INTO chat_messages (user_id, role, content) VALUES (?,?,?)').run(user.id, 'user', text);
+
+  res.writeHead(200, {
+    'content-type': 'text/plain; charset=utf-8',
+    'cache-control': 'no-cache',
+    'x-accel-buffering': 'no',
+  });
+
+  let full = '';
     try {
       const races = db.prepare('SELECT * FROM races WHERE user_id = ? ORDER BY race_date ASC').all(user.id);
       const activities = db.prepare('SELECT * FROM activities WHERE user_id = ? ORDER BY COALESCE(started_at, created_at) DESC').all(user.id);
@@ -409,17 +461,16 @@ try {
       const context = buildContext(user, races, activities, evolution);
       const priorRows = db.prepare('SELECT * FROM chat_messages WHERE user_id = ? ORDER BY created_at ASC, id ASC').all(user.id);
       const history = priorRows.slice(0, -1).slice(-20).map((m) => ({ role: m.role, content: m.content }));
-      const reply = await chatWithAssistant(user.anthropic_api_key, context, history, text);
-      db.prepare('INSERT INTO chat_messages (user_id, role, content) VALUES (?,?,?)').run(user.id, 'assistant', reply);
+      full = await streamChatWithAssistant(user.anthropic_api_key, context, history, text, (delta) => {
+        res.write(delta);
+      });
     } catch (e) {
-      db.prepare('INSERT INTO chat_messages (user_id, role, content) VALUES (?,?,?)').run(user.id, 'assistant', `Não consegui responder agora (${e.message}).`);
+      const msg = `Não consegui responder agora (${e.message}).`;
+      if (!full) res.write(msg);
+      full = full || msg;
     }
-    return redirect(res, '/assistant');
-  }
-  if (method === 'POST' && pathname === '/assistant/clear') {
-    if (!requireAuth()) return;
-    db.prepare('DELETE FROM chat_messages WHERE user_id = ?').run(user.id);
-    return redirect(res, '/assistant');
+    db.prepare('INSERT INTO chat_messages (user_id, role, content) VALUES (?,?,?)').run(user.id, 'assistant', full);
+    return res.end();
   }
 
   // ---------- live coach ----------
