@@ -12,6 +12,7 @@ const { parseActivityFile } = require('./lib/gpx');
 const { analyzeActivity } = require('./lib/anthropic');
 const strava = require('./lib/strava');
 const { computeEvolution } = require('./lib/stats');
+const { buildContext, chatWithAssistant } = require('./lib/assistant');
 const views = require('./views');
 const { coachPage } = require('./views_coach');
 
@@ -387,6 +388,39 @@ async function handle(req, res) {
 
       
 
+// ---------- assistant ----------
+    if (method === 'GET' && pathname === '/assistant') {
+      if (!requireAuth()) return;
+      const messages = db.prepare('SELECT * FROM chat_messages WHERE user_id = ? ORDER BY created_at ASC, id ASC').all(user.id);
+      return html(res, 200, views.assistantPage(user, messages, { aiEnabled: !!user.anthropic_api_key, error: parsed.query.error }));
+    }
+    if (method === 'POST' && pathname === '/assistant') {
+      if (!requireAuth()) return;
+      const text = (fields.message || '').trim();
+      if (!text) return redirect(res, '/assistant');
+      if (!user.anthropic_api_key) return redirect(res, '/assistant?error=missing_key');
+      
+      db.prepare('INSERT INTO chat_messages (user_id, role, content) VALUES (?,?,?)').run(user.id, 'user', text);
+      try {
+        const races = db.prepare('SELECT * FROM races WHERE user_id = ? ORDER BY race_date ASC').all(user.id);
+        const activities = db.prepare('SELECT * FROM activities WHERE user_id = ? ORDER BY COALESCE(started_at, created_at) DESC').all(user.id);
+        const evolution = computeEvolution(activities);
+        const context = buildContext(user, races, activities, evolution);
+        const priorRows = db.prepare('SELECT * FROM chat_messages WHERE user_id = ? ORDER BY created_at ASC, id ASC').all(user.id);
+        const history = priorRows.slice(0, -1).slice(-20).map((m) => ({ role: m.role, content: m.content }));
+        const reply = await chatWithAssistant(user.anthropic_api_key, context, history, text);
+        db.prepare('INSERT INTO chat_messages (user_id, role, content) VALUES (?,?,?)').run(user.id, 'assistant', reply);
+      } catch (e) {
+        db.prepare('INSERT INTO chat_messages (user_id, role, content) VALUES (?,?,?)').run(user.id, 'assistant', `Não consegui responder agora (${e.message}).`);
+      }
+      return redirect(res, '/assistant');
+    }
+    if (method === 'POST' && pathname === '/assistant/clear') {
+      if (!requireAuth()) return;
+      db.prepare('DELETE FROM chat_messages WHERE user_id = ?').run(user.id);
+      return redirect(res, '/assistant');
+    }
+    
     // ---------- live coach ----------
     if (method === 'GET' && pathname === '/coach') {
       if (!requireAuth()) return;
