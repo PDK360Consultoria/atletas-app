@@ -2,6 +2,7 @@ const http = require('node:http');
 const fs = require('node:fs');
 const path = require('node:path');
 const url = require('node:url');
+const crypto = require('node:crypto');
 
 const db = require('./db');
 const { hashPassword, verifyPassword, createSession, getUserFromToken, destroySession, parseCookies } = require('./lib/auth');
@@ -9,6 +10,7 @@ const { readBody, parseUrlEncoded, parseMultipart, serializeCookie } = require('
 const { parseClock, secToPace } = require('./lib/format');
 const { parseActivityFile } = require('./lib/gpx');
 const { analyzeActivity } = require('./lib/anthropic');
+const strava = require('./lib/strava');
 const views = require('./views');
 const { coachPage } = require('./views_coach');
 
@@ -28,6 +30,10 @@ function redirect(res, location, cookie) {
 }
 function notFound(res) {
   html(res, 404, '<h1>404</h1><p>Página não encontrada. <a href="/">Voltar</a></p>');
+}
+function baseUrl(req) {
+    const proto = req.headers['x-forwarded-proto'] || 'http';
+    return `${proto}://${req.headers.host}`;
 }
 
 function calcBlockActuals(laps, startKm, endKm) {
@@ -156,7 +162,7 @@ async function handle(req, res) {
     if (method === 'GET' && pathname === '/activities') {
       if (!requireAuth()) return;
       const activities = db.prepare('SELECT * FROM activities WHERE user_id = ? ORDER BY COALESCE(started_at, created_at) DESC').all(user.id);
-      return html(res, 200, views.activitiesPage(user, activities));
+      return html(res, 200, views.activitiesPage(user, activities, parsed.query.synced));
     }
     if (method === 'GET' && pathname === '/activities/new') {
       if (!requireAuth()) return;
@@ -281,7 +287,13 @@ async function handle(req, res) {
     // ---------- settings ----------
     if (method === 'GET' && pathname === '/settings') {
       if (!requireAuth()) return;
-      return html(res, 200, views.settingsPage(user, parsed.query.saved));
+      return html(res, 200, views.settingsPage(user, {
+          saved: parsed.query.saved,
+          stravaConnected: parsed.query.strava_connected,
+          stravaError: parsed.query.strava_error,
+          stravaDisconnected: parsed.query.strava_disconnected,
+          stravaConfigured: strava.isConfigured(),
+      }));
     }
     if (method === 'POST' && pathname === '/settings') {
       if (!requireAuth()) return;
@@ -298,6 +310,80 @@ async function handle(req, res) {
       }
       return redirect(res, '/settings?saved=1');
     }
+    // ---------- strava ----------
+    if (method === 'GET' && pathname === '/strava/connect') {
+        if (!requireAuth()) return;
+        if (!strava.isConfigured()) return html(res, 200, views.settingsPage(user, { stravaConfigured: false }));
+        const state = crypto.randomBytes(16).toString('hex');
+        const redirectUri = `${baseUrl(req)}/strava/callback`;
+        const authUrl = strava.getAuthorizeUrl(redirectUri, state);
+        const headers = {
+              location: authUrl,
+              'set-cookie': serializeCookie('strava_state', state, { maxAge: 600 }),
+        };
+        res.writeHead(302, headers);
+        return res.end();
+    }
+      if (method === 'GET' && pathname === '/strava/callback') {
+          if (!requireAuth()) return;
+          const { code, state, error } = parsed.query;
+          if (error) return redirect(res, '/settings?strava_error=1');
+          if (!state || state !== cookies.strava_state) return redirect(res, '/settings?strava_error=1');
+          try {
+                const redirectUri = `${baseUrl(req)}/strava/callback`;
+                const tok = await strava.exchangeCodeForToken(code, redirectUri);
+                db.prepare(`UPDATE users SET strava_athlete_id=?, strava_access_token=?, strava_refresh_token=?, strava_token_expires_at=?, strava_connected_at=datetime('now') WHERE id=?`)
+                  .run(String(tok.athlete && tok.athlete.id), tok.access_token, tok.refresh_token, tok.expires_at, user.id);
+          } catch (e) {
+                console.error(e);
+                return redirect(res, '/settings?strava_error=1', serializeCookie('strava_state', '', { expire: true }));
+          }
+          return redirect(res, '/settings?strava_connected=1', serializeCookie('strava_state', '', { expire: true }));
+      }
+      if (method === 'POST' && pathname === '/strava/disconnect') {
+          if (!requireAuth()) return;
+          db.prepare('UPDATE users SET strava_athlete_id=NULL, strava_access_token=NULL, strava_refresh_token=NULL, strava_token_expires_at=NULL, strava_connected_at=NULL WHERE id=?').run(user.id);
+          return redirect(res, '/settings?strava_disconnected=1');
+      }
+      if (method === 'POST' && pathname === '/strava/sync') {
+          if (!requireAuth()) return;
+          try {
+                const token = await strava.ensureValidToken(db, user);
+                if (!token) return redirect(res, '/settings?strava_error=1');
+                const items = await strava.fetchActivities(token);
+                const insert = db.prepare(`INSERT OR IGNORE INTO activities
+                      (user_id, title, workout_type, source, external_id, distance_km, duration_sec, avg_pace_sec, avg_hr, max_hr, elevation_gain_m, started_at)
+                            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`);
+                let count = 0;
+                for (const act of items) {
+                        if (act.sport_type !== 'Run' && act.type !== 'Run') continue;
+                        const distanceKm = act.distance ? Math.round((act.distance / 1000) * 100) / 100 : null;
+                        const durationSec = act.moving_time || null;
+                        const avgPace = durationSec && distanceKm ? Math.round(durationSec / distanceKm) : null;
+                        const info = insert.run(
+                                  user.id,
+                                  act.name || 'Corrida',
+                                  null,
+                                  'strava',
+                                  String(act.id),
+                                  distanceKm,
+                                  durationSec,
+                                  avgPace,
+                                  act.average_heartrate ? Math.round(act.average_heartrate) : null,
+                                  act.max_heartrate ? Math.round(act.max_heartrate) : null,
+                                  act.total_elevation_gain || null,
+                                  act.start_date_local || null
+                                );
+                        if (info.changes > 0) count += 1;
+                }
+                return redirect(res, `/activities?synced=${count}`);
+          } catch (e) {
+                console.error(e);
+                return redirect(res, '/settings?strava_error=1');
+          }
+      }
+
+      
 
     // ---------- live coach ----------
     if (method === 'GET' && pathname === '/coach') {
