@@ -45,7 +45,7 @@ card.style.transform = 'perspective(700px) rotateX(' + (y * -3) + 'deg) rotateY(
 card.addEventListener('mouseleave', function(){ card.style.transform = ''; });
 });
 }
-} catch (e) {}
+} catch (e) { console.error('[dbg]', e); }
 })();
 </script>`;
 
@@ -523,7 +523,7 @@ renderFrame();
 requestAnimationFrame(animate);
 }
 requestAnimationFrame(animate);
-} catch (e) {}
+} catch (e) { console.error('[dbg]', e); }
 })();
 </script>`;
 
@@ -569,7 +569,7 @@ document.querySelectorAll('.cal-cell[data-href]').forEach(function(el){
 el.style.cursor = 'pointer';
 el.addEventListener('click', function(){ window.location.href = el.getAttribute('data-href'); });
 });
-} catch (e) {}
+} catch (e) { console.error('[dbg]', e); }
 })();
 </script>`;
 }
@@ -980,7 +980,7 @@ ${messages.length ? `<form method="POST" action="/assistant/clear" style="margin
   emptyText: 'Nenhuma mensagem ainda. Pergunte algo como "como está minha evolução esse mês?" ou "quantos km faltam pra bater minha meta na maratona?".',
   });
   }
-  } catch (e) {}
+  } catch (e) { console.error('[dbg]', e); }
   })();
   </script>`;
   return layout({ title: 'Coach de Corrida', user, body, active: 'assistant', hideCoachWidget: true, bodyEnd: chatInit });
