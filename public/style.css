@@ -65,3 +65,8 @@ button.danger{background:var(--red); color:#fff;}
 .post .when{font-size:12px; color:var(--ink-faint); font-family:'IBM Plex Mono',monospace;}
 .post .body{margin-top:8px; font-size:15px; line-height:1.5;}
 .ai-box{background:var(--surface2); border-left:3px solid var(--accent); border-radius:8px; padding:16px 18px; margin-top:14px; font-size:14px; line-height:1.6; white-space:pre-wrap;}
+.chat{display:flex; flex-direction:column; gap:12px;}
+.chat-msg{max-width:82%; padding:12px 16px; border-radius:14px; font-size:14px; line-height:1.55; white-space:pre-wrap;}
+.chat-msg.assistant{background:var(--surface2); border-left:3px solid var(--accent); align-self:flex-start; border-radius:4px 14px 14px 14px;}
+.chat-msg.user{background:var(--accent); color:#15171A; align-self:flex-end; border-radius:14px 4px 14px 14px;}
+.chat-empty{color:var(--ink-faint); font-size:14px; margin:0;}
