@@ -146,17 +146,19 @@ function racesPage(user, races) {
   return layout({ title: 'Provas', user, body, active: 'races' });
 }
 
-function activitiesPage(user, activities) {
+function activitiesPage(user, activities, synced) {
   const body = `
 <h1>Treinos</h1>
 <p class="lede">Histórico de treinos, com splits e análise.</p>
-<div class="row" style="margin-bottom:18px;">
+${synced !== undefined ? `<div class="ok">${synced == 0 ? 'Tudo já estava sincronizado — nenhum treino novo.' : `${synced} treino(s) novo(s) importado(s) do Strava.`}</div>` : ''}
+<div class="row" style="margin-bottom:18px; gap:10px; display:flex; flex-wrap:wrap;">
   <a class="btn" href="/activities/new">+ Registrar treino</a>
+  ${user.strava_refresh_token ? `<form method="POST" action="/strava/sync"><button class="ghost" type="submit">↻ Sincronizar com Strava</button></form>` : ''}
 </div>
 <div class="card">
   ${activities.length ? activities.map(a => `
     <a class="list-item" href="/activities/${a.id}">
-      <div><div class="t">${esc(a.title)}</div><div class="d">${fmtDate(a.started_at || a.created_at)} · ${a.distance_km ? a.distance_km + 'km' : '—'} ${a.duration_sec ? '· ' + fmtClock(a.duration_sec) : ''} ${a.avg_pace_sec ? '· ' + secToPace(a.avg_pace_sec) + '/km' : ''}</div></div>
+      <div><div class="t">${esc(a.title)}${a.source === 'strava' ? ' <span class="muted mono" style="font-size:11px;">· strava</span>' : ''}</div><div class="d">${fmtDate(a.started_at || a.created_at)} · ${a.distance_km ? a.distance_km + 'km' : '—'} ${a.duration_sec ? '· ' + fmtClock(a.duration_sec) : ''} ${a.avg_pace_sec ? '· ' + secToPace(a.avg_pace_sec) + '/km' : ''}</div></div>
       <span class="pill"><span class="dot"></span>${esc(a.workout_type || 'treino')}</span>
     </a>`).join('') : `<p class="muted" style="margin:0;">Nenhum treino registrado ainda.</p>`}
 </div>
@@ -317,12 +319,33 @@ function feedPage(user, posts) {
   return layout({ title: 'Feed', user, body, active: 'feed' });
 }
 
-function settingsPage(user, saved) {
+function settingsPage(user, flags) {
+    flags = flags || {};
+    const stravaConnected = !!user.strava_refresh_token;
   const body = `
 <h1>Configurações</h1>
-${saved ? `<div class="ok">Salvo com sucesso.</div>` : ''}
+${flags.saved ? `<div class="ok">Salvo com sucesso.</div>` : ''}
+${flags.stravaConnected ? `<div class="ok">Strava conectado! Vá em <a href="/activities">Treinos</a> e clique em "Sincronizar com Strava" para importar seu histórico.</div>` : ''}
+${flags.stravaDisconnected ? `<div class="ok">Strava desconectado.</div>` : ''}
+${flags.stravaError ? `<div class="err">Não consegui conectar com o Strava agora. Tente de novo.</div>` : ''}
 
 <div class="card">
+  <h2>Strava</h2>
+    ${!flags.stravaConfigured && !stravaConnected ? `
+        <p class="muted" style="margin:0;">Integração com Strava ainda não configurada no servidor (faltam as credenciais do app Strava).</p>
+          ` : stravaConnected ? `
+              <p class="muted">Conectado — o Garmin sincroniza com o Strava automaticamente, e o Atletas importa suas corridas de lá.</p>
+                  <div class="row" style="gap:10px; display:flex;">
+                        <a class="ghost btn" href="/activities">Ir para Treinos e sincronizar</a>
+                              <form method="POST" action="/strava/disconnect"><button class="danger" type="submit">Desconectar</button></form>
+                                  </div>
+                                    ` : `
+                                        <p class="muted">Conecte sua conta do Strava para importar seus treinos automaticamente (inclusive os que já sincronizam do Garmin para o Strava).</p>
+                                            <a class="btn" href="/strava/connect">Conectar com Strava</a>
+                                              `}
+                                              </div>
+                                              
+                                              <div class="card">
   <h2>Perfil</h2>
   <form method="POST" action="/settings">
     <div class="grid cols-2">
