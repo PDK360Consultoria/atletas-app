@@ -11,6 +11,7 @@ const { parseClock, secToPace } = require('./lib/format');
 const { parseActivityFile } = require('./lib/gpx');
 const { analyzeActivity } = require('./lib/anthropic');
 const strava = require('./lib/strava');
+const { computeEvolution } = require('./lib/stats');
 const views = require('./views');
 const { coachPage } = require('./views_coach');
 
@@ -133,9 +134,10 @@ async function handle(req, res) {
         ? Math.max(0, Math.ceil((new Date(nextRace.race_date) - today) / 86400000))
         : null;
       const recentActivities = db.prepare('SELECT * FROM activities WHERE user_id = ? ORDER BY COALESCE(started_at, created_at) DESC LIMIT 8').all(user.id);
-      const weekAgo = new Date(Date.now() - 7 * 86400000).toISOString();
-      const weekRow = db.prepare('SELECT COALESCE(SUM(distance_km),0) as km FROM activities WHERE user_id = ? AND COALESCE(started_at, created_at) >= ?').get(user.id, weekAgo);
-      return html(res, 200, views.dashboardPage({ user, nextRace, daysToRace, recentActivities, weekKm: weekRow.km || 0 }));
+      const allActivities = db.prepare('SELECT * FROM activities WHERE user_id = ?').all(user.id);
+            const evolution = computeEvolution(allActivities);
+            const weekKm = evolution.weeks[evolution.weeks.length - 1].km;
+            return html(res, 200, views.dashboardPage({ user, nextRace, daysToRace, recentActivities, weekKm, evolution }));
     }
 
     // ---------- races ----------
