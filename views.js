@@ -9,6 +9,7 @@ function layout({ title, user, body, active }) {
           <a class="link ${active === 'races' ? 'active' : ''}" href="/races">Provas</a>
           <a class="link ${active === 'activities' ? 'active' : ''}" href="/activities">Treinos</a>
           <a class="link ${active === 'feed' ? 'active' : ''}" href="/feed">Feed</a>
+          <a class="link ${active === 'assistant' ? 'active' : ''}" href="/assistant">IA</a>
           <a class="link ${active === 'coach' ? 'active' : ''}" href="/coach">Coach ao vivo</a>
           <a class="link ${active === 'settings' ? 'active' : ''}" href="/settings">Config</a>
           <a class="link" href="/logout">Sair</a>
@@ -392,7 +393,31 @@ ${flags.stravaError ? `<div class="err">Não consegui conectar com o Strava agor
   return layout({ title: 'Config', user, body, active: 'settings' });
 }
 
+function assistantPage(user, messages, flags) {
+  flags = flags || {};
+  const body = `
+  <h1>Assistente</h1>
+  <p class="lede">Converse sobre seus treinos, sua evolução e sua prova — o assistente responde com base nos seus dados reais.</p>
+  ${flags.error === 'missing_key' ? `<div class="err">Cadastre sua chave da API da Anthropic em <a href="/settings">Config</a> para conversar com o assistente.</div>` : ''}
+
+  <div class="card chat">
+  ${messages.length ? messages.map(m => `<div class="chat-msg ${esc(m.role)}">${esc(m.content)}</div>`).join('') : `<p class="chat-empty">Nenhuma mensagem ainda. Pergunte algo como "como está minha evolução esse mês?" ou "quantos km faltam pra bater minha meta na maratona?".</p>`}
+  </div>
+
+  ${flags.aiEnabled ? `
+  <form method="POST" action="/assistant">
+  <textarea name="message" placeholder="Pergunte algo sobre seus treinos..." required></textarea>
+  <div class="row" style="margin-top:12px; justify-content:space-between;">
+  <button type="submit">Enviar</button>
+  ${messages.length ? `<button class="ghost danger" type="submit" formaction="/assistant/clear" formnovalidate onclick="return confirm('Limpar toda a conversa?')">Limpar conversa</button>` : ''}
+  </div>
+  </form>
+  ` : `<div class="card"><p class="muted" style="margin:0;">Cadastre sua chave da API da Anthropic em <a href="/settings">Config</a> para habilitar o assistente.</p></div>`}
+  `;
+  return layout({ title: 'Assistente', user, body, active: 'assistant' });
+}
+
 module.exports = {
   layout, loginPage, signupPage, dashboardPage, racesPage,
-  activitiesPage, activityNewPage, activityDetailPage, feedPage, settingsPage,
+  activitiesPage, activityNewPage, activityDetailPage, feedPage, settingsPage, assistantPage,
 };
