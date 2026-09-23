@@ -336,7 +336,7 @@ function signupPage(error) {
   `);
 }
 
-const HERO_EXTRA_HEAD = `<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/128/three.min.js" defer></script>`;
+const HERO_EXTRA_HEAD = `<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js" defer></script>`;
 
 const HERO_SCRIPT = `<script defer>
 (function(){
