@@ -358,7 +358,7 @@ badge.style.transform = 'perspective(600px) rotateX(' + (py * 10) + 'deg) rotate
 hero.addEventListener('mouseleave', function(){ badge.style.transform = ''; });
 }
 
-if (!canvas || !hero || typeof THREE === 'undefined') return;
+console.log('[dbg-hero]', 'canvas=', !!canvas, 'hero=', !!hero, 'THREE=', typeof THREE, 'readyState=', document.readyState); console.log('[dbg-hero]', 'canvas=', !!canvas, 'hero=', !!hero, 'THREE=', typeof THREE, 'readyState=', document.readyState); if (!canvas || !hero || typeof THREE === 'undefined') return;
 
 var dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
 var accent = dark ? 0xffc24e : 0xffae5c;
