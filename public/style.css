@@ -70,3 +70,50 @@ button.danger{background:var(--red); color:#fff;}
 .chat-msg.assistant{background:var(--surface2); border-left:3px solid var(--accent); align-self:flex-start; border-radius:4px 14px 14px 14px;}
 .chat-msg.user{background:var(--accent); color:#15171A; align-self:flex-end; border-radius:14px 4px 14px 14px;}
 .chat-empty{color:var(--ink-faint); font-size:14px; margin:0;}
+
+
+/* ---------- micro-interactions ---------- */
+.card{transition: opacity .6s cubic-bezier(.2,.7,.3,1), transform .35s cubic-bezier(.2,.7,.3,1), box-shadow .35s ease, border-color .35s ease;}
+.card:hover{box-shadow:0 16px 40px -14px rgba(0,0,0,0.22); border-color:rgba(181,80,30,0.35);}
+
+/* ---------- hero ---------- */
+.hero{position:relative; border-radius:26px; overflow:hidden; margin:24px 0 20px; min-height:280px; display:flex; align-items:flex-end; background:linear-gradient(160deg, #1c1006 0%, #2a1608 55%, #150c05 100%);}
+.hero canvas{position:absolute; inset:0; width:100%; height:100%; display:block;}
+.hero-overlay{position:absolute; inset:0; background:linear-gradient(180deg, rgba(10,8,6,0.05) 0%, rgba(10,8,6,0.78) 100%); pointer-events:none;}
+.hero-content{position:relative; z-index:2; padding:32px 30px 28px; color:#fff; width:100%;}
+.hero-eyebrow{font-family:'IBM Plex Mono',monospace; font-size:11px; text-transform:uppercase; letter-spacing:0.12em; color:#FFC24E; margin-bottom:10px;}
+.hero-content h1{margin:0 0 6px; color:#fff; text-shadow:0 2px 20px rgba(0,0,0,0.4);}
+.hero-content .lede{color:rgba(255,255,255,0.8); margin:0;}
+@media (max-width:640px){ .hero{min-height:220px;} .hero-content{padding:22px 18px 20px;} }
+
+/* ---------- collapsible trainings ---------- */
+details.trn{border-bottom:1px solid var(--line); padding:4px 0;}
+details.trn:last-child{border-bottom:none;}
+details.trn summary{display:flex; align-items:center; justify-content:space-between; gap:12px; padding:12px 2px; cursor:pointer; list-style:none;}
+details.trn summary::-webkit-details-marker{display:none;}
+details.trn summary::before{content:'+'; font-family:'IBM Plex Mono',monospace; font-weight:700; color:var(--accent); font-size:16px; margin-right:10px; width:16px; text-align:center; display:inline-block;}
+details.trn[open] summary::before{content:'–';}
+.trn-main{display:flex; flex-direction:column; gap:2px;}
+.trn-main .t{font-weight:700; font-size:15px;}
+.trn-main .d{font-size:12px; color:var(--ink-faint); font-family:'IBM Plex Mono',monospace;}
+.trn-body{padding:2px 2px 16px 26px; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px;}
+.trn-stats{display:flex; gap:18px; flex-wrap:wrap; font-family:'IBM Plex Mono',monospace; font-size:13px; color:var(--ink-dim);}
+.trn-stats strong{color:var(--ink); font-size:15px; margin-right:3px;}
+
+/* ---------- ai analysis (rich) ---------- */
+.ai-analysis{background:var(--surface2); border-left:3px solid var(--accent); border-radius:8px; padding:18px 22px; margin-top:14px; font-size:14px; line-height:1.65;}
+.ai-analysis h3{font-family:'Archivo',sans-serif; font-weight:800; font-size:13px; text-transform:uppercase; letter-spacing:0.04em; color:var(--accent); margin:18px 0 8px;}
+.ai-analysis h3:first-child{margin-top:0;}
+.ai-analysis p{margin:0 0 10px;}
+.ai-analysis ul{margin:0 0 10px; padding-left:20px;}
+.ai-analysis li{margin-bottom:6px;}
+.ai-analysis strong{color:var(--ink); font-weight:700;}
+
+/* ---------- nearby races ---------- */
+.race-ext{display:flex; justify-content:space-between; align-items:center; gap:14px; padding:14px 0; border-bottom:1px solid var(--line);}
+.race-ext:last-child{border-bottom:none;}
+.race-ext .t{font-weight:700; font-size:15px;}
+.race-ext .d{font-size:12px; color:var(--ink-faint); font-family:'IBM Plex Mono',monospace; margin-top:3px;}
+.race-dists{display:flex; gap:5px; flex-wrap:wrap; justify-content:flex-end;}
+.race-dist{font-family:'IBM Plex Mono',monospace; font-size:11px; background:var(--surface); border:1px solid var(--line); border-radius:999px; padding:4px 9px; color:var(--ink-dim);}
+.race-source{font-size:11px; color:var(--ink-faint); margin-top:10px;}
