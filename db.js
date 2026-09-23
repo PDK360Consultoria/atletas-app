@@ -105,4 +105,15 @@ ensureColumn('users', 'strava_connected_at', 'strava_connected_at TEXT');
 ensureColumn('activities', 'external_id', 'external_id TEXT');
 db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_activities_external ON activities(user_id, external_id) WHERE external_id IS NOT NULL`);
 
+db.exec(`
+CREATE TABLE IF NOT EXISTS chat_messages (
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+user_id INTEGER NOT NULL,
+role TEXT NOT NULL,
+content TEXT NOT NULL,
+created_at TEXT NOT NULL DEFAULT (datetime('now')),
+FOREIGN KEY(user_id) REFERENCES users(id)
+);
+`);
+
 module.exports = db;
