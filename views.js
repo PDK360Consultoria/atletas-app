@@ -49,7 +49,204 @@ card.addEventListener('mouseleave', function(){ card.style.transform = ''; });
 })();
 </script>`;
 
-function layout({ title, user, body, active, extraHead, bodyEnd }) {
+// ---------- Coach de Corrida — shared chat client ----------
+// One mount() function used by both the full chat page (/assistant) and the
+// floating widget present on every other screen, so the streaming/typing
+// logic only lives in one place. Plain text streaming (no SSE parsing
+// needed client-side): the server relays chunked plain text and this just
+// appends each piece as it arrives, giving the "digitando" effect.
+const COACH_CHAT_SCRIPT = `<script defer>
+(function(){
+function bubble(container, role){
+var el = document.createElement('div');
+el.className = 'chat-msg ' + role;
+container.appendChild(el);
+return el;
+}
+function typingDots(){
+var t = document.createElement('span');
+t.className = 'chat-typing';
+t.innerHTML = '<span></span><span></span><span></span>';
+return t;
+}
+function mount(opts){
+var msgsEl = document.getElementById(opts.msgsId);
+var formEl = document.getElementById(opts.formId);
+var inputEl = document.getElementById(opts.inputId);
+if (!msgsEl || !formEl || !inputEl) return;
+var aiEnabled = !!opts.aiEnabled;
+var sending = false;
+
+function scrollBottom(){ msgsEl.scrollTop = msgsEl.scrollHeight; }
+
+function clearEmpty(){
+var e = msgsEl.querySelector('.chat-empty');
+if (e) e.remove();
+}
+
+function renderInitial(messages){
+msgsEl.innerHTML = '';
+if (!messages || !messages.length) {
+var empty = document.createElement('p');
+empty.className = 'chat-empty';
+empty.textContent = opts.emptyText || 'Nenhuma mensagem ainda. Pergunte algo sobre seus treinos.';
+msgsEl.appendChild(empty);
+return;
+}
+messages.forEach(function(m){
+var b = bubble(msgsEl, m.role === 'user' ? 'user' : 'assistant');
+b.textContent = m.content;
+});
+scrollBottom();
+}
+
+async function send(text){
+if (sending || !text.trim()) return;
+if (!aiEnabled) {
+clearEmpty();
+var warn = bubble(msgsEl, 'assistant');
+warn.textContent = 'Cadastre sua chave da API da Anthropic em Config para conversar com o coach.';
+scrollBottom();
+return;
+}
+sending = true;
+clearEmpty();
+var userB = bubble(msgsEl, 'user');
+userB.textContent = text;
+var replyB = bubble(msgsEl, 'assistant');
+replyB.appendChild(typingDots());
+scrollBottom();
+
+var submitBtn = formEl.querySelector('button[type=submit]');
+if (submitBtn) submitBtn.disabled = true;
+
+try {
+var res = await fetch('/api/coach/send', {
+method: 'POST',
+headers: { 'content-type': 'application/json' },
+body: JSON.stringify({ message: text }),
+});
+if (!res.ok || !res.body) {
+replyB.textContent = res.status === 412
+? 'Cadastre sua chave da API da Anthropic em Config para conversar com o coach.'
+: 'Não consegui responder agora. Tenta de novo?';
+} else {
+var reader = res.body.getReader();
+var decoder = new TextDecoder();
+var started = false;
+while (true) {
+var chunk = await reader.read();
+if (chunk.done) break;
+var piece = decoder.decode(chunk.value, { stream: true });
+if (!piece) continue;
+if (!started) { replyB.textContent = ''; started = true; }
+replyB.textContent += piece;
+scrollBottom();
+}
+if (!started) replyB.textContent = '(sem resposta)';
+}
+} catch (e) {
+replyB.textContent = 'Não consegui responder agora. Verifique sua conexão.';
+} finally {
+sending = false;
+if (submitBtn) submitBtn.disabled = false;
+scrollBottom();
+}
+}
+
+formEl.addEventListener('submit', function(e){
+e.preventDefault();
+var text = inputEl.value;
+if (!text.trim()) return;
+inputEl.value = '';
+inputEl.style.height = 'auto';
+send(text);
+});
+inputEl.addEventListener('keydown', function(e){
+if (e.key === 'Enter' && !e.shiftKey) {
+e.preventDefault();
+if (formEl.requestSubmit) formEl.requestSubmit();
+else formEl.dispatchEvent(new Event('submit', { cancelable: true }));
+}
+});
+inputEl.addEventListener('input', function(){
+inputEl.style.height = 'auto';
+inputEl.style.height = Math.min(inputEl.scrollHeight, 140) + 'px';
+});
+
+if (opts.initialMessages) {
+renderInitial(opts.initialMessages);
+} else if (opts.historyUrl) {
+fetch(opts.historyUrl).then(function(r){ return r.ok ? r.json() : { messages: [] }; }).then(function(data){
+aiEnabled = !!data.aiEnabled;
+renderInitial(data.messages || []);
+}).catch(function(){ renderInitial([]); });
+} else {
+renderInitial([]);
+}
+}
+window.CoachChat = { mount: mount };
+})();
+</script>`;
+
+function coachWidgetHtml(user) {
+  return `<div class="coach-widget" id="coachWidget">
+  <button class="coach-launcher" id="coachLauncher" type="button" aria-label="Abrir Coach de Corrida">
+  <span class="coach-launcher-glow"></span>
+  ${icon('shoe', 'launcher')}
+  </button>
+  <div class="coach-panel" id="coachPanel">
+  <div class="coach-panel-head">
+  <div class="coach-panel-title"><span class="h-icon">${icon('heart', 'cw')}</span>Coach de Corrida</div>
+  <button class="coach-panel-close" id="coachPanelClose" type="button" aria-label="Fechar">&times;</button>
+  </div>
+  <div class="coach-panel-body" id="coachWidgetMsgs"></div>
+  <form class="coach-panel-form" id="coachWidgetForm">
+  <textarea id="coachWidgetInput" placeholder="Fale com o coach..." rows="1"></textarea>
+  <button type="submit" aria-label="Enviar">${icon('flame', 'send')}</button>
+  </form>
+  </div>
+  </div>`;
+}
+
+const COACH_WIDGET_SCRIPT = `<script defer>
+(function(){
+function ready(fn){ if (document.readyState !== 'loading') fn(); else document.addEventListener('DOMContentLoaded', fn); }
+ready(function(){
+var widget = document.getElementById('coachWidget');
+if (!widget) return;
+var launcher = document.getElementById('coachLauncher');
+var panel = document.getElementById('coachPanel');
+var closeBtn = document.getElementById('coachPanelClose');
+var mounted = false;
+
+function open(){
+panel.classList.add('open');
+launcher.classList.add('active');
+if (!mounted && window.CoachChat) {
+mounted = true;
+window.CoachChat.mount({
+msgsId: 'coachWidgetMsgs',
+formId: 'coachWidgetForm',
+inputId: 'coachWidgetInput',
+historyUrl: '/api/coach/history',
+emptyText: 'Fala comigo! Pergunte sobre seus treinos, sua evolução ou sua próxima prova.',
+});
+}
+}
+function close(){
+panel.classList.remove('open');
+launcher.classList.remove('active');
+}
+launcher.addEventListener('click', function(){
+if (panel.classList.contains('open')) close(); else open();
+});
+closeBtn.addEventListener('click', close);
+});
+})();
+</script>`;
+
+function layout({ title, user, body, active, extraHead, bodyEnd, hideCoachWidget }) {
   const nav = user
   ? `<nav class="nav">
   <a class="brand" href="/">Atletas</a>
@@ -58,13 +255,15 @@ function layout({ title, user, body, active, extraHead, bodyEnd }) {
   <a class="link ${active === 'races' ? 'active' : ''}" href="/races">Provas</a>
   <a class="link ${active === 'activities' ? 'active' : ''}" href="/activities">Treinos</a>
   <a class="link ${active === 'feed' ? 'active' : ''}" href="/feed">Feed</a>
-  <a class="link ${active === 'assistant' ? 'active' : ''}" href="/assistant">IA</a>
+  <a class="link ${active === 'assistant' ? 'active' : ''}" href="/assistant">Coach IA</a>
   <a class="link ${active === 'coach' ? 'active' : ''}" href="/coach">Coach ao vivo</a>
   <a class="link ${active === 'settings' ? 'active' : ''}" href="/settings">Config</a>
   <a class="link" href="/logout">Sair</a>
   </div>
   </nav>`
     : `<nav class="nav"><a class="brand" href="/">Atletas</a></nav>`;
+
+const showWidget = !!user && !hideCoachWidget;
 
 return `<!DOCTYPE html>
 <html lang="pt-BR">
@@ -80,7 +279,10 @@ ${nav}
 <div class="wrap">
 ${body}
 </div>
+${showWidget ? coachWidgetHtml(user) : ''}
 ${MICRO_INTERACTIONS_SCRIPT}
+${COACH_CHAT_SCRIPT}
+${showWidget ? COACH_WIDGET_SCRIPT : ''}
 ${bodyEnd || ''}
 </body>
 </html>`;
@@ -170,28 +372,29 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
 
 var scene = new THREE.Scene();
 var camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
-camera.position.set(0, 0, 9);
+camera.position.set(0, 0.4, 9);
 
-scene.add(new THREE.AmbientLight(0xffffff, 0.7));
-var dir = new THREE.DirectionalLight(0xffffff, 0.9);
-dir.position.set(4, 5, 6);
+scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+var dir = new THREE.DirectionalLight(0xffffff, 1.0);
+dir.position.set(4, 6, 6);
 scene.add(dir);
+var rim = new THREE.PointLight(accent2, 1.1, 14);
+rim.position.set(-3, 2, 3);
+scene.add(rim);
 
+// Ambient rotating "ground" ring + particle field — kept low, beneath
+// the runner's feet, so it reads as an abstract data-plane the figure
+// is running across rather than the main subject.
 var group = new THREE.Group();
+group.position.y = -1.55;
 scene.add(group);
 
 var ring = new THREE.Mesh(
-new THREE.TorusGeometry(3.1, 0.055, 16, 120),
+new THREE.TorusGeometry(3.1, 0.04, 16, 120),
 new THREE.MeshStandardMaterial({ color: accent, roughness: 0.35, metalness: 0.5 })
 );
-ring.rotation.x = Math.PI / 2.3;
+ring.rotation.x = Math.PI / 2.15;
 group.add(ring);
-
-var core = new THREE.Mesh(
-new THREE.IcosahedronGeometry(1.15, 1),
-new THREE.MeshStandardMaterial({ color: accent2, roughness: 0.2, metalness: 0.3, wireframe: true })
-);
-group.add(core);
 
 var dotCount = 60;
 var dotGeo = new THREE.BufferGeometry();
@@ -200,14 +403,68 @@ for (var i = 0; i < dotCount; i++) {
 var angle = (i / dotCount) * Math.PI * 2;
 var radius = 3.1 + (Math.random() - 0.5) * 0.5;
 positions[i * 3] = Math.cos(angle) * radius;
-positions[i * 3 + 1] = (Math.random() - 0.5) * 1.2;
+positions[i * 3 + 1] = (Math.random() - 0.5) * 0.4;
 positions[i * 3 + 2] = Math.sin(angle) * radius;
 }
 dotGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
 var dots = new THREE.Points(dotGeo, new THREE.PointsMaterial({ color: accent, size: 0.06 }));
 group.add(dots);
 
-group.rotation.x = 0.35;
+// ---- procedural runner: a stylized glowing humanoid built from simple
+// primitives (cylinders + spheres), animated with basic forward
+// kinematics — hip/knee/shoulder pivot groups driven by phase-offset
+// sine waves — rather than a loaded rigged model, since no external 3D
+// assets can be hosted in this environment.
+var runner = new THREE.Group();
+runner.position.set(0, -0.35, 0.8);
+scene.add(runner);
+
+var bodyMat = new THREE.MeshStandardMaterial({ color: accent2, emissive: accent2, emissiveIntensity: 0.55, roughness: 0.3, metalness: 0.5 });
+var limbMat = new THREE.MeshStandardMaterial({ color: accent, emissive: accent, emissiveIntensity: 0.4, roughness: 0.35, metalness: 0.4 });
+
+var hipY = 1.15, upperLen = 0.62, lowerLen = 0.6, shoulderY = 2.05, upperArmLen = 0.46, lowerArmLen = 0.42;
+
+var torsoGroup = new THREE.Group();
+torsoGroup.position.set(0, hipY, 0);
+torsoGroup.rotation.x = -0.14;
+runner.add(torsoGroup);
+
+var torso = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.21, shoulderY - hipY, 12), bodyMat);
+torso.position.y = (shoulderY - hipY) / 2;
+torsoGroup.add(torso);
+
+var head = new THREE.Mesh(new THREE.SphereGeometry(0.17, 16, 16), bodyMat);
+head.position.y = (shoulderY - hipY) + 0.26;
+torsoGroup.add(head);
+
+function makeLimb(parent, side, atY, upLen, lowLen, mat, thick) {
+var pivot = new THREE.Group();
+pivot.position.set(side * 0.19, atY, 0);
+parent.add(pivot);
+
+var upper = new THREE.Mesh(new THREE.CylinderGeometry(thick, thick * 0.82, upLen, 10), mat);
+upper.position.y = -upLen / 2;
+pivot.add(upper);
+
+var knee = new THREE.Group();
+knee.position.y = -upLen;
+pivot.add(knee);
+
+var lower = new THREE.Mesh(new THREE.CylinderGeometry(thick * 0.78, thick * 0.55, lowLen, 10), mat);
+lower.position.y = -lowLen / 2;
+knee.add(lower);
+
+var tip = new THREE.Mesh(new THREE.SphereGeometry(thick * 0.7, 8, 8), mat);
+tip.position.y = -lowLen;
+knee.add(tip);
+
+return { pivot: pivot, joint: knee };
+}
+
+var legR = makeLimb(runner, 1, hipY, upperLen, lowerLen, limbMat, 0.095);
+var legL = makeLimb(runner, -1, hipY, upperLen, lowerLen, limbMat, 0.095);
+var armR = makeLimb(torsoGroup, 1, shoulderY - hipY - 0.06, upperArmLen, lowerArmLen, limbMat, 0.065);
+var armL = makeLimb(torsoGroup, -1, shoulderY - hipY - 0.06, upperArmLen, lowerArmLen, limbMat, 0.065);
 
 var mouseX = 0, mouseY = 0;
 hero.addEventListener('mousemove', function(e){
@@ -234,21 +491,90 @@ function renderFrame() { renderer.render(scene, camera); }
 
 if (reduced) { renderFrame(); return; }
 
-function animate() {
-group.rotation.y += 0.0035;
-ring.rotation.z += 0.002;
-camera.position.x += (mouseX * 1.4 - camera.position.x) * 0.04;
-camera.position.y += (-mouseY * 0.8 - camera.position.y) * 0.04;
-camera.lookAt(0, 0, 0);
+var gaitPhase = 0;
+var lastT = null;
+
+function swing(limb, offset, hipAmp, kneeBase, kneeAmp, leadIn) {
+limb.pivot.rotation.x = hipAmp * Math.sin(gaitPhase + offset);
+limb.joint.rotation.x = kneeBase + kneeAmp * Math.max(0, Math.sin(gaitPhase + offset + leadIn));
+}
+
+function animate(t) {
+var dt = lastT == null ? 0.016 : Math.min(0.05, (t - lastT) / 1000);
+lastT = t;
+
+group.rotation.y += dt * 0.25;
+ring.rotation.z += dt * 0.12;
+
+gaitPhase += dt * 6.4;
+swing(legR, 0, 0.85, 0.5, 0.75, 0.9);
+swing(legL, Math.PI, 0.85, 0.5, 0.75, 0.9);
+swing(armR, Math.PI, 0.6, 0.45, 0.55, 0.9);
+swing(armL, 0, 0.6, 0.45, 0.55, 0.9);
+
+runner.position.y = -0.35 + Math.abs(Math.sin(gaitPhase)) * 0.07;
+runner.rotation.y = Math.sin(gaitPhase * 0.15) * 0.08;
+
+camera.position.x += (mouseX * 1.3 - camera.position.x) * 0.04;
+camera.position.y += (0.4 - mouseY * 0.6 - camera.position.y) * 0.04;
+camera.lookAt(0, 0.9, 0);
+
 renderFrame();
 requestAnimationFrame(animate);
 }
-animate();
+requestAnimationFrame(animate);
 } catch (e) {}
 })();
 </script>`;
 
-function dashboardPage({ user, nextRace, daysToRace, recentActivities, weekKm, evolution }) {
+function calendarHtml(calendar) {
+  if (!calendar) return '';
+  const rows = calendar.weeks.map(week => `
+  <div class="cal-row">
+  ${week.map(cell => {
+    if (!cell) return `<div class="cal-cell empty"></div>`;
+    const dots = [
+      cell.trainings.length ? `<span class="cal-dot dot-training" title="${cell.trainings.length} treino(s)"></span>` : '',
+      cell.races.length ? `<span class="cal-dot dot-race" title="${esc(cell.races.map(r => r.name).join(', '))}"></span>` : '',
+      ].join('');
+    const href = cell.trainings.length === 1 ? ` data-href="/activities/${cell.trainings[0].id}"` : '';
+    return `<div class="cal-cell${cell.isToday ? ' today' : ''}"${href}><span class="cal-daynum">${cell.day}</span><span class="cal-dots">${dots}</span></div>`;
+  }).join('')}
+  </div>`).join('');
+
+return `
+<div class="card cal-card">
+<div class="cal-head">
+<h2 style="margin:0;"><span class="h-icon">${icon('calendar', 'cal')}</span>${esc(calendar.monthLabel)}</h2>
+<div class="cal-nav">
+<a class="btn ghost" href="/?month=${calendar.prev}">←</a>
+<a class="btn ghost" href="/?month=${calendar.next}">→</a>
+</div>
+</div>
+<div class="cal-grid">
+<div class="cal-row dow">
+${calendar.weekdayNames.map(d => `<div class="cal-cell dow">${d}</div>`).join('')}
+</div>
+${rows}
+</div>
+<div class="cal-legend">
+<span><span class="cal-dot dot-training"></span>Treino</span>
+<span><span class="cal-dot dot-race"></span>Prova</span>
+</div>
+</div>
+<script>
+(function(){
+try {
+document.querySelectorAll('.cal-cell[data-href]').forEach(function(el){
+el.style.cursor = 'pointer';
+el.addEventListener('click', function(){ window.location.href = el.getAttribute('data-href'); });
+});
+} catch (e) {}
+})();
+</script>`;
+}
+
+function dashboardPage({ user, nextRace, daysToRace, recentActivities, weekKm, evolution, calendar }) {
   const evoHtml = evolution && evolution.totalCount ? `
   <div class="card">
   <h2><span class="h-icon">${icon('mountain', 'evo')}</span>Evolução</h2>
@@ -294,6 +620,8 @@ ${nextRace ? `<div class="card">
 </div>
 </div>` : `<div class="card"><p class="muted" style="margin:0;">Nenhuma prova cadastrada ainda. <a href="/races">Adicionar prova →</a></p></div>`}
 
+${calendarHtml(calendar)}
+
 ${evoHtml}
 
 <div class="card">
@@ -321,26 +649,42 @@ ${a.avg_hr ? `<span><strong>${a.avg_hr}</strong>bpm</span>` : ''}
   return layout({ title: 'Perfil', user, body, active: 'home', extraHead: HERO_EXTRA_HEAD, bodyEnd: HERO_SCRIPT });
 }
 
-function racesPage(user, races, nearbyRaces) {
+function racesPage(user, races, nearbyRaces, added) {
   nearbyRaces = nearbyRaces || [];
-  const nearbyHtml = nearbyRaces.length ? nearbyRaces.map((r, i) => `
-  <div class="race-ext">
-  <div class="race-ext-main">
-  <span class="h-icon race-ext-icon">${icon('pin', 'nr' + i)}</span>
-  <div>
-  <div class="t">${esc(r.name)}</div>
-  <div class="d">${fmtDate(r.date)}${r.city ? ' · ' + esc(r.city) : ''}</div>
-  </div>
-  </div>
-  <div class="race-dists">
-  ${r.distances && r.distances.length ? r.distances.map(d => `<span class="race-dist">${Number.isInteger(d) ? d : d.toFixed(1)}km</span>`).join('') : ''}
-  </div>
-  </div>`).join('') : `<p class="muted" style="margin:0;">Nenhuma corrida encontrada perto de ${user.city ? esc(user.city) : 'você'} no momento.</p>`;
+  const existingKeys = new Set(races.map(r => `${r.name}|${r.race_date}`));
+  const nearbyHtml = nearbyRaces.length ? nearbyRaces.map((r, i) => {
+    const longest = r.distances && r.distances.length ? r.distances[r.distances.length - 1] : '';
+    const isoDate = r.date ? String(r.date).slice(0, 10) : '';
+    const already = existingKeys.has(`${r.name}|${isoDate}`);
+    return `
+    <div class="race-ext">
+    <div class="race-ext-main">
+    <span class="h-icon race-ext-icon">${icon('pin', 'nr' + i)}</span>
+    <div>
+    <div class="t">${esc(r.name)}</div>
+    <div class="d">${fmtDate(r.date)}${r.city ? ' · ' + esc(r.city) : ''}</div>
+    </div>
+    </div>
+    <div class="race-ext-actions">
+    <div class="race-dists">
+    ${r.distances && r.distances.length ? r.distances.map(d => `<span class="race-dist">${Number.isInteger(d) ? d : d.toFixed(1)}km</span>`).join('') : ''}
+    </div>
+    ${already ? `<span class="pill">No calendário</span>` : `
+    <form method="POST" action="/races/quickadd">
+    <input type="hidden" name="name" value="${esc(r.name)}">
+    <input type="hidden" name="race_date" value="${esc(isoDate)}">
+    <input type="hidden" name="distance_km" value="${longest || ''}">
+    <input type="hidden" name="city" value="${esc(r.city || '')}">
+    <button class="ghost" type="submit">+ Agenda</button>
+    </form>`}
+    </div>
+    </div>`;
+  }).join('') : `<p class="muted" style="margin:0;">Nenhuma corrida encontrada perto de ${user.city ? esc(user.city) : 'você'} no momento.</p>`;
 
 const body = `
 <h1>Provas</h1>
 <p class="lede">Suas provas passadas e futuras.</p>
-
+${added ? `<div class="ok">Prova adicionada ao seu calendário.</div>` : ''}
 <div class="card">
 <h2><span class="h-icon">${icon('calendar', 'nova')}</span>Nova prova</h2>
 <form method="POST" action="/races">
@@ -367,9 +711,9 @@ ${races.length ? races.map(r => `
 </div>
 
 <div class="card">
-<h2><span class="h-icon">${icon('pin', 'near')}</span>Próximas corridas${user.city ? ' em ' + esc(user.city) : ' perto de você'}</h2>
+<h2><span class="h-icon">${icon('pin', 'near')}</span>Provas nos próximos 60 dias${user.city ? ' em ' + esc(user.city) : ' perto de você'}</h2>
 ${nearbyHtml}
-<p class="race-source">Dados via Corrida Perfeita.${!user.city ? ' Defina sua cidade em <a href="/settings">Config</a> para ver corridas perto de você.' : ''}</p>
+<p class="race-source">Dados via Corrida Perfeita.${!user.city ? ' Defina sua cidade em <a href="/settings">Config</a> para ver corridas perto de você.' : ' Clique em "+ Agenda" para incluir uma prova no seu calendário pessoal.'}</p>
 </div>
 `;
   return layout({ title: 'Provas', user, body, active: 'races' });
@@ -603,31 +947,46 @@ function settingsPage(user, flags) {
   return layout({ title: 'Config', user, body, active: 'settings' });
 }
 
-function assistantPage(user, messages, flags) {
+function coachChatPage(user, messages, flags) {
   flags = flags || {};
-  const body = `
-  <h1>Assistente</h1>
-  <p class="lede">Converse sobre seus treinos, sua evolução e sua prova — o assistente responde com base nos seus dados reais.</p>
-  ${flags.error === 'missing_key' ? `<div class="err">Cadastre sua chave da API da Anthropic em <a href="/settings">Config</a> para conversar com o assistente.</div>` : ''}
+  const initialJson = JSON.stringify(messages.map(m => ({ role: m.role, content: m.content }))).replace(/</g, '\\u003c');
 
-  <div class="card chat">
-  ${messages.length ? messages.map(m => `<div class="chat-msg ${esc(m.role)}">${esc(m.content)}</div>`).join('') : `<p class="chat-empty">Nenhuma mensagem ainda. Pergunte algo como "como está minha evolução esse mês?" ou "quantos km faltam pra bater minha meta na maratona?".</p>`}
-  </div>
+const body = `
+<h1>Coach de Corrida</h1>
+<p class="lede">Converse com o seu treinador pessoal — ele responde com base nos seus treinos, sua evolução e sua prova, em tempo real.</p>
+${flags.error === 'missing_key' ? `<div class="err">Cadastre sua chave da API da Anthropic em <a href="/settings">Config</a> para conversar com o coach.</div>` : ''}
 
-  ${flags.aiEnabled ? `
-  <form method="POST" action="/assistant">
-  <textarea name="message" placeholder="Pergunte algo sobre seus treinos..." required></textarea>
-  <div class="row" style="margin-top:12px; justify-content:space-between;">
-  <button type="submit">Enviar</button>
-  ${messages.length ? `<button class="ghost danger" type="submit" formaction="/assistant/clear" formnovalidate onclick="return confirm('Limpar toda a conversa?')">Limpar conversa</button>` : ''}
-  </div>
-  </form>
-  ` : `<div class="card"><p class="muted" style="margin:0;">Cadastre sua chave da API da Anthropic em <a href="/settings">Config</a> para habilitar o assistente.</p></div>`}
-  `;
-  return layout({ title: 'Assistente', user, body, active: 'assistant' });
+<div class="card chat-card">
+<div class="chat-msgs" id="chatMsgs"></div>
+${flags.aiEnabled ? `
+<form class="chat-form" id="chatForm">
+<textarea id="chatInput" placeholder="Fale com o coach..." rows="1" autofocus></textarea>
+<button type="submit" aria-label="Enviar">${icon('flame', 'sendbig')}</button>
+</form>
+${messages.length ? `<form method="POST" action="/assistant/clear" style="margin-top:10px;" onsubmit="return confirm('Limpar toda a conversa?')"><button class="ghost danger" type="submit">Limpar conversa</button></form>` : ''}
+` : `<p class="muted" style="margin:14px 0 0;">Cadastre sua chave da API da Anthropic em <a href="/settings">Config</a> para habilitar o coach.</p>`}
+</div>
+`;
+  const chatInit = `<script defer>
+  (function(){
+  try {
+  if (window.CoachChat) {
+  window.CoachChat.mount({
+  msgsId: 'chatMsgs',
+  formId: 'chatForm',
+  inputId: 'chatInput',
+  initialMessages: ${initialJson},
+  aiEnabled: ${flags.aiEnabled ? 'true' : 'false'},
+  emptyText: 'Nenhuma mensagem ainda. Pergunte algo como "como está minha evolução esse mês?" ou "quantos km faltam pra bater minha meta na maratona?".',
+  });
+  }
+  } catch (e) {}
+  })();
+  </script>`;
+  return layout({ title: 'Coach de Corrida', user, body, active: 'assistant', hideCoachWidget: true, bodyEnd: chatInit });
 }
 
 module.exports = {
   layout, loginPage, signupPage, dashboardPage, racesPage,
-  activitiesPage, activityNewPage, activityDetailPage, feedPage, settingsPage, assistantPage,
+  activitiesPage, activityNewPage, activityDetailPage, feedPage, settingsPage, coachChatPage,
 };
