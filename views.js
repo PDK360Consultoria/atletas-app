@@ -81,7 +81,24 @@ ${error ? `<div class="err">${esc(error)}</div>` : ''}
 `);
 }
 
-function dashboardPage({ user, nextRace, daysToRace, recentActivities, weekKm }) {
+function dashboardPage({ user, nextRace, daysToRace, recentActivities, weekKm, evolution }) {
+  const evoHtml = evolution && evolution.totalCount ? `
+  <div class="card">
+  <h2>Evolução</h2>
+  <div class="grid cols-4">
+  <div class="card stat" style="margin-bottom:0;"><div class="k">Total percorrido</div><div class="v">${evolution.totalKm.toFixed(0)}<span class="u">km</span></div></div>
+  <div class="card stat" style="margin-bottom:0;"><div class="k">Este mês</div><div class="v">${evolution.kmThisMonth.toFixed(1)}<span class="u">km</span></div></div>
+  <div class="card stat" style="margin-bottom:0;"><div class="k">Ritmo médio geral</div><div class="v">${secToPace(evolution.avgPaceSec)}<span class="u">/km</span></div></div>
+  <div class="card stat" style="margin-bottom:0;"><div class="k">Maior distância</div><div class="v">${evolution.longest ? evolution.longest.distance_km : '—'}<span class="u">km</span></div></div>
+  </div>
+  <div class="k" style="margin-top:22px;">Volume semanal (últimas 8 semanas)</div>
+  <div class="bars">${evolution.weeks.map(w => {
+    const h = Math.max(w.km > 0 ? 8 : 2, Math.round((w.km / evolution.maxWeekKm) * 100));
+    return `<div class="bar" style="height:${h}%;"><div class="lbl">${w.km > 0 ? w.km.toFixed(0) : '0'}</div></div>`;
+  }).join('')}</div>
+  ${evolution.kmLastMonth ? `<p class="muted" style="margin:26px 0 0;">${evolution.kmThisMonth >= evolution.kmLastMonth ? '↑' : '↓'} ${Math.abs(evolution.kmThisMonth - evolution.kmLastMonth).toFixed(1)}km vs mês passado (${evolution.kmLastMonth.toFixed(1)}km)</p>` : ''}
+  ${evolution.bestPace ? `<p class="muted" style="margin:8px 0 0;">Melhor ritmo: ${secToPace(evolution.bestPace.avg_pace_sec)}/km em "${esc(evolution.bestPace.title)}" (${fmtDate(evolution.bestPace.started_at || evolution.bestPace.created_at)})</p>` : ''}
+  </div>` : '';
   const body = `
 <h1>Olá, ${esc(user.name.split(' ')[0])}</h1>
 <p class="lede">${user.city ? esc(user.city) + ' · ' : ''}${user.goal_race_name ? 'Meta: ' + esc(user.goal_race_name) : 'Defina sua meta em Config'}</p>
@@ -100,6 +117,8 @@ ${nextRace ? `<div class="card">
     <a class="btn ghost" href="/races">Ver provas</a>
   </div>
 </div>` : `<div class="card"><p class="muted" style="margin:0;">Nenhuma prova cadastrada ainda. <a href="/races">Adicionar prova →</a></p></div>`}
+
+${evoHtml}
 
 <div class="card">
   <h2>Treinos recentes</h2>
