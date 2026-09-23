@@ -1,4 +1,4 @@
-const { secToPace, fmtClock, fmtDate, esc, renderMarkdownLite } = require('./lib/format');
+const { secToPace, fmtClock, fmtDate, esc, renderMarkdownLite, icon } = require('./lib/format');
 
 // Runs site-wide: fades cards in as they scroll into view and adds a subtle
 // pointer-tilt to cards on hover. Pure progressive enhancement — cards are
@@ -29,7 +29,13 @@ io.unobserve(e.target);
 items.forEach(function(el){ io.observe(el); });
 }
 if (!reduced && window.matchMedia && window.matchMedia('(hover: hover)').matches) {
+// Only tilt cards that are purely decorative (stat tiles). A card
+// holding links/forms/buttons/<details> must never get a 3D transform
+// on mousemove: shifting the whole box under the cursor makes its
+// contents effectively unclickable (the target keeps moving away from
+// the pointer), which is exactly the "não deixa eu clicar" bug.
 document.querySelectorAll('.card').forEach(function(card){
+if (card.querySelector('a, button, form, details, input, select, textarea')) return;
 card.addEventListener('mousemove', function(e){
 var r = card.getBoundingClientRect();
 var x = (e.clientX - r.left) / r.width - 0.5;
@@ -135,9 +141,23 @@ const HERO_SCRIPT = `<script defer>
 try {
 var canvas = document.getElementById('hero-canvas');
 var hero = canvas ? canvas.closest('.hero') : null;
+var badge = document.getElementById('hero-badge');
+var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+// Badge parallax is independent of the WebGL scene below, so the shoe
+// token still tilts with the cursor even if Three.js fails to load.
+if (hero && badge && !reduced) {
+hero.addEventListener('mousemove', function(e){
+var r = hero.getBoundingClientRect();
+var px = ((e.clientX - r.left) / r.width - 0.5) * 2;
+var py = ((e.clientY - r.top) / r.height - 0.5) * 2;
+badge.style.transform = 'perspective(600px) rotateX(' + (py * 10) + 'deg) rotateY(' + (px * -10) + 'deg) translate(' + (px * -6) + 'px,' + (py * -6) + 'px)';
+});
+hero.addEventListener('mouseleave', function(){ badge.style.transform = ''; });
+}
+
 if (!canvas || !hero || typeof THREE === 'undefined') return;
 
-var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 var dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
 var accent = dark ? 0xffc24e : 0xffae5c;
 var accent2 = dark ? 0x4e9bff : 0x6fa8ff;
@@ -231,7 +251,7 @@ animate();
 function dashboardPage({ user, nextRace, daysToRace, recentActivities, weekKm, evolution }) {
   const evoHtml = evolution && evolution.totalCount ? `
   <div class="card">
-  <h2>Evolução</h2>
+  <h2><span class="h-icon">${icon('mountain', 'evo')}</span>Evolução</h2>
   <div class="grid cols-4">
   <div class="card stat" style="margin-bottom:0;"><div class="k">Total percorrido</div><div class="v">${evolution.totalKm.toFixed(0)}<span class="u">km</span></div></div>
   <div class="card stat" style="margin-bottom:0;"><div class="k">Este mês</div><div class="v">${evolution.kmThisMonth.toFixed(1)}<span class="u">km</span></div></div>
@@ -251,6 +271,7 @@ const body = `
 <section class="hero">
 <canvas id="hero-canvas"></canvas>
 <div class="hero-overlay"></div>
+<div class="hero-badge" id="hero-badge"><span class="hero-badge-glow"></span>${icon('shoe', 'hero')}</div>
 <div class="hero-content">
 <div class="hero-eyebrow">Rumo à Maratona de Curitiba</div>
 <h1>Olá, ${esc(user.name.split(' ')[0])}</h1>
@@ -259,14 +280,14 @@ const body = `
 </section>
 
 <div class="grid cols-4">
-<div class="card stat"><div class="k">Dias p/ prova</div><div class="v">${daysToRace != null ? daysToRace : '—'}</div></div>
-<div class="card stat"><div class="k">Meta de tempo</div><div class="v">${user.goal_time_sec ? fmtClock(user.goal_time_sec) : '—'}</div></div>
-<div class="card stat"><div class="k">Km na semana</div><div class="v">${weekKm.toFixed(1)}<span class="u">km</span></div></div>
-<div class="card stat"><div class="k">Treinos registrados</div><div class="v">${recentActivities.length ? recentActivities.length + '+' : '0'}</div></div>
+<div class="card stat"><div class="icon-badge">${icon('calendar')}</div><div class="k">Dias p/ prova</div><div class="v">${daysToRace != null ? daysToRace : '—'}</div></div>
+<div class="card stat"><div class="icon-badge">${icon('stopwatch')}</div><div class="k">Meta de tempo</div><div class="v">${user.goal_time_sec ? fmtClock(user.goal_time_sec) : '—'}</div></div>
+<div class="card stat"><div class="icon-badge">${icon('flame')}</div><div class="k">Km na semana</div><div class="v">${weekKm.toFixed(1)}<span class="u">km</span></div></div>
+<div class="card stat"><div class="icon-badge">${icon('trophy')}</div><div class="k">Treinos registrados</div><div class="v">${recentActivities.length ? recentActivities.length + '+' : '0'}</div></div>
 </div>
 
 ${nextRace ? `<div class="card">
-<h2>Próxima prova</h2>
+<h2><span class="h-icon">${icon('pin', 'next')}</span>Próxima prova</h2>
 <div class="list-item" style="border:none; padding:0;">
 <div><div class="t">${esc(nextRace.name)}</div><div class="d">${fmtDate(nextRace.race_date)} · ${nextRace.distance_km ? nextRace.distance_km + 'km' : ''} ${nextRace.city ? '· ' + esc(nextRace.city) : ''}</div></div>
 <a class="btn ghost" href="/races">Ver provas</a>
@@ -276,7 +297,7 @@ ${nextRace ? `<div class="card">
 ${evoHtml}
 
 <div class="card">
-<h2>Treinos recentes</h2>
+<h2><span class="h-icon">${icon('stopwatch', 'trn')}</span>Treinos recentes</h2>
 ${recentActivities.length ? recentActivities.map(a => `
 <details class="trn">
 <summary>
@@ -302,11 +323,14 @@ ${a.avg_hr ? `<span><strong>${a.avg_hr}</strong>bpm</span>` : ''}
 
 function racesPage(user, races, nearbyRaces) {
   nearbyRaces = nearbyRaces || [];
-  const nearbyHtml = nearbyRaces.length ? nearbyRaces.map(r => `
+  const nearbyHtml = nearbyRaces.length ? nearbyRaces.map((r, i) => `
   <div class="race-ext">
+  <div class="race-ext-main">
+  <span class="h-icon race-ext-icon">${icon('pin', 'nr' + i)}</span>
   <div>
   <div class="t">${esc(r.name)}</div>
   <div class="d">${fmtDate(r.date)}${r.city ? ' · ' + esc(r.city) : ''}</div>
+  </div>
   </div>
   <div class="race-dists">
   ${r.distances && r.distances.length ? r.distances.map(d => `<span class="race-dist">${Number.isInteger(d) ? d : d.toFixed(1)}km</span>`).join('') : ''}
@@ -318,7 +342,7 @@ const body = `
 <p class="lede">Suas provas passadas e futuras.</p>
 
 <div class="card">
-<h2>Nova prova</h2>
+<h2><span class="h-icon">${icon('calendar', 'nova')}</span>Nova prova</h2>
 <form method="POST" action="/races">
 <div class="grid cols-2">
 <div><label>Nome</label><input name="name" required></div>
@@ -332,7 +356,7 @@ const body = `
 </div>
 
 <div class="card">
-<h2>Todas as provas</h2>
+<h2><span class="h-icon">${icon('trophy', 'todas')}</span>Todas as provas</h2>
 ${races.length ? races.map(r => `
 <div class="list-item">
 <div><div class="t">${esc(r.name)}</div><div class="d">${fmtDate(r.race_date)} ${r.distance_km ? '· ' + r.distance_km + 'km' : ''} ${r.city ? '· ' + esc(r.city) : ''} ${r.goal_time_sec ? '· meta ' + fmtClock(r.goal_time_sec) : ''}</div></div>
@@ -343,7 +367,7 @@ ${races.length ? races.map(r => `
 </div>
 
 <div class="card">
-<h2>Próximas corridas${user.city ? ' em ' + esc(user.city) : ' perto de você'}</h2>
+<h2><span class="h-icon">${icon('pin', 'near')}</span>Próximas corridas${user.city ? ' em ' + esc(user.city) : ' perto de você'}</h2>
 ${nearbyHtml}
 <p class="race-source">Dados via Corrida Perfeita.${!user.city ? ' Defina sua cidade em <a href="/settings">Config</a> para ver corridas perto de você.' : ''}</p>
 </div>
@@ -449,19 +473,19 @@ const body = `
 <p class="lede">${fmtDate(activity.started_at || activity.created_at)} · <span class="pill">${esc(activity.workout_type || 'treino')}</span></p>
 
 <div class="grid cols-4">
-<div class="card stat"><div class="k">Distância</div><div class="v">${activity.distance_km ?? '—'}<span class="u">km</span></div></div>
-<div class="card stat"><div class="k">Tempo</div><div class="v">${fmtClock(activity.duration_sec)}</div></div>
-<div class="card stat"><div class="k">Pace médio</div><div class="v">${secToPace(activity.avg_pace_sec)}<span class="u">/km</span></div></div>
-<div class="card stat"><div class="k">FC média</div><div class="v">${activity.avg_hr ?? '—'}${activity.avg_hr ? '<span class="u">bpm</span>' : ''}</div></div>
+<div class="card stat"><div class="icon-badge">${icon('mountain', 'd1')}</div><div class="k">Distância</div><div class="v">${activity.distance_km ?? '—'}<span class="u">km</span></div></div>
+<div class="card stat"><div class="icon-badge">${icon('stopwatch', 'd2')}</div><div class="k">Tempo</div><div class="v">${fmtClock(activity.duration_sec)}</div></div>
+<div class="card stat"><div class="icon-badge">${icon('flame', 'd3')}</div><div class="k">Pace médio</div><div class="v">${secToPace(activity.avg_pace_sec)}<span class="u">/km</span></div></div>
+<div class="card stat"><div class="icon-badge">${icon('heart', 'd4')}</div><div class="k">FC média</div><div class="v">${activity.avg_hr ?? '—'}${activity.avg_hr ? '<span class="u">bpm</span>' : ''}</div></div>
 </div>
 
 ${laps.length ? `<div class="card">
-<h2>Splits por km</h2>
+<h2><span class="h-icon">${icon('mountain', 'sp')}</span>Splits por km</h2>
 <div class="bars">${bars}</div>
 </div>` : ''}
 
 <div class="card">
-<h2>Blocos (previsto × realizado)</h2>
+<h2><span class="h-icon">${icon('trophy', 'bl')}</span>Blocos (previsto × realizado)</h2>
 ${blocksHtml}
 <form method="POST" action="/activities/${activity.id}/blocks" style="margin-top:8px;">
 <div class="grid cols-2">
@@ -477,7 +501,7 @@ ${blocksHtml}
 </div>
 
 <div class="card">
-<h2>Análise com IA</h2>
+<h2><span class="h-icon">${icon('heart', 'ai')}</span>Análise com IA</h2>
 ${activity.ai_analysis ? `<div class="ai-analysis">${renderMarkdownLite(activity.ai_analysis)}</div>
 ${aiEnabled ? `<form method="POST" action="/activities/${activity.id}/analyze" style="margin-top:14px;"><button class="ghost" type="submit">↻ Gerar nova análise</button></form>` : ''}` : `
 ${aiEnabled
@@ -536,7 +560,7 @@ function settingsPage(user, flags) {
   ${flags.stravaError ? `<div class="err">Não consegui conectar com o Strava agora. Tente de novo.</div>` : ''}
 
   <div class="card">
-  <h2>Strava</h2>
+  <h2><span class="h-icon">${icon('flame', 'strava')}</span>Strava</h2>
   ${!flags.stravaConfigured && !stravaConnected ? `
   <p class="muted" style="margin:0;">Integração com Strava ainda não configurada no servidor (faltam as credenciais do app Strava).</p>
   ` : stravaConnected ? `
@@ -552,7 +576,7 @@ function settingsPage(user, flags) {
   </div>
 
   <div class="card">
-  <h2>Perfil</h2>
+  <h2><span class="h-icon">${icon('pin', 'perfil')}</span>Perfil</h2>
   <form method="POST" action="/settings">
   <div class="grid cols-2">
   <div><label>Nome</label><input name="name" value="${esc(user.name)}" required></div>
@@ -567,7 +591,7 @@ function settingsPage(user, flags) {
   </div>
 
   <div class="card">
-  <h2>Análise com IA (opcional)</h2>
+  <h2><span class="h-icon">${icon('heart', 'ai2')}</span>Análise com IA (opcional)</h2>
   <p class="muted">Cole sua própria chave da API da Anthropic para habilitar análises técnicas automáticas dos seus treinos. A chave fica salva só na sua conta e é usada apenas para gerar suas análises — o uso é cobrado na sua própria conta Anthropic.</p>
   <form method="POST" action="/settings/api-key">
   <label>Chave da API (sk-ant-...)</label>
