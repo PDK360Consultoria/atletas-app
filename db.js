@@ -90,4 +90,19 @@ CREATE TABLE IF NOT EXISTS posts (
 );
 `);
 
+// --- migrations: add columns that may not exist on a DB created before this feature ---
+function ensureColumn(table, column, ddl) {
+    const cols = db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name);
+    if (!cols.includes(column)) {
+          db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+    }
+}
+ensureColumn('users', 'strava_athlete_id', 'strava_athlete_id TEXT');
+ensureColumn('users', 'strava_access_token', 'strava_access_token TEXT');
+ensureColumn('users', 'strava_refresh_token', 'strava_refresh_token TEXT');
+ensureColumn('users', 'strava_token_expires_at', 'strava_token_expires_at INTEGER');
+ensureColumn('users', 'strava_connected_at', 'strava_connected_at TEXT');
+ensureColumn('activities', 'external_id', 'external_id TEXT');
+db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_activities_external ON activities(user_id, external_id) WHERE external_id IS NOT NULL`);
+
 module.exports = db;
