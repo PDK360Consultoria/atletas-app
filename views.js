@@ -47,11 +47,11 @@ const MICRO_INTERACTIONS_SCRIPT = `<script defer>
         card.addEventListener('mouseleave', function(){ card.style.transform = ''; });
       });
     }
-    // Km-split tooltips: CSS :hover already shows them with a mouse, but a
-    // touch tap never triggers :hover reliably, so give each bar a tap
-    // toggle too — one bar's card open at a time, closed by tapping
-    // elsewhere. Works alongside hover rather than replacing it.
-    var splitBars = document.querySelectorAll('.bar-km');
+    // Km-split and tiro tooltips: CSS :hover already shows them with a
+    // mouse, but a touch tap never triggers :hover reliably, so give each
+    // bar a tap toggle too — one bar's card open at a time, closed by
+    // tapping elsewhere. Works alongside hover rather than replacing it.
+    var splitBars = document.querySelectorAll('.bar-km, .tiro-bar');
     if (splitBars.length) {
       splitBars.forEach(function(bar){
         bar.addEventListener('click', function(e){
@@ -1180,7 +1180,15 @@ function activityDetailPage({ user, activity, laps, intervals, evolution, aiEnab
     const tiroBars = tiros.bars.map(b => {
       const speed = 1 / b.pace_sec;
       const h = range > 0.0001 ? Math.round(40 + ((speed - minSpeed) / range) * 60) : 78;
-      return `<div class="tiro-bar${b.isFastest ? ' best' : ''}" style="height:${h}%;" title="Tiro ${b.idx}: ${secToPace(b.pace_sec)}/km">
+      const rows = [`<div class="bar-tip-row"><span>Pace</span><strong>${secToPace(b.pace_sec)}/km</strong></div>`];
+      rows.push(`<div class="bar-tip-row"><span>Distância</span><strong>${esc(b.distanceLabel)}</strong></div>`);
+      rows.push(`<div class="bar-tip-row"><span>Tempo</span><strong>${fmtClock(b.moving_time_sec)}</strong></div>`);
+      if (b.avg_hr) rows.push(`<div class="bar-tip-row"><span>FC média</span><strong>${b.avg_hr} bpm</strong></div>`);
+      if (tiros.avgPaceSec) {
+        const diff = Math.round(b.pace_sec - tiros.avgPaceSec);
+        if (diff !== 0) rows.push(`<div class="bar-tip-row"><span>${diff < 0 ? 'Mais rápido' : 'Mais lento'}</span><strong>${secToPace(Math.abs(diff))}/km</strong></div>`);
+      }
+      return `<div class="tiro-bar${b.isFastest ? ' best' : ''}" style="height:${h}%;" tabindex="0"><div class="bar-tip"><div class="bar-tip-title">Tiro ${b.idx}${b.isFastest ? ' · mais rápido' : ''}</div>${rows.join('')}</div>
         <div class="pace-lbl">${secToPace(b.pace_sec)}</div>
         <div class="dist-lbl">${esc(b.distanceLabel)}</div>
       </div>`;
