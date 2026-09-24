@@ -261,6 +261,14 @@ async function handle(req, res) {
       const blocks = db.prepare('SELECT * FROM blocks WHERE activity_id = ? ORDER BY start_km ASC').all(activity.id);
       return html(res, 200, views.activityDetailPage({ user, activity, laps, blocks, aiEnabled: !!user.anthropic_api_key }));
     }
+    if (method === 'POST' && (m = /^\/activities\/(\d+)\/rename$/.exec(pathname))) {
+      if (!requireAuth()) return;
+      const title = (fields.title || '').trim();
+      if (title) {
+        db.prepare('UPDATE activities SET title = ? WHERE id = ? AND user_id = ?').run(title, m[1], user.id);
+      }
+      return redirect(res, `/activities/${m[1]}`);
+    }
     if (method === 'POST' && (m = /^\/activities\/(\d+)\/blocks$/.exec(pathname))) {
       if (!requireAuth()) return;
       const activity = db.prepare('SELECT * FROM activities WHERE id = ? AND user_id = ?').get(m[1], user.id);
