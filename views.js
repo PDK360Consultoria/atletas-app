@@ -430,73 +430,329 @@ ${error ? `<div class="err">${esc(error)}</div>` : ''}
 `);
 }
 
-// Stylized "runner" hero animation — a procedural stick-figure rig built
-// from nested SVG <g> groups, each limb segment animated with SMIL
-// <animateTransform> rotations (no JS/canvas/WebGL needed, works even with
-// scripts disabled). `variant` picks one of three stacked copies: the bright
-// foreground runner plus two faded, blurred, offset "echoes" behind it,
-// which — combined with the CSS translateX loop on their shared wrapper —
-// read as a stroboscopic motion trail, like a sports-poster speed shot.
-function heroRunnerRig(variant) {
-  const stagger = { main: 0, echo1: 0.09, echo2: 0.18 }[variant];
-  const a = `-${(0.4 + stagger).toFixed(2)}s`; // back leg / front arm phase
-  const b = stagger ? `-${stagger.toFixed(2)}s` : '0s'; // back arm / front leg / bob phase
-  return `<svg class="hero-rig ${variant}" viewBox="0 0 220 260" width="190" height="224" aria-hidden="true">
-  <g transform="translate(110,190)">
-    <g>
-      <animateTransform attributeName="transform" type="translate" values="0 0;0 -7;0 0" keyTimes="0;0.5;1" dur="0.4s" begin="${b}" repeatCount="indefinite"/>
-      <g>
-        <animateTransform attributeName="transform" type="rotate" values="35 0 0;-5 0 0;-35 0 0;20 0 0;35 0 0" keyTimes="0;0.25;0.5;0.75;1" dur="0.8s" begin="${a}" repeatCount="indefinite"/>
-        <line x1="0" y1="0" x2="0" y2="34" stroke-width="6" class="limbline"></line>
-        <g transform="translate(0,34)"><g>
-          <animateTransform attributeName="transform" type="rotate" values="-10 0 0;5 0 0;0 0 0;-75 0 0;-10 0 0" keyTimes="0;0.25;0.5;0.75;1" dur="0.8s" begin="${a}" repeatCount="indefinite"/>
-          <line x1="0" y1="0" x2="0" y2="32" stroke-width="5" class="limbline"></line>
-        </g></g>
-      </g>
-      <g transform="translate(3,-55)"><g>
-        <animateTransform attributeName="transform" type="rotate" values="30 0 0;0 0 0;-30 0 0;5 0 0;30 0 0" keyTimes="0;0.25;0.5;0.75;1" dur="0.8s" begin="${b}" repeatCount="indefinite"/>
-        <line x1="0" y1="0" x2="0" y2="26" stroke-width="4" class="limbline"></line>
-        <g transform="translate(0,26)"><g>
-          <animateTransform attributeName="transform" type="rotate" values="70 0 0;60 0 0;70 0 0;85 0 0;70 0 0" keyTimes="0;0.25;0.5;0.75;1" dur="0.8s" begin="${b}" repeatCount="indefinite"/>
-          <line x1="0" y1="0" x2="0" y2="22" stroke-width="4" class="limbline"></line>
-        </g></g>
-      </g></g>
-      <line x1="0" y1="0" x2="6" y2="-58" stroke-width="6" class="limbline"></line>
-      <circle class="head" cx="9" cy="-73" r="10"></circle>
-      <g transform="translate(3,-55)"><g>
-        <animateTransform attributeName="transform" type="rotate" values="30 0 0;0 0 0;-30 0 0;5 0 0;30 0 0" keyTimes="0;0.25;0.5;0.75;1" dur="0.8s" begin="${a}" repeatCount="indefinite"/>
-        <line x1="0" y1="0" x2="0" y2="26" stroke-width="4" class="limbline"></line>
-        <g transform="translate(0,26)"><g>
-          <animateTransform attributeName="transform" type="rotate" values="70 0 0;60 0 0;70 0 0;85 0 0;70 0 0" keyTimes="0;0.25;0.5;0.75;1" dur="0.8s" begin="${a}" repeatCount="indefinite"/>
-          <line x1="0" y1="0" x2="0" y2="22" stroke-width="4" class="limbline"></line>
-        </g></g>
-      </g></g>
-      <g>
-        <animateTransform attributeName="transform" type="rotate" values="35 0 0;-5 0 0;-35 0 0;20 0 0;35 0 0" keyTimes="0;0.25;0.5;0.75;1" dur="0.8s" begin="${b}" repeatCount="indefinite"/>
-        <line x1="0" y1="0" x2="0" y2="34" stroke-width="6" class="limbline"></line>
-        <g transform="translate(0,34)"><g>
-          <animateTransform attributeName="transform" type="rotate" values="-10 0 0;5 0 0;0 0 0;-75 0 0;-10 0 0" keyTimes="0;0.25;0.5;0.75;1" dur="0.8s" begin="${b}" repeatCount="indefinite"/>
-          <line x1="0" y1="0" x2="0" y2="32" stroke-width="5" class="limbline"></line>
-        </g></g>
-      </g>
-    </g>
-  </g>
-</svg>`;
-}
+const HERO_EXTRA_HEAD = `<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js" defer></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js" defer></script>`;
 
-const HERO_RUNNER_HTML = `<div class="hero-runner" aria-hidden="true">
-  <div class="hero-runner-clip">
-    <div class="hero-runner-floor"></div>
-    <span class="hero-speed-line sl1"></span>
-    <span class="hero-speed-line sl2"></span>
-    <span class="hero-speed-line sl3"></span>
-    <div class="hero-runner-track">
-      ${heroRunnerRig('echo2')}
-      ${heroRunnerRig('echo1')}
-      ${heroRunnerRig('main')}
-    </div>
-  </div>
-</div>`;
+const HERO_SCRIPT = `<script defer>
+(function(){
+  function boot(){
+    try {
+      var canvas = document.getElementById('hero-canvas');
+      var hero = canvas ? canvas.closest('.hero') : null;
+      var badge = document.getElementById('hero-badge');
+      var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+      // Badge parallax is independent of the WebGL scene below, so the shoe
+      // token still tilts with the cursor even if Three.js fails to load.
+      if (hero && badge && !reduced) {
+        hero.addEventListener('mousemove', function(e){
+          var r = hero.getBoundingClientRect();
+          var px = ((e.clientX - r.left) / r.width - 0.5) * 2;
+          var py = ((e.clientY - r.top) / r.height - 0.5) * 2;
+          badge.style.transform = 'perspective(600px) rotateX(' + (py * 10) + 'deg) rotateY(' + (px * -10) + 'deg) translate(' + (px * -6) + 'px,' + (py * -6) + 'px)';
+        });
+        hero.addEventListener('mouseleave', function(){ badge.style.transform = ''; });
+      }
+
+      if (!canvas || !hero || typeof THREE === 'undefined') return;
+
+      var dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      var accent = dark ? 0xffc24e : 0xffae5c;
+      var accent2 = dark ? 0x4e9bff : 0x6fa8ff;
+
+      var renderer;
+      try {
+        renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: true, antialias: true });
+      } catch (e) { return; }
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      if ('outputEncoding' in renderer) renderer.outputEncoding = THREE.sRGBEncoding;
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+      if ('toneMapping' in renderer) {
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.15;
+      }
+
+      var scene = new THREE.Scene();
+      var camera = new THREE.PerspectiveCamera(36, 1, 0.1, 100);
+      camera.position.set(1.7, 1.4, 6.0);
+
+      // ---- studio three-point lighting, tuned for a product-shot showcase
+      // rather than an outdoor scene: soft ambient fill, a strong key light
+      // that casts the contact shadow, a cool fill opposite it, and a warm
+      // rim light behind to separate the shoe from the dark background.
+      scene.add(new THREE.HemisphereLight(dark ? 0x4a5568 : 0xffffff, 0x0b0906, 0.55));
+      var key = new THREE.DirectionalLight(0xfff3e0, 1.9);
+      key.position.set(2.4, 3.6, 2.8);
+      key.castShadow = true;
+      key.shadow.mapSize.set(1024, 1024);
+      key.shadow.camera.left = -2; key.shadow.camera.right = 2;
+      key.shadow.camera.top = 2; key.shadow.camera.bottom = -2;
+      key.shadow.camera.near = 1; key.shadow.camera.far = 10;
+      key.shadow.bias = -0.0025;
+      scene.add(key);
+      var fill = new THREE.DirectionalLight(accent2, 0.5);
+      fill.position.set(-3, 1.4, 1.6);
+      scene.add(fill);
+      var rim = new THREE.PointLight(accent, 1.5, 14);
+      rim.position.set(-1.6, 1.8, -3.2);
+      scene.add(rim);
+      var rim2 = new THREE.PointLight(0xffffff, 0.8, 12);
+      rim2.position.set(1.8, 0.6, -2.6);
+      scene.add(rim2);
+
+      // A tiny procedural equirectangular gradient, converted to a PMREM env
+      // map — gives the shoe's leather/rubber/metal materials real-looking
+      // reflections without needing an external HDRI file.
+      try {
+        var pmrem = new THREE.PMREMGenerator(renderer);
+        pmrem.compileEquirectangularShader();
+        var envCanvas = document.createElement('canvas');
+        envCanvas.width = 4; envCanvas.height = 128;
+        var ectx = envCanvas.getContext('2d');
+        var grad = ectx.createLinearGradient(0, 0, 0, 128);
+        grad.addColorStop(0, '#4a3d2e');
+        grad.addColorStop(0.45, '#1c1712');
+        grad.addColorStop(1, '#030201');
+        ectx.fillStyle = grad;
+        ectx.fillRect(0, 0, 4, 128);
+        var envTex = new THREE.CanvasTexture(envCanvas);
+        envTex.mapping = THREE.EquirectangularReflectionMapping;
+        if ('encoding' in envTex) envTex.encoding = THREE.sRGBEncoding;
+        scene.environment = pmrem.fromEquirectangular(envTex).texture;
+        envTex.dispose();
+        pmrem.dispose();
+      } catch (e) { /* reflections are a nice-to-have, safe to skip */ }
+
+      // Low halo ring + particle field beneath the shoe — an abstract
+      // "data plane" echoing the rest of the dashboard, not the main subject.
+      var group = new THREE.Group();
+      scene.add(group);
+
+      var ring = new THREE.Mesh(
+        new THREE.TorusGeometry(1.3, 0.02, 16, 120),
+        new THREE.MeshStandardMaterial({ color: accent, roughness: 0.35, metalness: 0.5 })
+      );
+      ring.rotation.x = Math.PI / 2.15;
+      group.add(ring);
+
+      var dotCount = 50;
+      var dotGeo = new THREE.BufferGeometry();
+      var positions = new Float32Array(dotCount * 3);
+      for (var i = 0; i < dotCount; i++) {
+        var angle = (i / dotCount) * Math.PI * 2;
+        var radius = 1.3 + (Math.random() - 0.5) * 0.3;
+        positions[i * 3] = Math.cos(angle) * radius;
+        positions[i * 3 + 1] = (Math.random() - 0.5) * 0.2;
+        positions[i * 3 + 2] = Math.sin(angle) * radius;
+      }
+      dotGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      var dots = new THREE.Points(dotGeo, new THREE.PointsMaterial({ color: accent, size: 0.04 }));
+      group.add(dots);
+
+      // Soft contact shadow beneath the shoe — a ShadowMaterial plane stays
+      // fully transparent except where the key light's shadow falls, so it
+      // reads as a grounded contact shadow against the transparent canvas.
+      var shadowPlane = new THREE.Mesh(
+        new THREE.CircleGeometry(1.1, 32),
+        new THREE.ShadowMaterial({ opacity: 0.45 })
+      );
+      shadowPlane.rotation.x = -Math.PI / 2;
+      shadowPlane.position.y = 0.001;
+      shadowPlane.receiveShadow = true;
+      scene.add(shadowPlane);
+
+      // ---- AI core: a small geometric "AI" orb hovering above the shoe —
+      // a wireframe icosahedron with a glowing center, orbiting satellites,
+      // and a pulsing energy tether running down to the product. Reads as
+      // "the AI, powered by the shoe" rather than a literal figure.
+      var orbGroup = new THREE.Group();
+      scene.add(orbGroup);
+      var orbBaseY = 1.6; // replaced once the shoe's real height is known
+
+      var orbCore = new THREE.Mesh(
+        new THREE.SphereGeometry(0.14, 24, 24),
+        new THREE.MeshBasicMaterial({ color: accent, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false })
+      );
+      orbGroup.add(orbCore);
+
+      var orbWire = new THREE.Mesh(
+        new THREE.IcosahedronGeometry(0.23, 1),
+        new THREE.MeshBasicMaterial({ color: accent2, wireframe: true, transparent: true, opacity: 0.85 })
+      );
+      orbGroup.add(orbWire);
+
+      var satellites = [];
+      for (var si = 0; si < 3; si++) {
+        var sat = new THREE.Mesh(
+          new THREE.SphereGeometry(0.03, 12, 12),
+          new THREE.MeshBasicMaterial({ color: si % 2 ? accent : accent2 })
+        );
+        satellites.push({ mesh: sat, r: 0.36 + si * 0.08, speed: 0.55 + si * 0.3, offset: si * 2.1, incl: 0.3 + si * 0.22 });
+        orbGroup.add(sat);
+      }
+
+      function makeGlowSprite(colorHex, size) {
+        var c = document.createElement('canvas');
+        c.width = c.height = 64;
+        var ctx = c.getContext('2d');
+        var g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+        var col = '#' + colorHex.toString(16).padStart(6, '0');
+        g.addColorStop(0, col);
+        g.addColorStop(0.4, col);
+        g.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, 64, 64);
+        var sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false }));
+        sprite.scale.set(size, size, 1);
+        return sprite;
+      }
+
+      var tetherCurve = new THREE.QuadraticBezierCurve3(
+        new THREE.Vector3(0, 0.7, 0),
+        new THREE.Vector3(0.12, 1.05, 0.08),
+        new THREE.Vector3(0.08, 1.35, 0)
+      );
+      var tetherMesh = new THREE.Mesh(
+        new THREE.TubeGeometry(tetherCurve, 24, 0.005, 6, false),
+        new THREE.MeshBasicMaterial({ color: accent, transparent: true, opacity: 0.5 })
+      );
+      scene.add(tetherMesh);
+      var tetherPulse = makeGlowSprite(accent, 0.12);
+      scene.add(tetherPulse);
+
+      var mouseX = 0, mouseY = 0;
+      hero.addEventListener('mousemove', function(e){
+        var r = hero.getBoundingClientRect();
+        mouseX = ((e.clientX - r.left) / r.width - 0.5) * 2;
+        mouseY = ((e.clientY - r.top) / r.height - 0.5) * 2;
+      });
+
+      function resize() {
+        var w = hero.clientWidth, h = hero.clientHeight;
+        if (!w || !h) return;
+        renderer.setSize(w, h, false);
+        camera.aspect = w / h;
+        camera.updateProjectionMatrix();
+      }
+      resize();
+      if ('ResizeObserver' in window) {
+        new ResizeObserver(resize).observe(hero);
+      } else {
+        window.addEventListener('resize', resize);
+      }
+
+      function renderFrame() { renderer.render(scene, camera); }
+
+      // ---- product: a real, high-quality PBR sneaker model (leather, mesh
+      // and rubber materials, proper UVs) loaded via glTF — floating and
+      // slowly rotating like a premium product-showcase render, instead of
+      // an isolated running figure.
+      var shoe = null;
+      var lookTarget = new THREE.Vector3(0, 1.1, 0);
+      var hoverBase = 0.16;
+
+      if (typeof THREE.GLTFLoader === 'function') {
+        try {
+          var loader = new THREE.GLTFLoader();
+          loader.load(
+            'https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Assets@main/Models/MaterialsVariantsShoe/glTF-Binary/MaterialsVariantsShoe.glb',
+            function (gltf) {
+              try {
+                var model = gltf.scene;
+                model.traverse(function (o) {
+                  if (o.isMesh) { o.castShadow = true; o.receiveShadow = false; }
+                });
+
+                // Auto-fit: normalize whatever native scale/units the model
+                // ships with to a fixed on-screen size, centered on its own
+                // footprint, instead of hand-tuned position/scale guesses.
+                var box = new THREE.Box3().setFromObject(model);
+                var size = box.getSize(new THREE.Vector3());
+                var maxDim = Math.max(size.x, size.y, size.z) || 1;
+                var targetSize = 2.1;
+                var scale = targetSize / maxDim;
+                model.scale.setScalar(scale);
+
+                box.setFromObject(model);
+                var center = box.getCenter(new THREE.Vector3());
+                model.position.x -= center.x;
+                model.position.z -= center.z;
+                model.position.y -= box.min.y; // rest on the ground plane
+                model.position.y += hoverBase; // then lift slightly, floating
+
+                model.rotation.y = Math.PI * 0.15;
+                model.rotation.z = -0.12;
+
+                box.setFromObject(model);
+                var fitted = box.getSize(new THREE.Vector3());
+                var shoeTop = box.min.y + fitted.y;
+                lookTarget.set(0.05, shoeTop + 0.2, 0);
+
+                // anchor the AI orb and its tether to the shoe's real
+                // (auto-fitted) top, instead of the placeholder guess used
+                // before the model's actual size was known.
+                orbBaseY = shoeTop + 0.5;
+                orbGroup.position.set(0.1, orbBaseY, 0);
+                tetherCurve.v0.set(0, shoeTop - 0.05, 0);
+                tetherCurve.v1.set(0.12, shoeTop + 0.28, 0.08);
+                tetherCurve.v2.set(0.08, shoeTop + 0.5, 0);
+                tetherMesh.geometry.dispose();
+                tetherMesh.geometry = new THREE.TubeGeometry(tetherCurve, 24, 0.005, 6, false);
+
+                shoe = model;
+                scene.add(model);
+              } catch (e) { console.error('[dbg]', e); }
+            },
+            undefined,
+            function (err) { console.error('[dbg]', err); }
+          );
+        } catch (e) { console.error('[dbg]', e); }
+      }
+
+      if (reduced) { renderFrame(); return; }
+
+      var clock = new THREE.Clock();
+      var t = 0;
+
+      function animate() {
+        var dt = Math.min(0.05, clock.getDelta());
+        t += dt;
+
+        group.rotation.y += dt * 0.2;
+        ring.rotation.z += dt * 0.1;
+
+        if (shoe) {
+          shoe.rotation.y += dt * 0.35;
+          shoe.position.y = hoverBase + Math.sin(t * 1.1) * 0.07;
+        }
+
+        orbWire.rotation.y += dt * 0.6;
+        orbWire.rotation.x += dt * 0.2;
+        orbGroup.position.y = orbBaseY + Math.sin(t * 1.3) * 0.05;
+        for (var si2 = 0; si2 < satellites.length; si2++) {
+          var s = satellites[si2];
+          var a = t * s.speed + s.offset;
+          s.mesh.position.set(Math.cos(a) * s.r, Math.sin(a * 0.7) * s.r * s.incl, Math.sin(a) * s.r);
+        }
+        var tp = tetherCurve.getPointAt((t * 0.6) % 1);
+        tetherPulse.position.copy(tp);
+
+        camera.position.x += (1.7 + mouseX * 1.0 - camera.position.x) * 0.04;
+        camera.position.y += (1.4 - mouseY * 0.35 - camera.position.y) * 0.04;
+        camera.lookAt(lookTarget);
+
+        renderFrame();
+        requestAnimationFrame(animate);
+      }
+      requestAnimationFrame(animate);
+    } catch (e) { console.error('[dbg]', e); }
+  }
+  if (document.readyState === 'complete') { boot(); }
+  else { window.addEventListener('load', boot); }
+})();
+</script>`;
 
 function calendarHtml(calendar) {
   if (!calendar) return '';
@@ -644,13 +900,14 @@ function dashboardPage({ user, nextRace, daysToRace, recentActivities, weekKm, e
 
   const body = `
 <section class="hero">
+  <canvas id="hero-canvas"></canvas>
   <div class="hero-overlay"></div>
+  <div class="hero-badge" id="hero-badge"><span class="hero-badge-glow"></span>${icon('shoe', 'hero')}</div>
   <div class="hero-content">
     <div class="hero-eyebrow">Rumo à Maratona de Curitiba</div>
     <h1>Olá, ${esc(user.name.split(' ')[0])}</h1>
     <p class="lede">${user.city ? esc(user.city) + ' · ' : ''}${user.goal_race_name ? 'Meta: ' + esc(user.goal_race_name) : 'Defina sua meta em Config'}</p>
   </div>
-  ${HERO_RUNNER_HTML}
 </section>
 
 <div class="grid cols-4">
@@ -694,7 +951,7 @@ ${evoHtml}
     </details>`).join('') : `<p class="muted" style="margin:0;">Nenhum treino ainda. <a href="/activities/new">Registrar treino →</a></p>`}
 </div>
 `;
-  return layout({ title: 'Perfil', user, body, active: 'home' });
+  return layout({ title: 'Perfil', user, body, active: 'home', extraHead: HERO_EXTRA_HEAD, bodyEnd: HERO_SCRIPT });
 }
 
 function racesPage(user, races, nearbyRaces, added) {
