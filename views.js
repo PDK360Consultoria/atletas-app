@@ -47,11 +47,11 @@ const MICRO_INTERACTIONS_SCRIPT = `<script defer>
         card.addEventListener('mouseleave', function(){ card.style.transform = ''; });
       });
     }
-    // Km-split and tiro tooltips: CSS :hover already shows them with a
-    // mouse, but a touch tap never triggers :hover reliably, so give each
-    // bar a tap toggle too — one bar's card open at a time, closed by
-    // tapping elsewhere. Works alongside hover rather than replacing it.
-    var splitBars = document.querySelectorAll('.bar-km, .tiro-bar');
+    // Km-split tooltips: CSS :hover already shows them with a mouse, but a
+    // touch tap never triggers :hover reliably, so give each bar a tap
+    // toggle too — one bar's card open at a time, closed by tapping
+    // elsewhere. Works alongside hover rather than replacing it.
+    var splitBars = document.querySelectorAll('.bar-km');
     if (splitBars.length) {
       splitBars.forEach(function(bar){
         bar.addEventListener('click', function(e){
@@ -64,6 +64,59 @@ const MICRO_INTERACTIONS_SCRIPT = `<script defer>
       document.addEventListener('click', function(){
         splitBars.forEach(function(b){ b.classList.remove('show-tip'); });
       });
+    }
+
+    // Tiro (pace-por-tiro) tooltips: the chart scrolls horizontally on
+    // narrow screens (overflow-x:auto), and that forces the browser to
+    // clip overflow-y too — a plain absolutely positioned tooltip inside
+    // it gets cut off instead of floating above the bar. So instead this
+    // clones each bar's hidden .bar-tip content into one shared element
+    // appended to <body> (outside any clipping ancestor) and positions it
+    // with the bar's real on-screen coordinates. Mouse hover, keyboard
+    // focus and tap all show it; a second tap on the same bar (or a tap
+    // elsewhere) closes it.
+    var tiroBars = document.querySelectorAll('.tiro-bar');
+    if (tiroBars.length) {
+      var tiroFloat = document.createElement('div');
+      tiroFloat.className = 'tiro-tip-float';
+      document.body.appendChild(tiroFloat);
+      var tiroActiveBar = null;
+      var positionTiroFloat = function(bar){
+        var r = bar.getBoundingClientRect();
+        tiroFloat.style.left = (r.left + r.width / 2) + 'px';
+        tiroFloat.style.top = r.top + 'px';
+      };
+      var showTiroTip = function(bar){
+        var inner = bar.querySelector('.bar-tip');
+        if (!inner) return;
+        tiroFloat.innerHTML = inner.innerHTML;
+        positionTiroFloat(bar);
+        tiroFloat.classList.add('show');
+        tiroBars.forEach(function(b){ b.classList.toggle('tip-active', b === bar); });
+        tiroActiveBar = bar;
+      };
+      var hideTiroTip = function(){
+        tiroFloat.classList.remove('show');
+        tiroBars.forEach(function(b){ b.classList.remove('tip-active'); });
+        tiroActiveBar = null;
+      };
+      tiroBars.forEach(function(bar){
+        bar.addEventListener('mouseenter', function(){ showTiroTip(bar); });
+        bar.addEventListener('mouseleave', function(){ if (tiroActiveBar === bar) hideTiroTip(); });
+        bar.addEventListener('focus', function(){ showTiroTip(bar); });
+        bar.addEventListener('blur', function(){ if (tiroActiveBar === bar) hideTiroTip(); });
+        bar.addEventListener('click', function(e){
+          // Always (re-)show rather than toggling closed: on touch this is
+          // the only way the tip opens at all, and on desktop it means
+          // clicking a bar while it's already hovered is a harmless no-op
+          // instead of flickering the tip closed under the cursor.
+          e.stopPropagation();
+          showTiroTip(bar);
+        });
+      });
+      document.addEventListener('click', hideTiroTip);
+      window.addEventListener('scroll', hideTiroTip, true);
+      window.addEventListener('resize', function(){ if (tiroActiveBar) positionTiroFloat(tiroActiveBar); });
     }
   } catch (e) { console.error('[dbg]', e); }
 })();
