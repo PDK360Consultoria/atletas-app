@@ -12,7 +12,7 @@ const { parseActivityFile } = require('./lib/gpx');
 const { analyzeActivity } = require('./lib/anthropic');
 const strava = require('./lib/strava');
 const { computeEvolution } = require('./lib/stats');
-const { buildContext, streamChatWithAssistant } = require('./lib/assistant');
+const { buildContext, buildActivityFocusContext, streamChatWithAssistant } = require('./lib/assistant');
 const { fetchNearbyRaces } = require('./lib/races');
 const { buildMonthCalendar } = require('./lib/calendar');
 const views = require('./views');
@@ -38,29 +38,6 @@ function notFound(res) {
 function baseUrl(req) {
   const proto = req.headers['x-forwarded-proto'] || 'http';
   return `${proto}://${req.headers.host}`;
-}
-
-function calcBlockActuals(laps, startKm, endKm) {
-  if (!laps || !laps.length) return { pace_actual_sec: null, hr_actual_avg: null };
-  let timeSum = 0, kmSum = 0, hrWeighted = 0, hrKm = 0;
-  for (const lap of laps) {
-    const lapStart = lap.km - 1;
-    const lapEnd = lap.partial_km ? lapStart + lap.partial_km : lap.km;
-    const lapKm = lapEnd - lapStart;
-    const overlapStart = Math.max(lapStart, startKm);
-    const overlapEnd = Math.min(lapEnd, endKm);
-    const overlap = overlapEnd - overlapStart;
-    if (overlap > 0 && lapKm > 0) {
-      const frac = overlap / lapKm;
-      timeSum += lap.split_sec * frac;
-      kmSum += overlap;
-      if (lap.avg_hr) { hrWeighted += lap.avg_hr * overlap; hrKm += overlap; }
-    }
-  }
-  return {
-    pace_actual_sec: kmSum > 0 ? Math.round(timeSum / kmSum) : null,
-    hr_actual_avg: hrKm > 0 ? Math.round(hrWeighted / hrKm) : null,
-  };
 }
 
 async function handle(req, res) {
@@ -258,8 +235,8 @@ async function handle(req, res) {
       const activity = db.prepare('SELECT * FROM activities WHERE id = ? AND user_id = ?').get(m[1], user.id);
       if (!activity) return notFound(res);
       const laps = activity.laps_json ? JSON.parse(activity.laps_json) : [];
-      const blocks = db.prepare('SELECT * FROM blocks WHERE activity_id = ? ORDER BY start_km ASC').all(activity.id);
-      return html(res, 200, views.activityDetailPage({ user, activity, laps, blocks, aiEnabled: !!user.anthropic_api_key }));
+      const intervals = activity.intervals_json ? JSON.parse(activity.intervals_json) : [];
+      return html(res, 200, views.activityDetailPage({ user, activity, laps, intervals, aiEnabled: !!user.anthropic_api_key }));
     }
     if (method === 'POST' && (m = /^\/activities\/(\d+)\/rename$/.exec(pathname))) {
       if (!requireAuth()) return;
@@ -269,29 +246,14 @@ async function handle(req, res) {
       }
       return redirect(res, `/activities/${m[1]}`);
     }
-    if (method === 'POST' && (m = /^\/activities\/(\d+)\/blocks$/.exec(pathname))) {
-      if (!requireAuth()) return;
-      const activity = db.prepare('SELECT * FROM activities WHERE id = ? AND user_id = ?').get(m[1], user.id);
-      if (!activity) return notFound(res);
-      const laps = activity.laps_json ? JSON.parse(activity.laps_json) : [];
-      const startKm = parseFloat(fields.start_km), endKm = parseFloat(fields.end_km);
-      const paceTarget = parseClock(fields.pace_target);
-      const { pace_actual_sec, hr_actual_avg } = calcBlockActuals(laps, startKm, endKm);
-      db.prepare(`INSERT INTO blocks (activity_id, label, start_km, end_km, pace_target_sec, hr_ceiling, pace_actual_sec, hr_actual_avg)
-        VALUES (?,?,?,?,?,?,?,?)`).run(
-        activity.id, fields.label, startKm, endKm, paceTarget,
-        fields.hr_ceiling ? parseInt(fields.hr_ceiling, 10) : null,
-        pace_actual_sec, hr_actual_avg
-      );
-      return redirect(res, `/activities/${activity.id}`);
-    }
     if (method === 'POST' && (m = /^\/activities\/(\d+)\/analyze$/.exec(pathname))) {
       if (!requireAuth()) return;
       const activity = db.prepare('SELECT * FROM activities WHERE id = ? AND user_id = ?').get(m[1], user.id);
       if (!activity) return notFound(res);
       const laps = activity.laps_json ? JSON.parse(activity.laps_json) : [];
+      const intervals = activity.intervals_json ? JSON.parse(activity.intervals_json) : [];
       try {
-        const text = await analyzeActivity(user.anthropic_api_key, activity, laps);
+        const text = await analyzeActivity(user.anthropic_api_key, activity, laps, intervals);
         db.prepare('UPDATE activities SET ai_analysis = ? WHERE id = ?').run(text, activity.id);
       } catch (e) {
         db.prepare('UPDATE activities SET ai_analysis = ? WHERE id = ?').run(`Não foi possível gerar a análise agora (${e.message}).`, activity.id);
@@ -387,7 +349,8 @@ async function handle(req, res) {
     }
     if (method === 'POST' && pathname === '/strava/sync') {
       if (!requireAuth()) return;
-      const result = await strava.syncUserActivities(db, user).catch((e) => { console.error(e); return { count: 0, error: 'sync_failed' }; });
+      const full = parsed.query.full === '1' || fields.full === '1';
+      const result = await strava.syncUserActivities(db, user, { full }).catch((e) => { console.error(e); return { count: 0, error: 'sync_failed' }; });
       if (result.error) return redirect(res, '/settings?strava_error=1');
       return redirect(res, `/activities?synced=${result.count}`);
     }
@@ -395,12 +358,12 @@ async function handle(req, res) {
     // ---------- coach chat ----------
     if (method === 'GET' && pathname === '/assistant') {
       if (!requireAuth()) return;
-      const messages = db.prepare('SELECT * FROM chat_messages WHERE user_id = ? ORDER BY created_at ASC, id ASC').all(user.id);
+      const messages = db.prepare('SELECT * FROM chat_messages WHERE user_id = ? AND activity_id IS NULL ORDER BY created_at ASC, id ASC').all(user.id);
       return html(res, 200, views.coachChatPage(user, messages, { aiEnabled: !!user.anthropic_api_key, error: parsed.query.error }));
     }
     if (method === 'POST' && pathname === '/assistant/clear') {
       if (!requireAuth()) return;
-      db.prepare('DELETE FROM chat_messages WHERE user_id = ?').run(user.id);
+      db.prepare('DELETE FROM chat_messages WHERE user_id = ? AND activity_id IS NULL').run(user.id);
       return redirect(res, '/assistant');
     }
 
@@ -408,15 +371,29 @@ async function handle(req, res) {
     // slow down every page load).
     if (method === 'GET' && pathname === '/api/coach/history') {
       if (!user) { res.writeHead(401); return res.end('{"error":"auth"}'); }
-      const messages = db.prepare('SELECT role, content, created_at FROM chat_messages WHERE user_id = ? ORDER BY created_at ASC, id ASC').all(user.id);
+      const messages = db.prepare('SELECT role, content, created_at FROM chat_messages WHERE user_id = ? AND activity_id IS NULL ORDER BY created_at ASC, id ASC').all(user.id);
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+      return res.end(JSON.stringify({ messages, aiEnabled: !!user.anthropic_api_key }));
+    }
+
+    // Same as above but scoped to one activity's own chat thread, used by the
+    // "conversar com o coach sobre esse treino" widget on the activity page.
+    if (method === 'GET' && (m = /^\/api\/coach\/activity\/(\d+)\/history$/.exec(pathname))) {
+      if (!user) { res.writeHead(401); return res.end('{"error":"auth"}'); }
+      const activity = db.prepare('SELECT id FROM activities WHERE id = ? AND user_id = ?').get(m[1], user.id);
+      if (!activity) { res.writeHead(404); return res.end('{"error":"not_found"}'); }
+      const messages = db.prepare('SELECT role, content, created_at FROM chat_messages WHERE user_id = ? AND activity_id = ? ORDER BY created_at ASC, id ASC').all(user.id, activity.id);
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
       return res.end(JSON.stringify({ messages, aiEnabled: !!user.anthropic_api_key }));
     }
 
     // Streams the coach's reply as plain chunked text so the client can type
-    // it out live, word by word — used by both the full chat page and the
-    // floating widget. The body is raw JSON ({message}); the response body
-    // is the raw streamed answer text (no SSE framing needed client-side).
+    // it out live, word by word — used by the full chat page, the floating
+    // widget, and the per-activity chat. The body is raw JSON ({message,
+    // activity_id?}); the response body is the raw streamed answer text (no
+    // SSE framing needed client-side). When activity_id is present, the
+    // reply is grounded in that specific training's data and the thread is
+    // kept separate from the athlete's general coach conversation.
     if (method === 'POST' && pathname === '/api/coach/send') {
       if (!user) { res.writeHead(401); return res.end('auth'); }
       let body = {};
@@ -428,7 +405,14 @@ async function handle(req, res) {
       if (!text) { res.writeHead(400); return res.end('empty'); }
       if (!user.anthropic_api_key) { res.writeHead(412); return res.end('missing_key'); }
 
-      db.prepare('INSERT INTO chat_messages (user_id, role, content) VALUES (?,?,?)').run(user.id, 'user', text);
+      let activity = null;
+      if (body.activity_id) {
+        activity = db.prepare('SELECT * FROM activities WHERE id = ? AND user_id = ?').get(body.activity_id, user.id);
+        if (!activity) { res.writeHead(404); return res.end('activity_not_found'); }
+      }
+      const activityId = activity ? activity.id : null;
+
+      db.prepare('INSERT INTO chat_messages (user_id, role, content, activity_id) VALUES (?,?,?,?)').run(user.id, 'user', text, activityId);
 
       res.writeHead(200, {
         'content-type': 'text/plain; charset=utf-8',
@@ -441,8 +425,13 @@ async function handle(req, res) {
         const races = db.prepare('SELECT * FROM races WHERE user_id = ? ORDER BY race_date ASC').all(user.id);
         const activities = db.prepare('SELECT * FROM activities WHERE user_id = ? ORDER BY COALESCE(started_at, created_at) DESC').all(user.id);
         const evolution = computeEvolution(activities);
-        const context = buildContext(user, races, activities, evolution);
-        const priorRows = db.prepare('SELECT * FROM chat_messages WHERE user_id = ? ORDER BY created_at ASC, id ASC').all(user.id);
+        let context = buildContext(user, races, activities, evolution);
+        if (activity) {
+          const laps = activity.laps_json ? JSON.parse(activity.laps_json) : [];
+          const intervals = activity.intervals_json ? JSON.parse(activity.intervals_json) : [];
+          context += '\n' + buildActivityFocusContext(activity, laps, intervals);
+        }
+        const priorRows = db.prepare('SELECT * FROM chat_messages WHERE user_id = ? AND activity_id IS ? ORDER BY created_at ASC, id ASC').all(user.id, activityId);
         const history = priorRows.slice(0, -1).slice(-20).map((m) => ({ role: m.role, content: m.content }));
         full = await streamChatWithAssistant(user.anthropic_api_key, context, history, text, (delta) => {
           res.write(delta);
@@ -452,7 +441,7 @@ async function handle(req, res) {
         if (!full) res.write(msg);
         full = full || msg;
       }
-      db.prepare('INSERT INTO chat_messages (user_id, role, content) VALUES (?,?,?)').run(user.id, 'assistant', full);
+      db.prepare('INSERT INTO chat_messages (user_id, role, content, activity_id) VALUES (?,?,?,?)').run(user.id, 'assistant', full, activityId);
       return res.end();
     }
 
