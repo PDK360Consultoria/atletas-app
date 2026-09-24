@@ -105,6 +105,7 @@ ensureColumn('users', 'strava_connected_at', 'strava_connected_at TEXT');
 ensureColumn('users', 'strava_last_synced_at', 'strava_last_synced_at INTEGER');
 ensureColumn('activities', 'external_id', 'external_id TEXT');
 db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_activities_external ON activities(user_id, external_id) WHERE external_id IS NOT NULL`);
+ensureColumn('activities', 'intervals_json', 'intervals_json TEXT');
 
 // One-time cleanup: merge duplicate activities that exist as both a
 // manually-logged row and a separately Strava-synced row for the same real
@@ -204,5 +205,6 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   FOREIGN KEY(user_id) REFERENCES users(id)
 );
 `);
+ensureColumn('chat_messages', 'activity_id', 'activity_id INTEGER');
 
 module.exports = db;
