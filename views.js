@@ -1014,6 +1014,13 @@ function activityDetailPage({ user, activity, laps, blocks, aiEnabled }) {
     return `<div class="bar" style="height:${h}%;"><div class="lbl">${l.km}</div></div>`;
   }).join('');
 
+  let bestKm = null, worstKm = null;
+  const timedLaps = laps.filter(l => l.split_sec);
+  if (timedLaps.length) {
+    bestKm = timedLaps.reduce((a, b) => (b.split_sec < a.split_sec ? b : a));
+    worstKm = timedLaps.reduce((a, b) => (b.split_sec > a.split_sec ? b : a));
+  }
+
   const blocksHtml = blocks.length ? blocks.map(b => `
     <div class="list-item">
       <div>
@@ -1024,36 +1031,33 @@ function activityDetailPage({ user, activity, laps, blocks, aiEnabled }) {
 
   const body = `
 <a href="/activities" class="muted mono" style="font-size:12px;">← Treinos</a>
-<h1>${esc(activity.title)}</h1>
-<p class="lede">${fmtDate(activity.started_at || activity.created_at)} · <span class="pill">${esc(activity.workout_type || 'treino')}</span></p>
+
+<details class="title-edit-toggle">
+  <summary>
+    <h1>${esc(activity.title)}</h1>
+    <span class="title-edit-icon" aria-hidden="true"><svg class="icon-svg" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg></span>
+  </summary>
+  <form method="POST" action="/activities/${activity.id}/rename" class="title-edit-form">
+    <input type="text" name="title" value="${esc(activity.title)}" required>
+    <button type="submit">Salvar</button>
+  </form>
+</details>
+<p class="lede">${fmtDate(activity.started_at || activity.created_at)} · <span class="pill">${esc(activity.workout_type || 'treino')}</span>${activity.source === 'strava' ? ` · <span class="pill"><span class="dot" style="background:var(--blue);"></span>Strava</span>` : ''}</p>
 
 <div class="grid cols-4">
-  <div class="card stat"><div class="icon-badge">${icon('mountain', 'd1')}</div><div class="k">Distância</div><div class="v">${activity.distance_km ?? '—'}<span class="u">km</span></div></div>
-  <div class="card stat"><div class="icon-badge">${icon('stopwatch', 'd2')}</div><div class="k">Tempo</div><div class="v">${fmtClock(activity.duration_sec)}</div></div>
-  <div class="card stat"><div class="icon-badge">${icon('flame', 'd3')}</div><div class="k">Pace médio</div><div class="v">${secToPace(activity.avg_pace_sec)}<span class="u">/km</span></div></div>
-  <div class="card stat"><div class="icon-badge">${icon('heart', 'd4')}</div><div class="k">FC média</div><div class="v">${activity.avg_hr ?? '—'}${activity.avg_hr ? '<span class="u">bpm</span>' : ''}</div></div>
+  <div class="card stat"><div class="icon-badge">${icon('mountain', 'ad1')}</div><div class="k">Distância</div><div class="v">${activity.distance_km ?? '—'}${activity.distance_km != null ? '<span class="u">km</span>' : ''}</div></div>
+  <div class="card stat"><div class="icon-badge">${icon('stopwatch', 'ad2')}</div><div class="k">Tempo</div><div class="v">${fmtClock(activity.duration_sec)}</div></div>
+  <div class="card stat"><div class="icon-badge">${icon('flame', 'ad3')}</div><div class="k">Pace médio</div><div class="v">${secToPace(activity.avg_pace_sec)}${activity.avg_pace_sec ? '<span class="u">/km</span>' : ''}</div></div>
+  <div class="card stat"><div class="icon-badge">${icon('heart', 'ad4')}</div><div class="k">FC média</div><div class="v">${activity.avg_hr ?? '—'}${activity.avg_hr ? '<span class="u">bpm</span>' : ''}</div></div>
+  <div class="card stat"><div class="icon-badge">${icon('heart', 'ad5')}</div><div class="k">FC máxima</div><div class="v">${activity.max_hr ?? '—'}${activity.max_hr ? '<span class="u">bpm</span>' : ''}</div></div>
+  <div class="card stat"><div class="icon-badge">${icon('mountain', 'ad6')}</div><div class="k">Elevação</div><div class="v">${activity.elevation_gain_m ?? '—'}${activity.elevation_gain_m != null ? '<span class="u">m</span>' : ''}</div></div>
 </div>
 
 ${laps.length ? `<div class="card">
   <h2><span class="h-icon">${icon('mountain', 'sp')}</span>Splits por km</h2>
+  ${bestKm && worstKm ? `<p class="muted" style="margin:-4px 0 14px;">Melhor km: <strong>Km ${bestKm.km} · ${secToPace(bestKm.split_sec)}/km</strong> &nbsp;·&nbsp; Mais lento: <strong>Km ${worstKm.km} · ${secToPace(worstKm.split_sec)}/km</strong></p>` : ''}
   <div class="bars">${bars}</div>
 </div>` : ''}
-
-<div class="card">
-  <h2><span class="h-icon">${icon('trophy', 'bl')}</span>Blocos (previsto × realizado)</h2>
-  ${blocksHtml}
-  <form method="POST" action="/activities/${activity.id}/blocks" style="margin-top:8px;">
-    <div class="grid cols-2">
-      <div><label>Nome do bloco</label><input name="label" required placeholder="Aquecimento"></div>
-      <div></div>
-      <div><label>Km inicial</label><input name="start_km" type="number" step="0.1" required></div>
-      <div><label>Km final</label><input name="end_km" type="number" step="0.1" required></div>
-      <div><label>Pace alvo (m:ss)</label><input name="pace_target" placeholder="5:20"></div>
-      <div><label>Teto de FC</label><input name="hr_ceiling" type="number"></div>
-    </div>
-    <div style="margin-top:12px;"><button class="ghost" type="submit">+ Adicionar bloco</button></div>
-  </form>
-</div>
 
 <div class="card">
   <h2><span class="h-icon">${icon('heart', 'ai')}</span>Análise com IA</h2>
@@ -1064,6 +1068,24 @@ ${laps.length ? `<div class="card">
       : `<p class="muted" style="margin:0;">Cadastre sua chave da API da Anthropic em <a href="/settings">Config</a> para gerar análises técnicas automáticas.</p>`}
   `}
 </div>
+
+<details class="card blocks-card">
+  <summary>Blocos (previsto × realizado)</summary>
+  <div class="blocks-body">
+    ${blocksHtml}
+    <form method="POST" action="/activities/${activity.id}/blocks" style="margin-top:8px;">
+      <div class="grid cols-2">
+        <div><label>Nome do bloco</label><input name="label" required placeholder="Aquecimento"></div>
+        <div></div>
+        <div><label>Km inicial</label><input name="start_km" type="number" step="0.1" required></div>
+        <div><label>Km final</label><input name="end_km" type="number" step="0.1" required></div>
+        <div><label>Pace alvo (m:ss)</label><input name="pace_target" placeholder="5:20"></div>
+        <div><label>Teto de FC</label><input name="hr_ceiling" type="number"></div>
+      </div>
+      <div style="margin-top:12px;"><button class="ghost" type="submit">+ Adicionar bloco</button></div>
+    </form>
+  </div>
+</details>
 
 <div class="card">
   <h2>Compartilhar no feed</h2>
