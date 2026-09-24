@@ -375,62 +375,94 @@ const HERO_SCRIPT = `<script defer>
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
-    var scene = new THREE.Scene();
-    var camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
-    camera.position.set(0, 0.4, 9);
+    if ('toneMapping' in renderer) {
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.15;
+    }
 
-    scene.add(new THREE.HemisphereLight(dark ? 0x4a5568 : 0xffffff, 0x0b0906, 0.7));
-    var dir = new THREE.DirectionalLight(0xffffff, 1.35);
-    dir.position.set(2.6, 5, 3.2);
-    dir.castShadow = true;
-    dir.shadow.mapSize.set(1024, 1024);
-    dir.shadow.camera.left = -2; dir.shadow.camera.right = 2;
-    dir.shadow.camera.top = 2.5; dir.shadow.camera.bottom = -2;
-    dir.shadow.camera.near = 1; dir.shadow.camera.far = 10;
-    dir.shadow.bias = -0.0025;
-    scene.add(dir);
-    var rim = new THREE.PointLight(accent2, 1.0, 14);
-    rim.position.set(-3, 2, 2.4);
+    var scene = new THREE.Scene();
+    var camera = new THREE.PerspectiveCamera(38, 1, 0.1, 100);
+    camera.position.set(1.6, 1.15, 5.4);
+
+    // ---- studio three-point lighting, tuned for a product-shot showcase
+    // rather than an outdoor scene: soft ambient fill, a strong key light
+    // that casts the contact shadow, a cool fill opposite it, and a warm
+    // rim light behind to separate the shoe from the dark background.
+    scene.add(new THREE.HemisphereLight(dark ? 0x4a5568 : 0xffffff, 0x0b0906, 0.55));
+    var key = new THREE.DirectionalLight(0xfff3e0, 1.9);
+    key.position.set(2.4, 3.6, 2.8);
+    key.castShadow = true;
+    key.shadow.mapSize.set(1024, 1024);
+    key.shadow.camera.left = -2; key.shadow.camera.right = 2;
+    key.shadow.camera.top = 2; key.shadow.camera.bottom = -2;
+    key.shadow.camera.near = 1; key.shadow.camera.far = 10;
+    key.shadow.bias = -0.0025;
+    scene.add(key);
+    var fill = new THREE.DirectionalLight(accent2, 0.5);
+    fill.position.set(-3, 1.4, 1.6);
+    scene.add(fill);
+    var rim = new THREE.PointLight(accent, 1.5, 14);
+    rim.position.set(-1.6, 1.8, -3.2);
     scene.add(rim);
-    var rim2 = new THREE.PointLight(accent, 0.55, 12);
-    rim2.position.set(2.6, 0.8, 2.8);
+    var rim2 = new THREE.PointLight(0xffffff, 0.8, 12);
+    rim2.position.set(1.8, 0.6, -2.6);
     scene.add(rim2);
 
-    // Ambient rotating "data ring" + particle field — kept low, beneath
-    // the runner's feet, so it reads as an abstract data-plane the figure
-    // is running across rather than the main subject.
+    // A tiny procedural equirectangular gradient, converted to a PMREM env
+    // map — gives the shoe's leather/rubber/metal materials real-looking
+    // reflections without needing an external HDRI file.
+    try {
+      var pmrem = new THREE.PMREMGenerator(renderer);
+      pmrem.compileEquirectangularShader();
+      var envCanvas = document.createElement('canvas');
+      envCanvas.width = 4; envCanvas.height = 128;
+      var ectx = envCanvas.getContext('2d');
+      var grad = ectx.createLinearGradient(0, 0, 0, 128);
+      grad.addColorStop(0, '#4a3d2e');
+      grad.addColorStop(0.45, '#1c1712');
+      grad.addColorStop(1, '#030201');
+      ectx.fillStyle = grad;
+      ectx.fillRect(0, 0, 4, 128);
+      var envTex = new THREE.CanvasTexture(envCanvas);
+      envTex.mapping = THREE.EquirectangularReflectionMapping;
+      if ('encoding' in envTex) envTex.encoding = THREE.sRGBEncoding;
+      scene.environment = pmrem.fromEquirectangular(envTex).texture;
+      envTex.dispose();
+      pmrem.dispose();
+    } catch (e) { /* reflections are a nice-to-have, safe to skip */ }
+
+    // Low halo ring + particle field beneath the shoe — an abstract
+    // "data plane" echoing the rest of the dashboard, not the main subject.
     var group = new THREE.Group();
-    group.position.y = -0.02;
     scene.add(group);
 
     var ring = new THREE.Mesh(
-      new THREE.TorusGeometry(2.3, 0.03, 16, 120),
+      new THREE.TorusGeometry(1.3, 0.02, 16, 120),
       new THREE.MeshStandardMaterial({ color: accent, roughness: 0.35, metalness: 0.5 })
     );
     ring.rotation.x = Math.PI / 2.15;
     group.add(ring);
 
-    var dotCount = 60;
+    var dotCount = 50;
     var dotGeo = new THREE.BufferGeometry();
     var positions = new Float32Array(dotCount * 3);
     for (var i = 0; i < dotCount; i++) {
       var angle = (i / dotCount) * Math.PI * 2;
-      var radius = 2.3 + (Math.random() - 0.5) * 0.45;
+      var radius = 1.3 + (Math.random() - 0.5) * 0.3;
       positions[i * 3] = Math.cos(angle) * radius;
-      positions[i * 3 + 1] = (Math.random() - 0.5) * 0.35;
+      positions[i * 3 + 1] = (Math.random() - 0.5) * 0.2;
       positions[i * 3 + 2] = Math.sin(angle) * radius;
     }
     dotGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    var dots = new THREE.Points(dotGeo, new THREE.PointsMaterial({ color: accent, size: 0.05 }));
+    var dots = new THREE.Points(dotGeo, new THREE.PointsMaterial({ color: accent, size: 0.04 }));
     group.add(dots);
 
-    // Soft contact shadow beneath the runner's feet — a ShadowMaterial
-    // plane stays fully transparent except where the key light's shadow
-    // falls, so it reads as a grounded contact shadow, not a solid floor,
-    // against the transparent hero canvas.
+    // Soft contact shadow beneath the shoe — a ShadowMaterial plane stays
+    // fully transparent except where the key light's shadow falls, so it
+    // reads as a grounded contact shadow against the transparent canvas.
     var shadowPlane = new THREE.Mesh(
-      new THREE.CircleGeometry(1.5, 32),
-      new THREE.ShadowMaterial({ opacity: 0.4 })
+      new THREE.CircleGeometry(1.1, 32),
+      new THREE.ShadowMaterial({ opacity: 0.45 })
     );
     shadowPlane.rotation.x = -Math.PI / 2;
     shadowPlane.position.y = 0.001;
@@ -460,35 +492,52 @@ const HERO_SCRIPT = `<script defer>
 
     function renderFrame() { renderer.render(scene, camera); }
 
-    // ---- runner: a real rigged, skinned and textured human model with a
-    // baked running-cycle animation loaded via glTF, instead of a
-    // procedural stand-in built from primitive shapes — this is what
-    // actually reads as a runner rather than an abstract glowing figure.
-    var mixer = null;
+    // ---- product: a real, high-quality PBR sneaker model (leather, mesh
+    // and rubber materials, proper UVs) loaded via glTF — floating and
+    // slowly rotating like a premium product-showcase render, instead of
+    // an isolated running figure.
+    var shoe = null;
+    var lookTarget = new THREE.Vector3(0, 1, 0);
+    var hoverBase = 0.16;
 
-    if (!reduced && typeof THREE.GLTFLoader === 'function') {
+    if (typeof THREE.GLTFLoader === 'function') {
       try {
         var loader = new THREE.GLTFLoader();
         loader.load(
-          'https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/models/gltf/Soldier.glb',
+          'https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Assets@main/Models/MaterialsVariantsShoe/glTF-Binary/MaterialsVariantsShoe.glb',
           function (gltf) {
             try {
               var model = gltf.scene;
               model.traverse(function (o) {
-                if (o.isMesh) { o.castShadow = true; }
+                if (o.isMesh) { o.castShadow = true; o.receiveShadow = false; }
               });
-              model.position.set(0, 0, 0.4);
-              model.rotation.y = Math.PI * 0.82;
-              scene.add(model);
 
-              mixer = new THREE.AnimationMixer(model);
-              var clips = gltf.animations || [];
-              var runClip = null;
-              for (var i = 0; i < clips.length; i++) {
-                if (/run/i.test(clips[i].name)) { runClip = clips[i]; break; }
-              }
-              if (!runClip) runClip = clips[1] || clips[0];
-              if (runClip) mixer.clipAction(runClip).play();
+              // Auto-fit: normalize whatever native scale/units the model
+              // ships with to a fixed on-screen size, centered on its own
+              // footprint, instead of hand-tuned position/scale guesses.
+              var box = new THREE.Box3().setFromObject(model);
+              var size = box.getSize(new THREE.Vector3());
+              var maxDim = Math.max(size.x, size.y, size.z) || 1;
+              var targetSize = 2.1;
+              var scale = targetSize / maxDim;
+              model.scale.setScalar(scale);
+
+              box.setFromObject(model);
+              var center = box.getCenter(new THREE.Vector3());
+              model.position.x -= center.x;
+              model.position.z -= center.z;
+              model.position.y -= box.min.y; // rest on the ground plane
+              model.position.y += hoverBase; // then lift slightly, floating
+
+              model.rotation.y = Math.PI * 0.15;
+              model.rotation.z = -0.12;
+
+              box.setFromObject(model);
+              var fitted = box.getSize(new THREE.Vector3());
+              lookTarget.set(0, box.min.y + fitted.y * 0.5, 0);
+
+              shoe = model;
+              scene.add(model);
             } catch (e) { console.error('[dbg]', e); }
           },
           undefined,
@@ -500,18 +549,23 @@ const HERO_SCRIPT = `<script defer>
     if (reduced) { renderFrame(); return; }
 
     var clock = new THREE.Clock();
+    var t = 0;
 
     function animate() {
       var dt = Math.min(0.05, clock.getDelta());
+      t += dt;
 
       group.rotation.y += dt * 0.2;
       ring.rotation.z += dt * 0.1;
 
-      if (mixer) mixer.update(dt);
+      if (shoe) {
+        shoe.rotation.y += dt * 0.35;
+        shoe.position.y = hoverBase + Math.sin(t * 1.1) * 0.07;
+      }
 
-      camera.position.x += (mouseX * 1.1 - camera.position.x) * 0.04;
-      camera.position.y += (0.5 - mouseY * 0.45 - camera.position.y) * 0.04;
-      camera.lookAt(0, 1.0, 0);
+      camera.position.x += (1.6 + mouseX * 1.0 - camera.position.x) * 0.04;
+      camera.position.y += (1.15 - mouseY * 0.35 - camera.position.y) * 0.04;
+      camera.lookAt(lookTarget);
 
       renderFrame();
       requestAnimationFrame(animate);
