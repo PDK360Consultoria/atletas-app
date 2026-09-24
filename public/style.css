@@ -38,7 +38,8 @@ p.lede{color:var(--ink-dim); font-size:16px; margin:0 0 24px;}
 .grid{display:grid; gap:14px;}
 .grid.cols-2{grid-template-columns:1fr 1fr;}
 .grid.cols-4{grid-template-columns:repeat(4,1fr);}
-@media (max-width:640px){ .grid.cols-2, .grid.cols-4{grid-template-columns:1fr 1fr;} }
+.grid.cols-5{grid-template-columns:repeat(5,1fr);}
+@media (max-width:640px){ .grid.cols-2, .grid.cols-4, .grid.cols-5{grid-template-columns:1fr 1fr;} }
 .stat .k{font-family:'IBM Plex Mono',monospace; font-size:12px; color:var(--ink-faint); text-transform:uppercase; letter-spacing:0.06em; margin-bottom:6px;}
 .stat .v{font-family:'Archivo',sans-serif; font-weight:800; font-size:26px;}
 .stat .v .u{font-size:13px; font-weight:600; color:var(--ink-dim); margin-left:2px;}
@@ -203,13 +204,20 @@ details.trn[open] summary::before{content:'–';}
 .title-edit-toggle .title-edit-form input{flex:1; margin:0;}
 .title-edit-toggle .title-edit-form button{padding:10px 16px; font-size:13px; flex-shrink:0;}
 
-/* ---------- activity detail: collapsible blocks card ---------- */
-.blocks-card{padding:0;}
-.blocks-card summary{cursor:pointer; padding:22px 24px; font-family:'Archivo',sans-serif; font-weight:800; font-size:20px; list-style:none; display:flex; align-items:center;}
-.blocks-card summary::-webkit-details-marker{display:none;}
-.blocks-card summary::before{content:'+'; font-family:'IBM Plex Mono',monospace; font-weight:700; color:var(--accent); font-size:16px; margin-right:10px; width:16px; text-align:center; display:inline-block;}
-.blocks-card[open] summary::before{content:'–';}
-.blocks-card .blocks-body{padding:0 24px 22px;}
+/* ---------- activity detail: pace por tiro (interval reps) ---------- */
+.tiros-card .grid.cols-5 .card.stat{padding:14px 12px;}
+.tiros-bars{display:flex; align-items:flex-end; gap:8px; height:150px; margin-top:30px; padding-bottom:24px; overflow-x:auto;}
+.tiros-bars .tiro-bar{flex:1; min-width:30px; background:linear-gradient(180deg, var(--blue), var(--gold)); border-radius:6px 6px 2px 2px; position:relative;}
+.tiros-bars .tiro-bar.best{background:linear-gradient(180deg, var(--accent), var(--accent-2));}
+.tiros-bars .tiro-bar .pace-lbl{position:absolute; top:-22px; left:0; right:0; text-align:center; font-family:'IBM Plex Mono',monospace; font-size:11px; font-weight:700; color:var(--ink);}
+.tiros-bars .tiro-bar.best .pace-lbl{color:var(--accent);}
+.tiros-bars .tiro-bar .dist-lbl{position:absolute; bottom:-22px; left:0; right:0; text-align:center; font-family:'IBM Plex Mono',monospace; font-size:10px; color:var(--ink-faint);}
+
+/* ---------- activity detail: inline per-training coach chat ---------- */
+.coach-inline-form{display:flex; gap:8px; align-items:flex-end; margin-top:12px;}
+.coach-inline-form textarea{flex:1; min-height:42px; max-height:120px; resize:none; margin:0;}
+.coach-inline-form button{flex-shrink:0; width:42px; height:42px; padding:0; display:flex; align-items:center; justify-content:center;}
+.coach-inline-form button .icon-svg{width:18px; height:18px;}
 
 /* ---------- coach chat: typing indicator ---------- */
 .chat-typing{display:inline-flex; gap:4px; align-items:center; padding:2px 0;}
