@@ -1,4 +1,4 @@
-const { secToPace, fmtClock, fmtDate, esc, renderMarkdownLite, icon } = require('./lib/format');
+__PASTE_TEST_OK__const { secToPace, fmtClock, fmtDate, esc, renderMarkdownLite, icon } = require('./lib/format');
 
 // Runs site-wide: fades cards in as they scroll into view and adds a subtle
 // pointer-tilt to cards on hover. Pure progressive enhancement — cards are
@@ -662,16 +662,44 @@ const HERO_SCRIPT = `<script defer>
 
 function calendarHtml(calendar) {
   if (!calendar) return '';
+
+  // Per-day detail data for the click-to-open modal — built here (server
+  // side, with the real activity rows) so the client only needs to look
+  // up an already-formatted day, never re-fetch or reformat anything.
+  const dayData = {};
+  for (const week of calendar.weeks) {
+    for (const cell of week) {
+      if (!cell || (!cell.trainings.length && !cell.races.length)) continue;
+      dayData[cell.key] = {
+        label: fmtDate(cell.key),
+        trainings: cell.trainings.map(a => ({
+          id: a.id,
+          title: a.title,
+          type: a.workout_type || 'treino',
+          distance: a.distance_km != null ? `${a.distance_km}km` : null,
+          pace: a.avg_pace_sec ? `${secToPace(a.avg_pace_sec)}/km` : null,
+          time: a.duration_sec != null ? fmtClock(a.duration_sec) : null,
+        })),
+        races: cell.races.map(r => ({
+          name: r.name,
+          distance: r.distance_km ? `${r.distance_km}km` : null,
+          city: r.city || null,
+        })),
+      };
+    }
+  }
+
   const rows = calendar.weeks.map(week => `
     <div class="cal-row">
       ${week.map(cell => {
         if (!cell) return `<div class="cal-cell empty"></div>`;
+        const hasData = cell.trainings.length || cell.races.length;
         const dots = [
           cell.trainings.length ? `<span class="cal-dot dot-training" title="${cell.trainings.length} treino(s)"></span>` : '',
           cell.races.length ? `<span class="cal-dot dot-race" title="${esc(cell.races.map(r => r.name).join(', '))}"></span>` : '',
         ].join('');
-        const href = cell.trainings.length === 1 ? ` data-href="/activities/${cell.trainings[0].id}"` : '';
-        return `<div class="cal-cell${cell.isToday ? ' today' : ''}"${href}><span class="cal-daynum">${cell.day}</span><span class="cal-dots">${dots}</span></div>`;
+        const attr = hasData ? ` data-key="${cell.key}"` : '';
+        return `<div class="cal-cell${cell.isToday ? ' today' : ''}${hasData ? ' has-data' : ''}"${attr}><span class="cal-daynum">${cell.day}</span><span class="cal-dots">${dots}</span></div>`;
       }).join('')}
     </div>`).join('');
 
@@ -695,13 +723,63 @@ function calendarHtml(calendar) {
     <span><span class="cal-dot dot-race"></span>Prova</span>
   </div>
 </div>
+
+<div class="cal-modal-backdrop" id="cal-modal-backdrop">
+  <div class="cal-modal" role="dialog" aria-modal="true">
+    <div class="cal-modal-head">
+      <h3 id="cal-modal-title">—</h3>
+      <button type="button" class="cal-modal-close" id="cal-modal-close" aria-label="Fechar">×</button>
+    </div>
+    <div id="cal-modal-body"></div>
+  </div>
+</div>
+
+<script type="application/json" id="cal-days-data">${JSON.stringify(dayData).replace(/</g, '\\u003c')}</script>
 <script>
 (function(){
   try {
-    document.querySelectorAll('.cal-cell[data-href]').forEach(function(el){
-      el.style.cursor = 'pointer';
-      el.addEventListener('click', function(){ window.location.href = el.getAttribute('data-href'); });
+    var DAYS = JSON.parse(document.getElementById('cal-days-data').textContent || '{}');
+    var backdrop = document.getElementById('cal-modal-backdrop');
+    var titleEl = document.getElementById('cal-modal-title');
+    var bodyEl = document.getElementById('cal-modal-body');
+
+    function escHtml(s) {
+      return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+      });
+    }
+
+    function openDay(key) {
+      var d = DAYS[key];
+      if (!d) return;
+      titleEl.textContent = d.label || key;
+      var parts = [];
+      d.trainings.forEach(function(t){
+        var meta = [t.distance, t.pace, t.time].filter(Boolean).join(' · ');
+        parts.push('<a class="cal-modal-item cal-modal-training" href="/activities/' + t.id + '">' +
+          '<div class="t">' + escHtml(t.title) + '</div>' +
+          '<div class="d">' + escHtml(t.type) + (meta ? ' · ' + escHtml(meta) : '') + '</div>' +
+          '</a>');
+      });
+      d.races.forEach(function(r){
+        var meta = [r.distance, r.city].filter(Boolean).join(' · ');
+        parts.push('<a class="cal-modal-item cal-modal-race" href="/races">' +
+          '<div class="t">' + escHtml(r.name) + '</div>' +
+          '<div class="d">Prova' + (meta ? ' · ' + escHtml(meta) : '') + '</div>' +
+          '</a>');
+      });
+      bodyEl.innerHTML = parts.join('') || '<p class="cal-modal-empty">Nada registrado nesse dia.</p>';
+      backdrop.classList.add('open');
+    }
+
+    function closeModal() { backdrop.classList.remove('open'); }
+
+    document.querySelectorAll('.cal-cell[data-key]').forEach(function(el){
+      el.addEventListener('click', function(){ openDay(el.getAttribute('data-key')); });
     });
+    document.getElementById('cal-modal-close').addEventListener('click', closeModal);
+    backdrop.addEventListener('click', function(e){ if (e.target === backdrop) closeModal(); });
+    document.addEventListener('keydown', function(e){ if (e.key === 'Escape') closeModal(); });
   } catch (e) { console.error('[dbg]', e); }
 })();
 </script>`;
