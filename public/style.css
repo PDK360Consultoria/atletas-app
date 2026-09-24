@@ -62,8 +62,15 @@ button.danger{background:linear-gradient(155deg, var(--red), #a02f2f); color:#ff
 .err{background:rgba(209,67,67,0.12); border:1px solid var(--red); color:var(--red); border-radius:10px; padding:10px 14px; font-size:14px; margin-bottom:14px;}
 .ok{background:rgba(46,139,79,0.12); border:1px solid var(--green); color:var(--green); border-radius:10px; padding:10px 14px; font-size:14px; margin-bottom:14px;}
 .bars{display:flex; align-items:flex-end; gap:6px; height:120px; margin-top:10px;}
-.bars .bar{flex:1; background:linear-gradient(180deg, var(--blue), var(--gold)); border-radius:5px 5px 2px 2px; position:relative;}
+.bars .bar{flex:1; background:linear-gradient(180deg, var(--blue), var(--gold)); border-radius:5px 5px 2px 2px; position:relative; transition:opacity .12s ease, filter .12s ease;}
 .bars .bar .lbl{position:absolute; bottom:-20px; left:0; right:0; text-align:center; font-family:'IBM Plex Mono',monospace; font-size:10px; color:var(--ink-faint);}
+.bars .bar-km{cursor:pointer;}
+.bars:has(.bar-km:hover) .bar-km:not(:hover){opacity:.45;}
+.bars .bar-km:hover{filter:brightness(1.12);}
+.bars .bar-km .bar-tip{position:absolute; bottom:calc(100% + 10px); left:50%; transform:translateX(-50%) translateY(4px); background:var(--surface2); border:1px solid var(--line); border-radius:10px; padding:7px 11px; font-family:'IBM Plex Mono',monospace; font-size:11px; font-weight:700; color:var(--ink); white-space:nowrap; box-shadow:0 10px 22px -10px rgba(0,0,0,0.45); opacity:0; visibility:hidden; pointer-events:none; transition:opacity .12s ease, transform .12s ease; z-index:5;}
+.bars .bar-km .bar-tip::after{content:''; position:absolute; top:100%; left:50%; transform:translateX(-50%); border:5px solid transparent; border-top-color:var(--surface2);}
+.bars .bar-km:hover .bar-tip{opacity:1; visibility:visible; transform:translateX(-50%) translateY(0);}
+@media (max-width:640px){ .bars .bar-km .bar-tip{font-size:10px; padding:6px 9px;} }
 .auth-box{max-width:400px; margin:60px auto; padding:0 20px;}
 .center-logo{font-family:'Archivo Black',sans-serif; font-size:26px; text-align:center; margin-bottom:24px;}
 .muted{color:var(--ink-faint); font-size:13px;}
