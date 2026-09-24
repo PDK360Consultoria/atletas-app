@@ -224,20 +224,26 @@ details.trn[open] summary::before{content:'–';}
 .tiros-bars .tiro-bar.best .pace-lbl{color:var(--accent);}
 .tiros-bars .tiro-bar .dist-lbl{position:absolute; bottom:-22px; left:0; right:0; text-align:center; font-family:'IBM Plex Mono',monospace; font-size:10px; color:var(--ink-faint);}
 
-/* ---------- activity detail: tiro bars get the same hover/tap card as km splits ---------- */
+/* ---------- activity detail: tiro bars get the same tooltip card as km
+   splits, but .tiros-bars scrolls horizontally (overflow-x:auto), and that
+   forces the browser to clip overflow-y too — so a plain absolutely
+   positioned tooltip here would get cut off instead of floating above the
+   bar. JS clones each bar's (hidden) .bar-tip content into one shared
+   .tiro-tip-float element appended to <body>, positioned with real
+   on-screen coordinates, which escapes that clipping entirely. ---------- */
 .tiros-bars .tiro-bar{cursor:pointer; outline:none;}
-.tiros-bars:has(.tiro-bar:hover) .tiro-bar:not(:hover){opacity:.45;}
-.tiros-bars:has(.tiro-bar.show-tip) .tiro-bar:not(.show-tip){opacity:.45;}
-.tiros-bars .tiro-bar:hover, .tiros-bars .tiro-bar.show-tip{filter:brightness(1.12);}
-.tiros-bars .tiro-bar .bar-tip{position:absolute; bottom:calc(100% + 26px); left:50%; transform:translateX(-50%) translateY(4px); background:var(--surface2); border:1px solid var(--line); border-radius:12px; padding:10px 13px; min-width:136px; box-shadow:0 14px 28px -12px rgba(0,0,0,0.5); opacity:0; visibility:hidden; pointer-events:none; transition:opacity .12s ease, transform .12s ease; z-index:5;}
-.tiros-bars .tiro-bar .bar-tip::after{content:''; position:absolute; top:100%; left:50%; transform:translateX(-50%); border:5px solid transparent; border-top-color:var(--surface2);}
-.tiros-bars .tiro-bar .bar-tip-title{font-family:'IBM Plex Mono',monospace; font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:0.05em; color:var(--accent); margin-bottom:6px; white-space:nowrap;}
-.tiros-bars .tiro-bar .bar-tip-row{display:flex; justify-content:space-between; align-items:baseline; gap:16px; font-size:12px; color:var(--ink-dim); padding:2px 0; white-space:nowrap;}
-.tiros-bars .tiro-bar .bar-tip-row strong{color:var(--ink); font-family:'IBM Plex Mono',monospace; font-weight:700;}
-.tiros-bars .tiro-bar:hover .bar-tip, .tiros-bars .tiro-bar:focus-visible .bar-tip, .tiros-bars .tiro-bar.show-tip .bar-tip{opacity:1; visibility:visible; transform:translateX(-50%) translateY(0);}
+.tiros-bars .tiro-bar .bar-tip{display:none;}
+.tiro-tip-float{position:fixed; transform:translate(-50%, calc(-100% - 14px)); background:var(--surface2); border:1px solid var(--line); border-radius:12px; padding:10px 13px; min-width:136px; box-shadow:0 14px 28px -12px rgba(0,0,0,0.5); opacity:0; visibility:hidden; pointer-events:none; transition:opacity .12s ease; z-index:999;}
+.tiro-tip-float::after{content:''; position:absolute; top:100%; left:50%; transform:translateX(-50%); border:5px solid transparent; border-top-color:var(--surface2);}
+.tiro-tip-float.show{opacity:1; visibility:visible;}
+.tiro-tip-float .bar-tip-title{font-family:'IBM Plex Mono',monospace; font-size:11px; font-weight:800; text-transform:uppercase; letter-spacing:0.05em; color:var(--accent); margin-bottom:6px; white-space:nowrap;}
+.tiro-tip-float .bar-tip-row{display:flex; justify-content:space-between; align-items:baseline; gap:16px; font-size:12px; color:var(--ink-dim); padding:2px 0; white-space:nowrap;}
+.tiro-tip-float .bar-tip-row strong{color:var(--ink); font-family:'IBM Plex Mono',monospace; font-weight:700;}
+.tiros-bars:has(.tiro-bar.tip-active) .tiro-bar:not(.tip-active){opacity:.45;}
+.tiros-bars .tiro-bar.tip-active{filter:brightness(1.12);}
 .tiros-bars .tiro-bar .pace-lbl{transition:opacity .12s ease;}
-.tiros-bars .tiro-bar:hover .pace-lbl, .tiros-bars .tiro-bar:focus-visible .pace-lbl, .tiros-bars .tiro-bar.show-tip .pace-lbl{opacity:0;}
-@media (max-width:640px){ .tiros-bars .tiro-bar .bar-tip{font-size:11px; padding:8px 11px; min-width:118px;} }
+.tiros-bars .tiro-bar.tip-active .pace-lbl{opacity:0;}
+@media (max-width:640px){ .tiro-tip-float{font-size:11px; padding:8px 11px; min-width:118px;} }
 
 /* ---------- activity detail: inline per-training coach chat ---------- */
 .coach-inline-form{display:flex; gap:8px; align-items:flex-end; margin-top:12px;}
