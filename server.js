@@ -15,6 +15,7 @@ const { computeEvolution } = require('./lib/stats');
 const { buildContext, buildActivityFocusContext, streamChatWithAssistant } = require('./lib/assistant');
 const { fetchNearbyRaces } = require('./lib/races');
 const { buildMonthCalendar } = require('./lib/calendar');
+const { ensurePublicSlug, buildShareDraft, notify } = require('./lib/social');
 const views = require('./views');
 const { coachPage } = require('./views_coach');
 
@@ -53,6 +54,21 @@ async function handle(req, res) {
   }
 
   const cookies = parseCookies(req);
+
+  // Feed photos — auth-gated (the feed itself is only visible to signed-in
+  // athletes). Filename is generated server-side, so this regex is just a
+  // sanity check, not a real parsing surface.
+  const uploadMatch = method === 'GET' ? /^\/uploads\/([a-zA-Z0-9._-]+)$/.exec(pathname) : null;
+  if (uploadMatch) {
+    if (!getUserFromToken(cookies.session)) return redirect(res, '/login');
+    const filePath = path.join(UPLOAD_DIR, uploadMatch[1]);
+    if (!filePath.startsWith(UPLOAD_DIR) || !fs.existsSync(filePath)) return notFound(res);
+    const ext = path.extname(filePath).toLowerCase();
+    const mime = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.gif': 'image/gif', '.webp': 'image/webp' }[ext] || 'application/octet-stream';
+    res.writeHead(200, { 'content-type': mime, 'cache-control': 'private, max-age=86400' });
+    return res.end(fs.readFileSync(filePath));
+  }
+
   const user = getUserFromToken(cookies.session);
   const isForm = method === 'POST' && (req.headers['content-type'] || '').includes('application/x-www-form-urlencoded');
   const isMultipart = method === 'POST' && (req.headers['content-type'] || '').includes('multipart/form-data');
@@ -236,7 +252,8 @@ async function handle(req, res) {
       if (!activity) return notFound(res);
       const laps = activity.laps_json ? JSON.parse(activity.laps_json) : [];
       const intervals = activity.intervals_json ? JSON.parse(activity.intervals_json) : [];
-      return html(res, 200, views.activityDetailPage({ user, activity, laps, intervals, aiEnabled: !!user.anthropic_api_key }));
+      const evolution = computeEvolution(db.prepare('SELECT * FROM activities WHERE user_id = ?').all(user.id));
+      return html(res, 200, views.activityDetailPage({ user, activity, laps, intervals, evolution, aiEnabled: !!user.anthropic_api_key }));
     }
     if (method === 'POST' && (m = /^\/activities\/(\d+)\/rename$/.exec(pathname))) {
       if (!requireAuth()) return;
@@ -260,6 +277,12 @@ async function handle(req, res) {
       }
       return redirect(res, `/activities/${activity.id}`);
     }
+    if (method === 'GET' && (m = /^\/activities\/(\d+)\/story$/.exec(pathname))) {
+      if (!requireAuth()) return;
+      const activity = db.prepare('SELECT * FROM activities WHERE id = ? AND user_id = ?').get(m[1], user.id);
+      if (!activity) return notFound(res);
+      return html(res, 200, views.storyPage(user, activity));
+    }
     if (method === 'POST' && (m = /^\/activities\/(\d+)\/delete$/.exec(pathname))) {
       if (!requireAuth()) return;
       db.prepare('DELETE FROM blocks WHERE activity_id = ?').run(m[1]);
@@ -269,31 +292,118 @@ async function handle(req, res) {
     }
 
     // ---------- feed ----------
+    // Shared feed: every registered athlete sees everyone else's posts (no
+    // follow graph — see README's "sem grafo social" note, which this
+    // intentionally supersedes per the athlete's own request).
     if (method === 'GET' && pathname === '/feed') {
       if (!requireAuth()) return;
-      const posts = db.prepare(`SELECT p.*, a.title as activity_title FROM posts p
+      const posts = db.prepare(`SELECT p.*, a.title as activity_title, u.name as author_name, u.public_slug as author_slug,
+          (SELECT COUNT(*) FROM reactions r WHERE r.post_id = p.id) as kudos_count,
+          EXISTS(SELECT 1 FROM reactions r WHERE r.post_id = p.id AND r.user_id = ?) as reacted,
+          (SELECT COUNT(*) FROM comments c WHERE c.post_id = p.id) as comment_count
+        FROM posts p
+        JOIN users u ON u.id = p.user_id
         LEFT JOIN activities a ON a.id = p.activity_id
-        WHERE p.user_id = ? ORDER BY p.created_at DESC`).all(user.id);
-      return html(res, 200, views.feedPage(user, posts));
+        ORDER BY p.created_at DESC LIMIT 100`).all(user.id);
+
+      if (posts.length) {
+        const placeholders = posts.map(() => '?').join(',');
+        const comments = db.prepare(`SELECT c.*, u.name as author_name FROM comments c
+          JOIN users u ON u.id = c.user_id
+          WHERE c.post_id IN (${placeholders}) ORDER BY c.created_at ASC`).all(...posts.map((p) => p.id));
+        const byPost = new Map();
+        for (const c of comments) {
+          if (!byPost.has(c.post_id)) byPost.set(c.post_id, []);
+          byPost.get(c.post_id).push(c);
+        }
+        posts.forEach((p) => { p.comments = byPost.get(p.id) || []; });
+      }
+
+      let shareDraft = null, shareActivity = null;
+      if (parsed.query.share_activity) {
+        shareActivity = db.prepare('SELECT * FROM activities WHERE id = ? AND user_id = ?').get(parsed.query.share_activity, user.id);
+        if (shareActivity) shareDraft = buildShareDraft(shareActivity);
+      }
+      return html(res, 200, views.feedPage(user, posts, { shareDraft, shareActivity }));
     }
     if (method === 'POST' && pathname === '/feed') {
       if (!requireAuth()) return;
       if (fields.body && fields.body.trim()) {
-        db.prepare('INSERT INTO posts (user_id, activity_id, body) VALUES (?,?,?)')
-          .run(user.id, fields.activity_id ? parseInt(fields.activity_id, 10) : null, fields.body.trim());
+        let photoPath = null;
+        const photo = files.photo;
+        if (photo && photo.data && photo.data.length) {
+          const ext = (path.extname(photo.filename || '').slice(0, 5) || '').replace(/[^.a-zA-Z0-9]/g, '');
+          photoPath = `post_${Date.now()}_${crypto.randomBytes(4).toString('hex')}${ext}`;
+          fs.writeFileSync(path.join(UPLOAD_DIR, photoPath), photo.data);
+        }
+        db.prepare('INSERT INTO posts (user_id, activity_id, body, photo_path) VALUES (?,?,?,?)')
+          .run(user.id, fields.activity_id ? parseInt(fields.activity_id, 10) : null, fields.body.trim(), photoPath);
       }
       return redirect(res, fields.activity_id ? `/activities/${fields.activity_id}` : '/feed');
+    }
+    if (method === 'POST' && (m = /^\/feed\/(\d+)\/react$/.exec(pathname))) {
+      if (!requireAuth()) return;
+      const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(m[1]);
+      if (!post) return notFound(res);
+      const existing = db.prepare('SELECT id FROM reactions WHERE post_id = ? AND user_id = ?').get(post.id, user.id);
+      if (existing) {
+        db.prepare('DELETE FROM reactions WHERE id = ?').run(existing.id);
+      } else {
+        db.prepare('INSERT INTO reactions (post_id, user_id) VALUES (?,?)').run(post.id, user.id);
+        notify(db, { userId: post.user_id, actorUserId: user.id, type: 'kudos', postId: post.id, body: `${user.name} curtiu seu post` });
+      }
+      return redirect(res, '/feed');
+    }
+    if (method === 'POST' && (m = /^\/feed\/(\d+)\/comment$/.exec(pathname))) {
+      if (!requireAuth()) return;
+      const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(m[1]);
+      if (!post) return notFound(res);
+      const body = (fields.body || '').trim();
+      if (body) {
+        db.prepare('INSERT INTO comments (post_id, user_id, body) VALUES (?,?,?)').run(post.id, user.id, body);
+        notify(db, { userId: post.user_id, actorUserId: user.id, type: 'comment', postId: post.id, body: `${user.name} comentou no seu post` });
+      }
+      return redirect(res, '/feed');
+    }
+
+    // ---------- public profile (no login) ----------
+    if (method === 'GET' && (m = /^\/u\/([a-zA-Z0-9-]+)$/.exec(pathname))) {
+      const profileUser = db.prepare('SELECT * FROM users WHERE public_slug = ?').get(m[1]);
+      if (!profileUser) return notFound(res);
+      const activities = db.prepare('SELECT * FROM activities WHERE user_id = ?').all(profileUser.id);
+      const evolution = computeEvolution(activities);
+      const upcomingRaces = db.prepare(`SELECT * FROM races WHERE user_id = ? AND (race_date IS NULL OR race_date >= date('now')) ORDER BY race_date ASC LIMIT 3`).all(profileUser.id);
+      return html(res, 200, views.publicProfilePage(user, profileUser, evolution, upcomingRaces));
+    }
+
+    // ---------- notifications (in-app only) ----------
+    if (method === 'GET' && pathname === '/api/notifications') {
+      if (!user) { res.writeHead(401); return res.end('{"error":"auth"}'); }
+      const notifications = db.prepare(`SELECT n.*, u.name as actor_name FROM notifications n
+        JOIN users u ON u.id = n.actor_user_id
+        WHERE n.user_id = ? ORDER BY n.created_at DESC LIMIT 30`).all(user.id);
+      const unread = db.prepare('SELECT COUNT(*) as c FROM notifications WHERE user_id = ? AND read_at IS NULL').get(user.id).c;
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+      return res.end(JSON.stringify({ notifications, unread }));
+    }
+    if (method === 'POST' && pathname === '/api/notifications/read') {
+      if (!user) { res.writeHead(401); return res.end('{"error":"auth"}'); }
+      db.prepare(`UPDATE notifications SET read_at = datetime('now') WHERE user_id = ? AND read_at IS NULL`).run(user.id);
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+      return res.end('{"ok":true}');
     }
 
     // ---------- settings ----------
     if (method === 'GET' && pathname === '/settings') {
       if (!requireAuth()) return;
+      const slug = ensurePublicSlug(db, user);
       return html(res, 200, views.settingsPage(user, {
         saved: parsed.query.saved,
         stravaConnected: parsed.query.strava_connected,
         stravaError: parsed.query.strava_error,
         stravaDisconnected: parsed.query.strava_disconnected,
         stravaConfigured: strava.isConfigured(),
+        publicUrl: `${baseUrl(req)}/u/${slug}`,
       }));
     }
     if (method === 'POST' && pathname === '/settings') {
