@@ -381,8 +381,8 @@ const HERO_SCRIPT = `<script defer>
     }
 
     var scene = new THREE.Scene();
-    var camera = new THREE.PerspectiveCamera(38, 1, 0.1, 100);
-    camera.position.set(1.6, 1.15, 5.4);
+    var camera = new THREE.PerspectiveCamera(36, 1, 0.1, 100);
+    camera.position.set(1.7, 1.4, 6.0);
 
     // ---- studio three-point lighting, tuned for a product-shot showcase
     // rather than an outdoor scene: soft ambient fill, a strong key light
@@ -469,6 +469,65 @@ const HERO_SCRIPT = `<script defer>
     shadowPlane.receiveShadow = true;
     scene.add(shadowPlane);
 
+    // ---- AI core: a small geometric "AI" orb hovering above the shoe —
+    // a wireframe icosahedron with a glowing center, orbiting satellites,
+    // and a pulsing energy tether running down to the product. Reads as
+    // "the AI, powered by the shoe" rather than a literal figure.
+    var orbGroup = new THREE.Group();
+    scene.add(orbGroup);
+    var orbBaseY = 1.6; // replaced once the shoe's real height is known
+
+    var orbCore = new THREE.Mesh(
+      new THREE.SphereGeometry(0.14, 24, 24),
+      new THREE.MeshBasicMaterial({ color: accent, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false })
+    );
+    orbGroup.add(orbCore);
+
+    var orbWire = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(0.23, 1),
+      new THREE.MeshBasicMaterial({ color: accent2, wireframe: true, transparent: true, opacity: 0.85 })
+    );
+    orbGroup.add(orbWire);
+
+    var satellites = [];
+    for (var si = 0; si < 3; si++) {
+      var sat = new THREE.Mesh(
+        new THREE.SphereGeometry(0.03, 12, 12),
+        new THREE.MeshBasicMaterial({ color: si % 2 ? accent : accent2 })
+      );
+      satellites.push({ mesh: sat, r: 0.36 + si * 0.08, speed: 0.55 + si * 0.3, offset: si * 2.1, incl: 0.3 + si * 0.22 });
+      orbGroup.add(sat);
+    }
+
+    function makeGlowSprite(colorHex, size) {
+      var c = document.createElement('canvas');
+      c.width = c.height = 64;
+      var ctx = c.getContext('2d');
+      var g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+      var col = '#' + colorHex.toString(16).padStart(6, '0');
+      g.addColorStop(0, col);
+      g.addColorStop(0.4, col);
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(0, 0, 64, 64);
+      var sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false }));
+      sprite.scale.set(size, size, 1);
+      return sprite;
+    }
+
+    var tetherCurve = new THREE.QuadraticBezierCurve3(
+      new THREE.Vector3(0, 0.7, 0),
+      new THREE.Vector3(0.12, 1.05, 0.08),
+      new THREE.Vector3(0.08, 1.35, 0)
+    );
+    var tetherMesh = new THREE.Mesh(
+      new THREE.TubeGeometry(tetherCurve, 24, 0.005, 6, false),
+      new THREE.MeshBasicMaterial({ color: accent, transparent: true, opacity: 0.5 })
+    );
+    scene.add(tetherMesh);
+    var tetherPulse = makeGlowSprite(accent, 0.12);
+    scene.add(tetherPulse);
+
     var mouseX = 0, mouseY = 0;
     hero.addEventListener('mousemove', function(e){
       var r = hero.getBoundingClientRect();
@@ -497,7 +556,7 @@ const HERO_SCRIPT = `<script defer>
     // slowly rotating like a premium product-showcase render, instead of
     // an isolated running figure.
     var shoe = null;
-    var lookTarget = new THREE.Vector3(0, 1, 0);
+    var lookTarget = new THREE.Vector3(0, 1.1, 0);
     var hoverBase = 0.16;
 
     if (typeof THREE.GLTFLoader === 'function') {
@@ -534,7 +593,19 @@ const HERO_SCRIPT = `<script defer>
 
               box.setFromObject(model);
               var fitted = box.getSize(new THREE.Vector3());
-              lookTarget.set(0, box.min.y + fitted.y * 0.5, 0);
+              var shoeTop = box.min.y + fitted.y;
+              lookTarget.set(0.05, shoeTop + 0.2, 0);
+
+              // anchor the AI orb and its tether to the shoe's real
+              // (auto-fitted) top, instead of the placeholder guess used
+              // before the model's actual size was known.
+              orbBaseY = shoeTop + 0.5;
+              orbGroup.position.set(0.1, orbBaseY, 0);
+              tetherCurve.v0.set(0, shoeTop - 0.05, 0);
+              tetherCurve.v1.set(0.12, shoeTop + 0.28, 0.08);
+              tetherCurve.v2.set(0.08, shoeTop + 0.5, 0);
+              tetherMesh.geometry.dispose();
+              tetherMesh.geometry = new THREE.TubeGeometry(tetherCurve, 24, 0.005, 6, false);
 
               shoe = model;
               scene.add(model);
@@ -563,8 +634,19 @@ const HERO_SCRIPT = `<script defer>
         shoe.position.y = hoverBase + Math.sin(t * 1.1) * 0.07;
       }
 
-      camera.position.x += (1.6 + mouseX * 1.0 - camera.position.x) * 0.04;
-      camera.position.y += (1.15 - mouseY * 0.35 - camera.position.y) * 0.04;
+      orbWire.rotation.y += dt * 0.6;
+      orbWire.rotation.x += dt * 0.2;
+      orbGroup.position.y = orbBaseY + Math.sin(t * 1.3) * 0.05;
+      for (var si2 = 0; si2 < satellites.length; si2++) {
+        var s = satellites[si2];
+        var a = t * s.speed + s.offset;
+        s.mesh.position.set(Math.cos(a) * s.r, Math.sin(a * 0.7) * s.r * s.incl, Math.sin(a) * s.r);
+      }
+      var tp = tetherCurve.getPointAt((t * 0.6) % 1);
+      tetherPulse.position.copy(tp);
+
+      camera.position.x += (1.7 + mouseX * 1.0 - camera.position.x) * 0.04;
+      camera.position.y += (1.4 - mouseY * 0.35 - camera.position.y) * 0.04;
       camera.lookAt(lookTarget);
 
       renderFrame();
