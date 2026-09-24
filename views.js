@@ -1137,7 +1137,10 @@ function activityDetailPage({ user, activity, laps, intervals, evolution, aiEnab
   const maxSplit = laps.length ? Math.max(...laps.map(l => l.split_sec)) : 1;
   const bars = laps.map(l => {
     const h = Math.max(8, Math.round((l.split_sec / maxSplit) * 100));
-    return `<div class="bar" style="height:${h}%;"><div class="lbl">${l.km}</div></div>`;
+    const tipBits = [`Km ${l.km}`, `${secToPace(l.split_sec)}/km`];
+    if (l.cum_sec != null) tipBits.push(`${fmtClock(l.cum_sec)} acum.`);
+    if (l.avg_hr) tipBits.push(`${l.avg_hr} bpm`);
+    return `<div class="bar bar-km" style="height:${h}%;"><div class="bar-tip">${tipBits.join(' · ')}</div><div class="lbl">${l.km}</div></div>`;
   }).join('');
 
   let bestKm = null, worstKm = null;
