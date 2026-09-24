@@ -104,39 +104,27 @@ button.danger{background:linear-gradient(155deg, var(--red), #a02f2f); color:#ff
   background:linear-gradient(150deg, var(--surface2), var(--surface));
   box-shadow:inset 0 1px 0 rgba(255,255,255,0.5), inset 0 -2px 3px rgba(0,0,0,0.14), 0 4px 10px -6px rgba(var(--glow),0.4);}
 
+/* ---------- hero badge (spinning shoe token, parallaxes with the cursor) ---------- */
+.hero-badge{position:absolute; top:26px; right:26px; z-index:3; width:76px; height:76px; border-radius:22px;
+  display:flex; align-items:center; justify-content:center; padding:18px;
+  background:linear-gradient(150deg, rgba(255,255,255,0.16), rgba(255,255,255,0.02));
+  backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
+  border:1px solid rgba(255,255,255,0.2);
+  box-shadow:0 22px 44px -16px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.28);
+  transition:transform .18s ease-out; will-change:transform;}
+.hero-badge .icon-svg{filter:drop-shadow(0 6px 10px rgba(0,0,0,0.45));}
+.hero-badge-glow{position:absolute; inset:-55%; border-radius:50%; background:radial-gradient(circle, rgba(var(--glow),0.4), transparent 70%); filter:blur(14px); z-index:-1;}
+@media (max-width:640px){ .hero-badge{width:58px; height:58px; top:16px; right:16px; padding:14px;} }
+
 /* ---------- hero ---------- */
-.hero{position:relative; border-radius:26px; overflow:hidden; margin:24px 0 20px; min-height:280px; display:flex; align-items:stretch; background:linear-gradient(160deg, #1c1006 0%, #2a1608 55%, #150c05 100%);}
-.hero-overlay{position:absolute; inset:0; background:linear-gradient(180deg, rgba(10,8,6,0.05) 0%, rgba(10,8,6,0.78) 100%); pointer-events:none; z-index:1;}
-.hero-content{position:relative; z-index:2; padding:32px 30px 28px; color:#fff; flex:1; min-width:0; display:flex; flex-direction:column; justify-content:flex-end;}
+.hero{position:relative; border-radius:26px; overflow:hidden; margin:24px 0 20px; min-height:280px; display:flex; align-items:flex-end; background:linear-gradient(160deg, #1c1006 0%, #2a1608 55%, #150c05 100%);}
+.hero canvas{position:absolute; inset:0; width:100%; height:100%; display:block;}
+.hero-overlay{position:absolute; inset:0; background:linear-gradient(180deg, rgba(10,8,6,0.05) 0%, rgba(10,8,6,0.78) 100%); pointer-events:none;}
+.hero-content{position:relative; z-index:2; padding:32px 30px 28px; color:#fff; width:100%;}
 .hero-eyebrow{font-family:'IBM Plex Mono',monospace; font-size:11px; text-transform:uppercase; letter-spacing:0.12em; color:#FFC24E; margin-bottom:10px;}
 .hero-content h1{margin:0 0 6px; color:#fff; text-shadow:0 2px 20px rgba(0,0,0,0.4);}
 .hero-content .lede{color:rgba(255,255,255,0.8); margin:0;}
 @media (max-width:640px){ .hero{min-height:220px;} .hero-content{padding:22px 18px 20px;} }
-
-/* ---------- hero runner (stylized SVG/SMIL stroboscopic runner, right side of the hero) ---------- */
-.hero-runner{position:relative; z-index:2; width:230px; flex-shrink:0; display:flex; align-items:flex-end; justify-content:center; padding-bottom:18px;}
-.hero-runner-clip{position:relative; width:100%; height:230px; overflow:hidden;}
-.hero-runner-floor{position:absolute; bottom:30px; left:8px; right:8px; height:1px; background:linear-gradient(90deg, transparent, rgba(255,194,78,0.32), transparent);}
-.hero-speed-line{position:absolute; height:2px; right:12px; background:linear-gradient(90deg, transparent, rgba(255,194,78,0.55)); animation:heroSpeedGo 0.7s linear infinite;}
-.hero-speed-line.sl1{width:52px; top:78px;}
-.hero-speed-line.sl2{width:34px; top:112px; animation-delay:.18s;}
-.hero-speed-line.sl3{width:44px; top:148px; animation-delay:.36s;}
-@keyframes heroSpeedGo{0%{opacity:0; transform:translateX(0);} 30%{opacity:1;} 100%{opacity:0; transform:translateX(-30px);}}
-.hero-runner-track{position:absolute; inset:0; animation:heroRunAcross 2.4s linear infinite;}
-@keyframes heroRunAcross{0%{transform:translateX(-70px);} 100%{transform:translateX(190px);}}
-.hero-rig{position:absolute; left:50%; bottom:22px; margin-left:-95px;}
-.hero-rig .limbline{fill:none; stroke-linecap:round;}
-.hero-rig.echo2{opacity:.22; filter:blur(2px); transform:translateX(-24px);}
-.hero-rig.echo1{opacity:.42; filter:blur(1px); transform:translateX(-11px);}
-.hero-rig.echo2 .limbline{stroke:#FF8A3D;}
-.hero-rig.echo1 .limbline{stroke:#FFB25E;}
-.hero-rig.main .limbline{stroke:#FFE6B0;}
-.hero-rig.main .head{fill:#FFE6B0;}
-.hero-rig.echo1 .head{fill:#FFB25E;}
-.hero-rig.echo2 .head{fill:#FF8A3D;}
-.hero-rig.main{filter:drop-shadow(0 0 6px rgba(255,224,170,0.85));}
-@media (prefers-reduced-motion: reduce){ .hero-runner-track, .hero-speed-line{animation:none;} }
-@media (max-width:640px){ .hero-runner{display:none;} }
 
 /* ---------- collapsible trainings ---------- */
 details.trn{border-bottom:1px solid var(--line); padding:4px 0;}
