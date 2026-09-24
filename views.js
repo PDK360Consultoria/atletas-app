@@ -1,4 +1,4 @@
-const { secToPace, fmtClock, fmtDate, esc, renderMarkdownLite, icon } = require('./lib/format');
+const { secToPace, fmtClock, fmtDate, timeAgo, esc, renderMarkdownLite, icon } = require('./lib/format');
 const { summarizeIntervals } = require('./lib/intervals');
 const { estimateVO2max } = require('./lib/stats');
 
@@ -1357,15 +1357,25 @@ function initials(name) {
   return (first + last).toUpperCase();
 }
 
+// Cycles avatar background through a few of the app's existing accent
+// colors (blue/green/red/amber/purple, on top of the default accent/accent-2
+// pair) so the feed reads as a feed of different people at a glance instead
+// of a wall of identical orange circles. Purely cosmetic — same user always
+// gets the same color since it's derived from their id, never random.
+function avatarColorClass(userId) {
+  const n = (userId || 0) % 6;
+  return n ? ` c${n}` : '';
+}
+
 function postCard(user, p) {
   const mine = p.user_id === user.id;
   const comments = p.comments || [];
   return `<div class="card post-card">
   <div class="post-head">
-    <div class="post-avatar">${esc(initials(p.author_name))}</div>
+    <div class="post-avatar${avatarColorClass(p.user_id)}">${esc(initials(p.author_name))}</div>
     <div class="post-head-meta">
       <div class="post-name">${p.author_slug ? `<a href="/u/${esc(p.author_slug)}">${esc(p.author_name)}</a>` : esc(p.author_name)}${mine ? ' <span class="pill">você</span>' : ''}</div>
-      <div class="post-time">${fmtDate(p.created_at)}</div>
+      <div class="post-time" title="${esc(fmtDate(p.created_at))}">${timeAgo(p.created_at)}</div>
     </div>
   </div>
   <div class="post-body">${esc(p.body).replace(/\n/g, '<br>')}</div>
@@ -1378,9 +1388,10 @@ function postCard(user, p) {
     <span class="post-comment-count">${icon('chat', 'c' + p.id)}<span>${p.comment_count || 0}</span></span>
   </div>
   ${comments.length ? `<div class="post-comments">
-    ${comments.map((c) => `<div class="comment-item"><span class="comment-author">${esc(c.author_name)}</span> <span class="comment-body">${esc(c.body)}</span></div>`).join('')}
+    ${comments.map((c) => `<div class="comment-item"><span class="comment-author">${esc(c.author_name)}</span> <span class="comment-body">${esc(c.body)}</span><span class="comment-time">${timeAgo(c.created_at)}</span></div>`).join('')}
   </div>` : ''}
   <form method="POST" action="/feed/${p.id}/comment" class="comment-form">
+    <div class="post-avatar comment-avatar${avatarColorClass(user.id)}">${esc(initials(user.name))}</div>
     <input type="text" name="body" placeholder="Comentar..." required maxlength="500">
     <button class="ghost" type="submit">Enviar</button>
   </form>
@@ -1393,19 +1404,58 @@ function feedPage(user, posts, opts) {
 <h1>Feed</h1>
 <p class="lede">O que a galera está treinando.</p>
 <div class="card feed-composer">
-  <form method="POST" action="/feed" enctype="multipart/form-data">
-    ${opts.shareActivity ? `<div class="pill" style="margin-bottom:10px;"><input type="hidden" name="activity_id" value="${opts.shareActivity.id}"><span class="dot"></span>Vinculado a: ${esc(opts.shareActivity.title)}</div>` : ''}
-    <textarea name="body" placeholder="Compartilhe algo..." required>${opts.shareDraft ? esc(opts.shareDraft) : ''}</textarea>
-    <div class="row" style="margin-top:12px; justify-content:space-between;">
-      <label class="photo-input-label">
-        <input type="file" name="photo" accept="image/*" style="display:none;" onchange="this.nextElementSibling.textContent = this.files[0] ? this.files[0].name : 'Adicionar foto';">
-        <span class="ghost btn photo-btn">Adicionar foto</span>
-      </label>
-      <button type="submit">Postar</button>
+  <form method="POST" action="/feed" enctype="multipart/form-data" id="composerForm">
+    <div class="composer-row">
+      <div class="post-avatar composer-avatar${avatarColorClass(user.id)}">${esc(initials(user.name))}</div>
+      <div class="composer-main">
+        ${opts.shareActivity ? `<div class="pill" style="margin-bottom:10px;"><input type="hidden" name="activity_id" value="${opts.shareActivity.id}"><span class="dot"></span>Vinculado a: ${esc(opts.shareActivity.title)}</div>` : ''}
+        <textarea name="body" placeholder="Compartilhe algo..." required>${opts.shareDraft ? esc(opts.shareDraft) : ''}</textarea>
+        <div id="composerPreviewWrap" class="composer-preview-wrap" hidden>
+          <img id="composerPreview" alt="">
+          <button type="button" id="composerPreviewRemove" class="composer-preview-remove" aria-label="Remover foto">${icon('close', 'cpr')}</button>
+        </div>
+        <div class="row" style="margin-top:12px; justify-content:space-between;">
+          <label class="photo-input-label">
+            <input type="file" name="photo" id="composerPhotoInput" accept="image/*" style="display:none;">
+            <span class="ghost btn photo-btn" id="composerPhotoLabel">${icon('camera', 'cpl')}Adicionar foto</span>
+          </label>
+          <button type="submit">Postar</button>
+        </div>
+      </div>
     </div>
   </form>
 </div>
-${posts.length ? posts.map((p) => postCard(user, p)).join('') : `<div class="card"><p class="muted" style="margin:0;">Nenhum post ainda. Seja o primeiro a compartilhar um treino!</p></div>`}
+${posts.length ? `<div class="feed-list">${posts.map((p) => postCard(user, p)).join('')}</div>` : `<div class="card feed-empty">
+  <div class="feed-empty-icon">${icon('flame', 'fe1')}</div>
+  <p style="margin:0; font-weight:800;">Nenhum post ainda</p>
+  <p class="muted" style="margin:4px 0 0;">Seja o primeiro a compartilhar um treino com a galera.</p>
+</div>`}
+<script defer>
+(function(){
+  try {
+    var input = document.getElementById('composerPhotoInput');
+    var label = document.getElementById('composerPhotoLabel');
+    var wrap = document.getElementById('composerPreviewWrap');
+    var img = document.getElementById('composerPreview');
+    var removeBtn = document.getElementById('composerPreviewRemove');
+    if (!input || !label || !wrap || !img || !removeBtn) return;
+    var labelDefault = label.innerHTML;
+    input.addEventListener('change', function(){
+      var file = input.files && input.files[0];
+      if (!file) return;
+      img.src = URL.createObjectURL(file);
+      wrap.hidden = false;
+      label.textContent = file.name;
+    });
+    removeBtn.addEventListener('click', function(){
+      input.value = '';
+      wrap.hidden = true;
+      img.src = '';
+      label.innerHTML = labelDefault;
+    });
+  } catch (e) { console.error('[dbg]', e); }
+})();
+</script>
 `;
   return layout({ title: 'Feed', user, body, active: 'feed' });
 }
@@ -1416,7 +1466,7 @@ function publicProfilePage(viewer, profileUser, evolution, races) {
   const bestPaceSec = evolution.bestPace ? evolution.bestPace.avg_pace_sec : null;
   const body = `
 <div class="card profile-hero">
-  <div class="post-avatar profile-avatar">${esc(initials(profileUser.name))}</div>
+  <div class="post-avatar profile-avatar${avatarColorClass(profileUser.id)}">${esc(initials(profileUser.name))}</div>
   <div>
     <h1 style="margin:0 0 4px;">${esc(profileUser.name)}</h1>
     ${profileUser.city ? `<p class="muted" style="margin:0 0 6px;">${esc(profileUser.city)}</p>` : ''}
