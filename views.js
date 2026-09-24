@@ -1,5 +1,6 @@
 const { secToPace, fmtClock, fmtDate, esc, renderMarkdownLite, icon } = require('./lib/format');
 const { summarizeIntervals } = require('./lib/intervals');
+const { estimateVO2max } = require('./lib/stats');
 
 // Runs site-wide: fades cards in as they scroll into view and adds a subtle
 // pointer-tilt to cards on hover. Pure progressive enhancement — cards are
@@ -247,6 +248,69 @@ ready(function(){
 })();
 </script>`;
 
+const NOTIF_SCRIPT = `<script defer>
+(function(){
+function ready(fn){ if (document.readyState !== 'loading') fn(); else document.addEventListener('DOMContentLoaded', fn); }
+ready(function(){
+  var bell = document.getElementById('notifBell');
+  var panel = document.getElementById('notifPanel');
+  var badge = document.getElementById('notifBadge');
+  var list = document.getElementById('notifList');
+  if (!bell || !panel || !list) return;
+  var loaded = false;
+
+  function timeAgo(iso){
+    var d = new Date(iso.replace(' ', 'T') + 'Z');
+    var diff = Math.max(0, (Date.now() - d.getTime()) / 1000);
+    if (diff < 60) return 'agora';
+    if (diff < 3600) return Math.floor(diff/60) + 'min';
+    if (diff < 86400) return Math.floor(diff/3600) + 'h';
+    return Math.floor(diff/86400) + 'd';
+  }
+
+  function render(data){
+    if (!data.notifications || !data.notifications.length) {
+      list.innerHTML = '<p class="muted" style="margin:10px 14px;">Nenhuma notificação ainda.</p>';
+      return;
+    }
+    list.innerHTML = data.notifications.map(function(n){
+      var text = n.type === 'kudos' ? (n.actor_name + ' curtiu seu post') : (n.actor_name + ' comentou no seu post');
+      return '<a class="notif-item' + (n.read_at ? '' : ' unread') + '" href="/feed">' +
+        '<span class="notif-text">' + text + '</span>' +
+        '<span class="notif-time">' + timeAgo(n.created_at) + '</span></a>';
+    }).join('');
+  }
+
+  function refresh(){
+    fetch('/api/notifications').then(function(r){ return r.ok ? r.json() : null; }).then(function(data){
+      if (!data) return;
+      if (data.unread > 0) { badge.hidden = false; badge.textContent = data.unread > 9 ? '9+' : String(data.unread); }
+      else { badge.hidden = true; }
+      if (loaded) render(data);
+      else window._notifData = data;
+    }).catch(function(){});
+  }
+
+  bell.addEventListener('click', function(){
+    var open = panel.classList.toggle('open');
+    if (open) {
+      if (window._notifData) { render(window._notifData); loaded = true; }
+      if (!badge.hidden) {
+        badge.hidden = true;
+        fetch('/api/notifications/read', { method: 'POST' }).catch(function(){});
+      }
+    }
+  });
+  document.addEventListener('click', function(e){
+    if (!panel.contains(e.target) && !bell.contains(e.target)) panel.classList.remove('open');
+  });
+
+  refresh();
+  setInterval(refresh, 60000);
+});
+})();
+</script>`;
+
 function layout({ title, user, body, active, extraHead, bodyEnd, hideCoachWidget }) {
   const nav = user
     ? `<nav class="nav">
@@ -259,6 +323,16 @@ function layout({ title, user, body, active, extraHead, bodyEnd, hideCoachWidget
           <a class="link ${active === 'assistant' ? 'active' : ''}" href="/assistant">Coach IA</a>
           <a class="link ${active === 'coach' ? 'active' : ''}" href="/coach">Coach ao vivo</a>
           <a class="link ${active === 'settings' ? 'active' : ''}" href="/settings">Config</a>
+          <div class="notif-wrap" id="notifWrap">
+            <button class="notif-bell" id="notifBell" type="button" aria-label="Notificações">
+              ${icon('bell', 'nb')}
+              <span class="notif-badge" id="notifBadge" hidden>0</span>
+            </button>
+            <div class="notif-panel" id="notifPanel">
+              <div class="notif-panel-head">Notificações</div>
+              <div class="notif-list" id="notifList"><p class="muted" style="margin:10px 14px;">Carregando…</p></div>
+            </div>
+          </div>
           <a class="link" href="/logout">Sair</a>
         </div>
       </nav>`
@@ -284,6 +358,7 @@ ${showWidget ? coachWidgetHtml(user) : ''}
 ${MICRO_INTERACTIONS_SCRIPT}
 ${COACH_CHAT_SCRIPT}
 ${showWidget ? COACH_WIDGET_SCRIPT : ''}
+${user ? NOTIF_SCRIPT : ''}
 ${bodyEnd || ''}
 </body>
 </html>`;
@@ -1008,8 +1083,56 @@ ${error ? `<div class="err">${esc(error)}</div>` : ''}
   return layout({ title: 'Registrar treino', user, body, active: 'activities' });
 }
 
-function activityDetailPage({ user, activity, laps, intervals, aiEnabled }) {
+// Horizontal "this training vs. your average" comparison bars — always
+// rendered on the activity page (regardless of whether a km-split or tiros
+// chart is also available), so every single training has at least one
+// indicator chart even when there's no lap-level GPS data at all (a manual
+// entry, or a Strava activity whose laps couldn't be fetched).
+function compareBar(label, mineLabel, mineVal, avgVal, maxVal) {
+  if (mineVal == null) return '';
+  const minePct = maxVal > 0 ? Math.max(4, Math.min(100, Math.round((mineVal / maxVal) * 100))) : 0;
+  const avgPct = avgVal != null && maxVal > 0 ? Math.max(4, Math.min(100, Math.round((avgVal / maxVal) * 100))) : null;
+  return `<div class="cmp-row">
+    <div class="cmp-label">${esc(label)}</div>
+    <div class="cmp-track"><div class="cmp-fill mine" style="width:${minePct}%;"></div></div>
+    <div class="cmp-val">${esc(mineLabel)}</div>
+  </div>${avgPct != null ? `<div class="cmp-row cmp-row-avg">
+    <div class="cmp-label muted">média</div>
+    <div class="cmp-track"><div class="cmp-fill avg" style="width:${avgPct}%;"></div></div>
+    <div class="cmp-val muted"></div>
+  </div>` : ''}`;
+}
+
+function trainingCompareChart(activity, evolution) {
+  if (!evolution) return '';
+  const rows = [];
+  if (activity.distance_km != null) {
+    const max = Math.max(activity.distance_km, evolution.avgDistanceKm || 0) * 1.15 || 1;
+    rows.push(compareBar('Distância', `${activity.distance_km}km`, activity.distance_km, evolution.avgDistanceKm, max));
+  }
+  if (activity.avg_pace_sec != null) {
+    // Pace: "faster" means a smaller number, so invert to speed (km/h) for
+    // the bar's proportional width — otherwise a quicker run would draw a
+    // shorter bar, which reads backwards.
+    const mineSpeed = 3600 / activity.avg_pace_sec;
+    const avgSpeed = evolution.avgPaceSec ? 3600 / evolution.avgPaceSec : null;
+    const max = Math.max(mineSpeed, avgSpeed || 0) * 1.15 || 1;
+    rows.push(compareBar('Pace', `${secToPace(activity.avg_pace_sec)}/km`, mineSpeed, avgSpeed, max));
+  }
+  if (activity.avg_hr != null) {
+    const max = Math.max(activity.avg_hr, evolution.avgHr || 0) * 1.15 || 1;
+    rows.push(compareBar('FC média', `${activity.avg_hr}bpm`, activity.avg_hr, evolution.avgHr, max));
+  }
+  if (!rows.length) return '';
+  return `<div class="card cmp-card">
+  <h2><span class="h-icon">${icon('trophy', 'cmp')}</span>Este treino vs. sua média</h2>
+  ${rows.join('')}
+</div>`;
+}
+
+function activityDetailPage({ user, activity, laps, intervals, evolution, aiEnabled }) {
   const tiros = summarizeIntervals(intervals);
+  const vo2max = estimateVO2max(activity.distance_km, activity.duration_sec);
 
   const maxSplit = laps.length ? Math.max(...laps.map(l => l.split_sec)) : 1;
   const bars = laps.map(l => {
@@ -1074,6 +1197,8 @@ function activityDetailPage({ user, activity, laps, intervals, aiEnabled }) {
   <div class="card stat"><div class="icon-badge">${icon('heart', 'ad4')}</div><div class="k">FC média</div><div class="v">${activity.avg_hr ?? '—'}${activity.avg_hr ? '<span class="u">bpm</span>' : ''}</div></div>
   <div class="card stat"><div class="icon-badge">${icon('heart', 'ad5')}</div><div class="k">FC máxima</div><div class="v">${activity.max_hr ?? '—'}${activity.max_hr ? '<span class="u">bpm</span>' : ''}</div></div>
   <div class="card stat"><div class="icon-badge">${icon('mountain', 'ad6')}</div><div class="k">Elevação</div><div class="v">${activity.elevation_gain_m ?? '—'}${activity.elevation_gain_m != null ? '<span class="u">m</span>' : ''}</div></div>
+  <div class="card stat"><div class="icon-badge">${icon('flame', 'ad7')}</div><div class="k">Cadência</div><div class="v">${activity.cadence_spm ?? '—'}${activity.cadence_spm != null ? '<span class="u">spm</span>' : ''}</div></div>
+  <div class="card stat"><div class="icon-badge">${icon('trophy', 'ad8')}</div><div class="k">VO2 máx (estimado)</div><div class="v">${vo2max ?? '—'}${vo2max != null ? '<span class="u">ml/kg/min</span>' : ''}</div></div>
 </div>
 
 ${tirosHtml}
@@ -1083,6 +1208,8 @@ ${(!tiros && laps.length) ? `<div class="card">
   ${bestKm && worstKm ? `<p class="muted" style="margin:-4px 0 14px;">Melhor km: <strong>Km ${bestKm.km} · ${secToPace(bestKm.split_sec)}/km</strong> &nbsp;·&nbsp; Mais lento: <strong>Km ${worstKm.km} · ${secToPace(worstKm.split_sec)}/km</strong></p>` : ''}
   <div class="bars">${bars}</div>
 </div>` : ''}
+
+${trainingCompareChart(activity, evolution)}
 
 <div class="card">
   <h2><span class="h-icon">${icon('heart', 'ai')}</span>Análise com IA</h2>
@@ -1104,12 +1231,12 @@ ${aiEnabled ? `<div class="card">
 </div>` : ''}
 
 <div class="card">
-  <h2>Compartilhar no feed</h2>
-  <form method="POST" action="/feed">
-    <input type="hidden" name="activity_id" value="${activity.id}">
-    <textarea name="body" placeholder="Como foi o treino?">${activity.ai_analysis ? '' : ''}</textarea>
-    <div style="margin-top:12px;"><button class="ghost" type="submit">Postar</button></div>
-  </form>
+  <h2><span class="h-icon">${icon('chat', 'sh')}</span>Compartilhar</h2>
+  <p class="muted" style="margin:0 0 14px;">Poste esse treino no feed com uma legenda pronta a partir da sua análise, ou gere uma imagem para os stories.</p>
+  <div class="row">
+    <a class="btn" href="/feed?share_activity=${activity.id}">Compartilhar no feed</a>
+    <a class="ghost btn" href="/activities/${activity.id}/story">Gerar imagem para Stories</a>
+  </div>
 </div>
 
 <form method="POST" action="/activities/${activity.id}/delete" onsubmit="return confirm('Remover este treino?')">
@@ -1136,27 +1263,189 @@ ready(function(){
   return layout({ title: activity.title, user, body, active: 'activities', bodyEnd });
 }
 
-function feedPage(user, posts) {
+function initials(name) {
+  const parts = (name || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return '?';
+  const first = parts[0][0] || '';
+  const last = parts.length > 1 ? parts[parts.length - 1][0] : '';
+  return (first + last).toUpperCase();
+}
+
+function postCard(user, p) {
+  const mine = p.user_id === user.id;
+  const comments = p.comments || [];
+  return `<div class="card post-card">
+  <div class="post-head">
+    <div class="post-avatar">${esc(initials(p.author_name))}</div>
+    <div class="post-head-meta">
+      <div class="post-name">${p.author_slug ? `<a href="/u/${esc(p.author_slug)}">${esc(p.author_name)}</a>` : esc(p.author_name)}${mine ? ' <span class="pill">você</span>' : ''}</div>
+      <div class="post-time">${fmtDate(p.created_at)}</div>
+    </div>
+  </div>
+  <div class="post-body">${esc(p.body).replace(/\n/g, '<br>')}</div>
+  ${p.photo_path ? `<div class="post-photo"><img src="/uploads/${esc(p.photo_path)}" alt="" loading="lazy"></div>` : ''}
+  ${p.activity_title ? `<a class="pill post-activity-pill" href="/activities/${p.activity_id}"><span class="dot"></span>${esc(p.activity_title)}</a>` : ''}
+  <div class="post-actions">
+    <form method="POST" action="/feed/${p.id}/react">
+      <button class="kudos-btn${p.reacted ? ' active' : ''}" type="submit">${icon('flame', 'k' + p.id)}<span>${p.kudos_count || 0}</span></button>
+    </form>
+    <span class="post-comment-count">${icon('chat', 'c' + p.id)}<span>${p.comment_count || 0}</span></span>
+  </div>
+  ${comments.length ? `<div class="post-comments">
+    ${comments.map((c) => `<div class="comment-item"><span class="comment-author">${esc(c.author_name)}</span> <span class="comment-body">${esc(c.body)}</span></div>`).join('')}
+  </div>` : ''}
+  <form method="POST" action="/feed/${p.id}/comment" class="comment-form">
+    <input type="text" name="body" placeholder="Comentar..." required maxlength="500">
+    <button class="ghost" type="submit">Enviar</button>
+  </form>
+</div>`;
+}
+
+function feedPage(user, posts, opts) {
+  opts = opts || {};
   const body = `
 <h1>Feed</h1>
-<p class="lede">Seu histórico de treinos e conquistas.</p>
-<div class="card">
-  <form method="POST" action="/feed">
-    <textarea name="body" placeholder="Compartilhe algo..." required></textarea>
-    <div style="margin-top:12px;"><button type="submit">Postar</button></div>
+<p class="lede">O que a galera está treinando.</p>
+<div class="card feed-composer">
+  <form method="POST" action="/feed" enctype="multipart/form-data">
+    ${opts.shareActivity ? `<div class="pill" style="margin-bottom:10px;"><input type="hidden" name="activity_id" value="${opts.shareActivity.id}"><span class="dot"></span>Vinculado a: ${esc(opts.shareActivity.title)}</div>` : ''}
+    <textarea name="body" placeholder="Compartilhe algo..." required>${opts.shareDraft ? esc(opts.shareDraft) : ''}</textarea>
+    <div class="row" style="margin-top:12px; justify-content:space-between;">
+      <label class="photo-input-label">
+        <input type="file" name="photo" accept="image/*" style="display:none;" onchange="this.nextElementSibling.textContent = this.files[0] ? this.files[0].name : 'Adicionar foto';">
+        <span class="ghost btn photo-btn">Adicionar foto</span>
+      </label>
+      <button type="submit">Postar</button>
+    </div>
   </form>
 </div>
-<div class="card">
-  ${posts.length ? posts.map(p => `
-    <div class="post">
-      <div class="who">${esc(user.name)}</div>
-      <div class="when">${fmtDate(p.created_at)}</div>
-      <div class="body">${esc(p.body)}</div>
-      ${p.activity_title ? `<div style="margin-top:8px;"><a class="pill" href="/activities/${p.activity_id}"><span class="dot"></span>${esc(p.activity_title)}</a></div>` : ''}
-    </div>`).join('') : `<p class="muted" style="margin:0;">Nenhum post ainda.</p>`}
-</div>
+${posts.length ? posts.map((p) => postCard(user, p)).join('') : `<div class="card"><p class="muted" style="margin:0;">Nenhum post ainda. Seja o primeiro a compartilhar um treino!</p></div>`}
 `;
   return layout({ title: 'Feed', user, body, active: 'feed' });
+}
+
+function publicProfilePage(viewer, profileUser, evolution, races) {
+  const weekKm = evolution.weeks.length ? evolution.weeks[evolution.weeks.length - 1].km : 0;
+  const longestKm = evolution.longest ? evolution.longest.distance_km : null;
+  const bestPaceSec = evolution.bestPace ? evolution.bestPace.avg_pace_sec : null;
+  const body = `
+<div class="card profile-hero">
+  <div class="post-avatar profile-avatar">${esc(initials(profileUser.name))}</div>
+  <div>
+    <h1 style="margin:0 0 4px;">${esc(profileUser.name)}</h1>
+    ${profileUser.city ? `<p class="muted" style="margin:0 0 6px;">${esc(profileUser.city)}</p>` : ''}
+    ${profileUser.bio ? `<p style="margin:0;">${esc(profileUser.bio)}</p>` : ''}
+    ${profileUser.goal_race_name ? `<div class="pill" style="margin-top:10px;"><span class="dot"></span>Meta: ${esc(profileUser.goal_race_name)}${profileUser.goal_time_sec ? ` em ${fmtClock(profileUser.goal_time_sec)}` : ''}</div>` : ''}
+  </div>
+</div>
+
+<div class="grid cols-4">
+  <div class="card stat"><div class="icon-badge">${icon('mountain', 'pp1')}</div><div class="k">Total</div><div class="v">${evolution.totalKm.toFixed(0)}<span class="u">km</span></div></div>
+  <div class="card stat"><div class="icon-badge">${icon('flame', 'pp2')}</div><div class="k">Esta semana</div><div class="v">${weekKm.toFixed(1)}<span class="u">km</span></div></div>
+  <div class="card stat"><div class="icon-badge">${icon('stopwatch', 'pp3')}</div><div class="k">Melhor pace</div><div class="v">${secToPace(bestPaceSec)}${bestPaceSec ? '<span class="u">/km</span>' : ''}</div></div>
+  <div class="card stat"><div class="icon-badge">${icon('trophy', 'pp4')}</div><div class="k">Maior treino</div><div class="v">${longestKm != null ? longestKm.toFixed(1) : '—'}${longestKm != null ? '<span class="u">km</span>' : ''}</div></div>
+</div>
+
+${races.length ? `<div class="card">
+  <h2><span class="h-icon">${icon('calendar', 'pp5')}</span>Próximas provas</h2>
+  ${races.map((r) => `<div class="list-item"><div><div class="t">${esc(r.name)}</div><div class="d">${r.race_date ? fmtDate(r.race_date) : 'Data a definir'}${r.city ? ' · ' + esc(r.city) : ''}</div></div>${r.distance_km ? `<span class="pill">${r.distance_km}km</span>` : ''}</div>`).join('')}
+</div>` : ''}
+
+<p class="muted" style="margin-top:20px;">Perfil público do Atletas.${!viewer ? ' <a href="/signup">Crie o seu.</a>' : ''}</p>
+`;
+  return layout({ title: `${profileUser.name} · Perfil`, user: viewer, body, hideCoachWidget: true });
+}
+
+function storyPage(user, activity) {
+  const data = {
+    title: activity.title,
+    distance: activity.distance_km,
+    duration: fmtClock(activity.duration_sec),
+    pace: secToPace(activity.avg_pace_sec),
+    date: fmtDate(activity.started_at || activity.created_at),
+    athlete: user.name,
+  };
+  const dataJson = JSON.stringify(data).replace(/</g, '\\u003c');
+  const body = `
+<a href="/activities/${activity.id}" class="muted mono" style="font-size:12px;">← Treino</a>
+<h1>Imagem para Stories</h1>
+<p class="lede">Gerada no seu navegador — nada é enviado para o servidor.</p>
+<div class="card story-card">
+  <canvas id="storyCanvas" width="1080" height="1350"></canvas>
+  <div class="row" style="margin-top:16px;">
+    <button id="storyDownload" type="button">Baixar imagem</button>
+    <a class="ghost btn" href="/activities/${activity.id}">Voltar</a>
+  </div>
+</div>
+<script defer>
+(function(){
+  var DATA = ${dataJson};
+  function wrapText(ctx, text, x, y, maxWidth, lineHeight){
+    var words = (text || '').split(' ');
+    var line = '', lines = [];
+    for (var n = 0; n < words.length; n++) {
+      var test = line + words[n] + ' ';
+      if (ctx.measureText(test).width > maxWidth && n > 0) { lines.push(line); line = words[n] + ' '; }
+      else line = test;
+    }
+    lines.push(line);
+    lines.slice(0, 3).forEach(function(l, i){ ctx.fillText(l.trim(), x, y + i * lineHeight); });
+  }
+  function draw(){
+    var c = document.getElementById('storyCanvas');
+    var ctx = c.getContext('2d');
+    var W = c.width, H = c.height;
+    var grad = ctx.createLinearGradient(0, 0, W, H);
+    grad.addColorStop(0, '#1c1006');
+    grad.addColorStop(0.55, '#2a1608');
+    grad.addColorStop(1, '#150c05');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.fillStyle = 'rgba(255,255,255,0.06)';
+    for (var i = 0; i < 3; i++) { ctx.beginPath(); ctx.arc(W * 0.18 + i * 160, H * 0.1 + i * 50, 110, 0, Math.PI * 2); ctx.fill(); }
+
+    ctx.fillStyle = '#FFC24E';
+    ctx.font = '700 34px Arial, sans-serif';
+    ctx.fillText('ATLETAS', 60, 110);
+
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '800 56px Arial, sans-serif';
+    wrapText(ctx, DATA.title, 60, 220, W - 120, 66);
+
+    var stats = [
+      [DATA.distance != null ? DATA.distance + ' km' : '—', 'DISTÂNCIA'],
+      [DATA.duration, 'TEMPO'],
+      [DATA.pace + '/km', 'PACE MÉDIO'],
+    ];
+    var y = 560;
+    stats.forEach(function(s){
+      ctx.fillStyle = '#ffffff';
+      ctx.font = '800 84px Arial, sans-serif';
+      ctx.fillText(s[0], 60, y);
+      ctx.fillStyle = 'rgba(255,255,255,0.55)';
+      ctx.font = '600 26px Arial, sans-serif';
+      ctx.fillText(s[1], 60, y + 40);
+      y += 170;
+    });
+
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.font = '500 28px Arial, sans-serif';
+    ctx.fillText(DATA.athlete + ' · ' + DATA.date, 60, H - 70);
+  }
+  draw();
+  var btn = document.getElementById('storyDownload');
+  if (btn) btn.addEventListener('click', function(){
+    var c = document.getElementById('storyCanvas');
+    var link = document.createElement('a');
+    link.download = 'treino.png';
+    link.href = c.toDataURL('image/png');
+    link.click();
+  });
+})();
+</script>
+`;
+  return layout({ title: 'Imagem para Stories', user, body, active: 'activities', hideCoachWidget: true });
 }
 
 function settingsPage(user, flags) {
@@ -1199,6 +1488,15 @@ ${flags.stravaError ? `<div class="err">Não consegui conectar com o Strava agor
     <div style="margin-top:16px;"><button type="submit">Salvar</button></div>
   </form>
 </div>
+
+${flags.publicUrl ? `<div class="card">
+  <h2><span class="h-icon">${icon('trophy', 'pubprof')}</span>Perfil público</h2>
+  <p class="muted">Qualquer pessoa com este link vê suas estatísticas e próximas provas, sem precisar entrar no app.</p>
+  <div class="row" style="gap:10px;">
+    <input class="mono" readonly value="${esc(flags.publicUrl)}" style="flex:1; min-width:220px;">
+    <a class="ghost btn" href="${esc(flags.publicUrl)}" target="_blank" rel="noopener">Abrir</a>
+  </div>
+</div>` : ''}
 
 <div class="card">
   <h2><span class="h-icon">${icon('heart', 'ai2')}</span>Análise com IA (opcional)</h2>
@@ -1255,4 +1553,5 @@ ${flags.error === 'missing_key' ? `<div class="err">Cadastre sua chave da API da
 module.exports = {
   layout, loginPage, signupPage, dashboardPage, racesPage,
   activitiesPage, activityNewPage, activityDetailPage, feedPage, settingsPage, coachChatPage,
+  publicProfilePage, storyPage,
 };
