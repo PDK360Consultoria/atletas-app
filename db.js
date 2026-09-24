@@ -106,6 +106,53 @@ ensureColumn('users', 'strava_last_synced_at', 'strava_last_synced_at INTEGER');
 ensureColumn('activities', 'external_id', 'external_id TEXT');
 db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_activities_external ON activities(user_id, external_id) WHERE external_id IS NOT NULL`);
 ensureColumn('activities', 'intervals_json', 'intervals_json TEXT');
+// Running cadence (steps/min) — captured from Strava's average_cadence when
+// available (see lib/strava.js); null for manual/GPX entries, which is fine,
+// the UI just shows '—'.
+ensureColumn('activities', 'cadence_spm', 'cadence_spm REAL');
+
+// Social feed: photo attachment on a post, and a stable public-profile slug
+// per user (used by the no-login /u/:slug page — generated on first access,
+// see ensurePublicSlug in server.js).
+ensureColumn('posts', 'photo_path', 'photo_path TEXT');
+ensureColumn('users', 'public_slug', 'public_slug TEXT');
+db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_public_slug ON users(public_slug) WHERE public_slug IS NOT NULL`);
+
+db.exec(`
+CREATE TABLE IF NOT EXISTS reactions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  post_id INTEGER NOT NULL,
+  user_id INTEGER NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY(post_id) REFERENCES posts(id),
+  FOREIGN KEY(user_id) REFERENCES users(id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_reactions_unique ON reactions(post_id, user_id);
+
+CREATE TABLE IF NOT EXISTS comments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  post_id INTEGER NOT NULL,
+  user_id INTEGER NOT NULL,
+  body TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY(post_id) REFERENCES posts(id),
+  FOREIGN KEY(user_id) REFERENCES users(id)
+);
+
+CREATE TABLE IF NOT EXISTS notifications (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  actor_user_id INTEGER NOT NULL,
+  type TEXT NOT NULL,
+  post_id INTEGER,
+  body TEXT,
+  read_at TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY(user_id) REFERENCES users(id),
+  FOREIGN KEY(actor_user_id) REFERENCES users(id),
+  FOREIGN KEY(post_id) REFERENCES posts(id)
+);
+`);
 
 // One-time cleanup: merge duplicate activities that exist as both a
 // manually-logged row and a separately Strava-synced row for the same real
