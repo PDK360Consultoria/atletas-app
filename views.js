@@ -1042,7 +1042,7 @@ function activityDetailPage({ user, activity, laps, intervals, aiEnabled }) {
   <h2><span class="h-icon">${icon('flame', 'tr')}</span>Pace por tiro</h2>
   <div class="grid cols-5" style="margin-bottom:8px;">
     <div class="card stat"><div class="k">Tiros</div><div class="v">${tiros.count}</div></div>
-    <div class="card stat"><div class="k">Tempo</div><div class="v">${tiros.totalTimeLabel}</div></div>
+    <div class="card stat"><div class="k">Tempo</div><div class="v">${fmtClock(activity.duration_sec)}</div></div>
     <div class="card stat"><div class="k">Pace nos tiros</div><div class="v">${secToPace(tiros.avgPaceSec)}<span class="u">/km</span></div></div>
     <div class="card stat"><div class="k">FC média</div><div class="v">${tiros.avgHr ?? '—'}${tiros.avgHr ? '<span class="u">bpm</span>' : ''}</div></div>
     <div class="card stat"><div class="k">FC máxima</div><div class="v">${tiros.maxHr ?? '—'}${tiros.maxHr ? '<span class="u">bpm</span>' : ''}</div></div>
