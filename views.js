@@ -1,4 +1,4 @@
-__PASTE_TEST_OK__const { secToPace, fmtClock, fmtDate, esc, renderMarkdownLite, icon } = require('./lib/format');
+const { secToPace, fmtClock, fmtDate, esc, renderMarkdownLite, icon } = require('./lib/format');
 
 // Runs site-wide: fades cards in as they scroll into view and adds a subtle
 // pointer-tilt to cards on hover. Pure progressive enhancement — cards are
