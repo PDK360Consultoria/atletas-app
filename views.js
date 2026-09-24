@@ -1,4 +1,5 @@
 const { secToPace, fmtClock, fmtDate, esc, renderMarkdownLite, icon } = require('./lib/format');
+const { summarizeIntervals } = require('./lib/intervals');
 
 // Runs site-wide: fades cards in as they scroll into view and adds a subtle
 // pointer-tilt to cards on hover. Pure progressive enhancement — cards are
@@ -124,7 +125,7 @@ function mount(opts){
       var res = await fetch('/api/coach/send', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ message: text }),
+        body: JSON.stringify({ message: text, activity_id: opts.activityId || null }),
       });
       if (!res.ok || !res.body) {
         replyB.textContent = res.status === 412
@@ -1007,7 +1008,9 @@ ${error ? `<div class="err">${esc(error)}</div>` : ''}
   return layout({ title: 'Registrar treino', user, body, active: 'activities' });
 }
 
-function activityDetailPage({ user, activity, laps, blocks, aiEnabled }) {
+function activityDetailPage({ user, activity, laps, intervals, aiEnabled }) {
+  const tiros = summarizeIntervals(intervals);
+
   const maxSplit = laps.length ? Math.max(...laps.map(l => l.split_sec)) : 1;
   const bars = laps.map(l => {
     const h = Math.max(8, Math.round((l.split_sec / maxSplit) * 100));
@@ -1021,13 +1024,33 @@ function activityDetailPage({ user, activity, laps, blocks, aiEnabled }) {
     worstKm = timedLaps.reduce((a, b) => (b.split_sec > a.split_sec ? b : a));
   }
 
-  const blocksHtml = blocks.length ? blocks.map(b => `
-    <div class="list-item">
-      <div>
-        <div class="t">${esc(b.label)} <span class="muted">(km ${b.start_km}–${b.end_km})</span></div>
-        <div class="d">alvo ${b.pace_target_sec ? secToPace(b.pace_target_sec) + '/km' : '—'}${b.hr_ceiling ? ' · FC até ' + b.hr_ceiling : ''} &nbsp;→&nbsp; real ${b.pace_actual_sec ? secToPace(b.pace_actual_sec) + '/km' : '—'}${b.hr_actual_avg ? ' · FC ' + b.hr_actual_avg : ''}</div>
-      </div>
-    </div>`).join('') : `<p class="muted" style="margin:0 0 12px;">Nenhum bloco definido para este treino.</p>`;
+  let tirosHtml = '';
+  if (tiros) {
+    const speeds = tiros.bars.map(b => 1 / b.pace_sec);
+    const maxSpeed = Math.max(...speeds), minSpeed = Math.min(...speeds);
+    const range = maxSpeed - minSpeed;
+    const tiroBars = tiros.bars.map(b => {
+      const speed = 1 / b.pace_sec;
+      const h = range > 0.0001 ? Math.round(40 + ((speed - minSpeed) / range) * 60) : 78;
+      return `<div class="tiro-bar${b.isFastest ? ' best' : ''}" style="height:${h}%;" title="Tiro ${b.idx}: ${secToPace(b.pace_sec)}/km">
+        <div class="pace-lbl">${secToPace(b.pace_sec)}</div>
+        <div class="dist-lbl">${esc(b.distanceLabel)}</div>
+      </div>`;
+    }).join('');
+
+    tirosHtml = `<div class="card tiros-card">
+  <h2><span class="h-icon">${icon('flame', 'tr')}</span>Pace por tiro</h2>
+  <div class="grid cols-5" style="margin-bottom:8px;">
+    <div class="card stat"><div class="k">Tiros</div><div class="v">${tiros.count}</div></div>
+    <div class="card stat"><div class="k">Tempo</div><div class="v">${tiros.totalTimeLabel}</div></div>
+    <div class="card stat"><div class="k">Pace nos tiros</div><div class="v">${secToPace(tiros.avgPaceSec)}<span class="u">/km</span></div></div>
+    <div class="card stat"><div class="k">FC média</div><div class="v">${tiros.avgHr ?? '—'}${tiros.avgHr ? '<span class="u">bpm</span>' : ''}</div></div>
+    <div class="card stat"><div class="k">FC máxima</div><div class="v">${tiros.maxHr ?? '—'}${tiros.maxHr ? '<span class="u">bpm</span>' : ''}</div></div>
+  </div>
+  <div class="tiros-bars">${tiroBars}</div>
+  <p class="muted" style="margin:0;">${esc(tiros.structureText)}</p>
+</div>`;
+  }
 
   const body = `
 <a href="/activities" class="muted mono" style="font-size:12px;">← Treinos</a>
@@ -1053,7 +1076,9 @@ function activityDetailPage({ user, activity, laps, blocks, aiEnabled }) {
   <div class="card stat"><div class="icon-badge">${icon('mountain', 'ad6')}</div><div class="k">Elevação</div><div class="v">${activity.elevation_gain_m ?? '—'}${activity.elevation_gain_m != null ? '<span class="u">m</span>' : ''}</div></div>
 </div>
 
-${laps.length ? `<div class="card">
+${tirosHtml}
+
+${(!tiros && laps.length) ? `<div class="card">
   <h2><span class="h-icon">${icon('mountain', 'sp')}</span>Splits por km</h2>
   ${bestKm && worstKm ? `<p class="muted" style="margin:-4px 0 14px;">Melhor km: <strong>Km ${bestKm.km} · ${secToPace(bestKm.split_sec)}/km</strong> &nbsp;·&nbsp; Mais lento: <strong>Km ${worstKm.km} · ${secToPace(worstKm.split_sec)}/km</strong></p>` : ''}
   <div class="bars">${bars}</div>
@@ -1062,30 +1087,21 @@ ${laps.length ? `<div class="card">
 <div class="card">
   <h2><span class="h-icon">${icon('heart', 'ai')}</span>Análise com IA</h2>
   ${activity.ai_analysis ? `<div class="ai-analysis">${renderMarkdownLite(activity.ai_analysis)}</div>
-    ${aiEnabled ? `<form method="POST" action="/activities/${activity.id}/analyze" style="margin-top:14px;"><button class="ghost" type="submit">↻ Gerar nova análise</button></form>` : ''}` : `
+    ${aiEnabled ? `<form method="POST" action="/activities/${activity.id}/analyze" style="margin-top:14px;" onsubmit="var b=this.querySelector('button'); b.disabled=true; b.textContent='Gerando análise…';"><button class="ghost" type="submit">↻ Gerar nova análise</button></form>` : ''}` : `
     ${aiEnabled
-      ? `<form method="POST" action="/activities/${activity.id}/analyze"><button type="submit">Gerar análise técnica</button></form>`
+      ? `<form method="POST" action="/activities/${activity.id}/analyze" onsubmit="var b=this.querySelector('button'); b.disabled=true; b.textContent='Gerando análise… (pode levar até 30s)';"><button type="submit">Gerar análise técnica</button></form>`
       : `<p class="muted" style="margin:0;">Cadastre sua chave da API da Anthropic em <a href="/settings">Config</a> para gerar análises técnicas automáticas.</p>`}
   `}
 </div>
 
-<details class="card blocks-card">
-  <summary>Blocos (previsto × realizado)</summary>
-  <div class="blocks-body">
-    ${blocksHtml}
-    <form method="POST" action="/activities/${activity.id}/blocks" style="margin-top:8px;">
-      <div class="grid cols-2">
-        <div><label>Nome do bloco</label><input name="label" required placeholder="Aquecimento"></div>
-        <div></div>
-        <div><label>Km inicial</label><input name="start_km" type="number" step="0.1" required></div>
-        <div><label>Km final</label><input name="end_km" type="number" step="0.1" required></div>
-        <div><label>Pace alvo (m:ss)</label><input name="pace_target" placeholder="5:20"></div>
-        <div><label>Teto de FC</label><input name="hr_ceiling" type="number"></div>
-      </div>
-      <div style="margin-top:12px;"><button class="ghost" type="submit">+ Adicionar bloco</button></div>
-    </form>
-  </div>
-</details>
+${aiEnabled ? `<div class="card">
+  <h2><span class="h-icon">${icon('heart', 'ca')}</span>Conversar com o coach sobre este treino</h2>
+  <div class="chat-msgs" id="activityCoachMsgs"></div>
+  <form class="coach-inline-form" id="activityCoachForm">
+    <textarea id="activityCoachInput" placeholder="Pergunte algo sobre este treino..." rows="1"></textarea>
+    <button type="submit" aria-label="Enviar">${icon('flame', 'casend')}</button>
+  </form>
+</div>` : ''}
 
 <div class="card">
   <h2>Compartilhar no feed</h2>
@@ -1100,7 +1116,24 @@ ${laps.length ? `<div class="card">
   <button class="danger" type="submit">Remover treino</button>
 </form>
 `;
-  return layout({ title: activity.title, user, body, active: 'activities' });
+  const bodyEnd = aiEnabled ? `<script defer>
+(function(){
+function ready(fn){ if (document.readyState !== 'loading') fn(); else document.addEventListener('DOMContentLoaded', fn); }
+ready(function(){
+  if (window.CoachChat) {
+    window.CoachChat.mount({
+      msgsId: 'activityCoachMsgs',
+      formId: 'activityCoachForm',
+      inputId: 'activityCoachInput',
+      historyUrl: '/api/coach/activity/${activity.id}/history',
+      activityId: ${activity.id},
+      emptyText: 'Pergunte ao coach sobre este treino específico — pace, tiros, FC, o que quiser.',
+    });
+  }
+});
+})();
+</script>` : '';
+  return layout({ title: activity.title, user, body, active: 'activities', bodyEnd });
 }
 
 function feedPage(user, posts) {
