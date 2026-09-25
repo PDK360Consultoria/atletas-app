@@ -59,6 +59,11 @@ button.danger{background:linear-gradient(155deg, var(--red), #a02f2f); color:#ff
 .list-item:last-child{border-bottom:none;}
 .list-item .t{font-weight:700; font-size:16px;}
 .list-item .d{font-size:13px; color:var(--ink-faint); font-family:'IBM Plex Mono',monospace; margin-top:3px;}
+.btn.xs{padding:7px 12px; font-size:12px; border-radius:9px; display:inline-flex; align-items:center; gap:6px; flex-shrink:0;}
+.btn.xs .icon-svg{width:13px; height:13px;}
+.activity-row{gap:14px;}
+.activity-row-link{display:flex; justify-content:space-between; align-items:center; gap:14px; flex:1; min-width:0; text-decoration:none; color:inherit;}
+@media (max-width:640px){ .activity-row{flex-wrap:wrap;} .activity-row-link{width:100%;} }
 .err{background:rgba(209,67,67,0.12); border:1px solid var(--red); color:var(--red); border-radius:10px; padding:10px 14px; font-size:14px; margin-bottom:14px;}
 .ok{background:rgba(46,139,79,0.12); border:1px solid var(--green); color:var(--green); border-radius:10px; padding:10px 14px; font-size:14px; margin-bottom:14px;}
 .bars{display:flex; align-items:flex-end; gap:6px; height:120px; margin-top:10px;}
@@ -124,6 +129,9 @@ button.danger{background:linear-gradient(155deg, var(--red), #a02f2f); color:#ff
 .hero-eyebrow{font-family:'IBM Plex Mono',monospace; font-size:11px; text-transform:uppercase; letter-spacing:0.12em; color:#FFC24E; margin-bottom:10px;}
 .hero-content h1{margin:0 0 6px; color:#fff; text-shadow:0 2px 20px rgba(0,0,0,0.4);}
 .hero-content .lede{color:rgba(255,255,255,0.8); margin:0;}
+.hero-bio{color:rgba(255,255,255,0.62); font-size:14px; line-height:1.5; margin:10px 0 0; max-width:520px;}
+.hero-bio-empty a{color:#FFC24E; text-decoration:none;}
+.hero-bio-empty a:hover{text-decoration:underline;}
 @media (max-width:640px){ .hero{min-height:220px;} .hero-content{padding:22px 18px 20px;} }
 
 /* ---------- collapsible trainings ---------- */
