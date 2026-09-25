@@ -118,6 +118,15 @@ ensureColumn('posts', 'photo_path', 'photo_path TEXT');
 ensureColumn('users', 'public_slug', 'public_slug TEXT');
 db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_public_slug ON users(public_slug) WHERE public_slug IS NOT NULL`);
 
+// Marks a post that was auto-generated from a logged training rather than
+// typed by the athlete (see ensureAutoPostsForUser in lib/social.js) — the
+// feed renders these as a stats card instead of a caption.
+ensureColumn('posts', 'is_auto', 'is_auto INTEGER NOT NULL DEFAULT 0');
+
+// Profile photo (Settings) — shown instead of the initials circle wherever
+// an avatar renders (feed, comments, public profile) once set.
+ensureColumn('users', 'avatar_path', 'avatar_path TEXT');
+
 db.exec(`
 CREATE TABLE IF NOT EXISTS reactions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -261,6 +270,17 @@ CREATE TABLE IF NOT EXISTS notifications (
     const newTitle = m[2] ? `${pt} em ${m[2]}` : pt;
     if (newTitle !== row.title) update.run(newTitle, row.id);
   }
+}
+
+// Backfill: give every already-logged activity a feed entry too, not just
+// ones created after this feature shipped — see ensureAutoPostsForUser in
+// lib/social.js (same function server.js calls after new activities come
+// in). Idempotent (it only inserts for activities that still don't have a
+// linked post), so this is a cheap no-op scan on every boot once caught up.
+{
+  const { ensureAutoPostsForUser } = require('./lib/social');
+  const userIds = db.prepare('SELECT DISTINCT user_id FROM activities').all().map((r) => r.user_id);
+  for (const uid of userIds) ensureAutoPostsForUser(db, uid);
 }
 
 db.exec(`

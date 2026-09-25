@@ -932,7 +932,7 @@ function calendarHtml(calendar) {
 </script>`;
 }
 
-function dashboardPage({ user, nextRace, daysToRace, recentActivities, weekKm, evolution, calendar }) {
+function dashboardPage({ user, nextRace, daysToRace, recentActivities, weekKm, evolution, medals, calendar }) {
   const evoHtml = evolution && evolution.totalCount ? `
 <div class="card">
   <h2><span class="h-icon">${icon('mountain', 'evo')}</span>Evolução</h2>
@@ -969,6 +969,11 @@ function dashboardPage({ user, nextRace, daysToRace, recentActivities, weekKm, e
   <div class="card stat"><div class="icon-badge">${icon('flame')}</div><div class="k">Km na semana</div><div class="v">${weekKm.toFixed(1)}<span class="u">km</span></div></div>
   <div class="card stat"><div class="icon-badge">${icon('trophy')}</div><div class="k">Treinos registrados</div><div class="v">${recentActivities.length ? recentActivities.length + '+' : '0'}</div></div>
 </div>
+
+${medals ? `<div class="card">
+  <h2><span class="h-icon">${icon('trophy', 'dashmedals')}</span>Medalhas</h2>
+  ${medalRow(medals)}
+</div>` : ''}
 
 ${nextRace ? `<div class="card">
   <h2><span class="h-icon">${icon('pin', 'next')}</span>Próxima prova</h2>
@@ -1367,20 +1372,64 @@ function avatarColorClass(userId) {
   return n ? ` c${n}` : '';
 }
 
+// Renders a real profile photo when the athlete has uploaded one (Settings),
+// falling back to the initials-on-gradient circle otherwise — one call site
+// so every avatar in the app (feed, comments, composer, public profile)
+// switches over the same way once a photo is set.
+function avatarHtml(name, userId, avatarPath, extraClass) {
+  const cls = `post-avatar${extraClass ? ' ' + extraClass : ''}`;
+  if (avatarPath) return `<img class="${cls}" src="/uploads/${esc(avatarPath)}" alt="${esc(name || '')}">`;
+  return `<div class="${cls}${avatarColorClass(userId)}">${esc(initials(name))}</div>`;
+}
+
+// Small icon per workout type so an auto-post's header reads at a glance —
+// falls back to a plain running shoe for anything not specifically mapped
+// (manual "outro" entries, unrecognized Strava workout-type labels, etc.).
+function workoutTypeIcon(workoutType) {
+  const t = (workoutType || '').toLowerCase();
+  if (t.includes('interval')) return 'flame';
+  if (t.includes('long')) return 'mountain';
+  if (t.includes('ritmo') || t.includes('tempo')) return 'stopwatch';
+  return 'shoe';
+}
+
+// Every logged training auto-posts itself to the feed (see
+// ensureAutoPostsForUser in lib/social.js) — for those (p.is_auto), the card
+// shows the run's own stats instead of a typed caption, closer to how
+// Strava's activity stream reads than a blank-textarea social post.
+function activityStatBlock(p) {
+  const stats = [
+    p.activity_distance_km != null ? [`${p.activity_distance_km}`, 'km', 'Distância'] : null,
+    p.activity_duration_sec != null ? [fmtClock(p.activity_duration_sec), '', 'Tempo'] : null,
+    p.activity_avg_pace_sec != null ? [secToPace(p.activity_avg_pace_sec), '/km', 'Pace'] : null,
+    p.activity_elevation_gain_m ? [Math.round(p.activity_elevation_gain_m), 'm', 'Elevação'] : null,
+  ].filter(Boolean);
+  return `<a class="post-activity-head" href="/activities/${p.activity_id}">
+    <span class="post-activity-icon">${icon(workoutTypeIcon(p.activity_workout_type), 'wt' + p.id)}</span>
+    <span class="post-activity-headtext">
+      <span class="post-activity-title">${esc(p.activity_title)}</span>
+      <span class="post-activity-type">${esc(p.activity_workout_type || 'treino')}${p.activity_source === 'strava' ? ' · Strava' : ''}</span>
+    </span>
+  </a>
+  ${stats.length ? `<div class="post-stats">${stats.map(([v, u, k]) => `<div class="post-stat"><div class="v">${esc(String(v))}${u ? `<span class="u">${esc(u)}</span>` : ''}</div><div class="k">${esc(k)}</div></div>`).join('')}</div>` : ''}`;
+}
+
 function postCard(user, p) {
   const mine = p.user_id === user.id;
   const comments = p.comments || [];
-  return `<div class="card post-card">
+  return `<div class="card post-card${p.is_auto ? ' post-card-auto' : ''}">
   <div class="post-head">
-    <div class="post-avatar${avatarColorClass(p.user_id)}">${esc(initials(p.author_name))}</div>
+    ${avatarHtml(p.author_name, p.user_id, p.author_avatar_path)}
     <div class="post-head-meta">
-      <div class="post-name">${p.author_slug ? `<a href="/u/${esc(p.author_slug)}">${esc(p.author_name)}</a>` : esc(p.author_name)}${mine ? ' <span class="pill">você</span>' : ''}</div>
+      <div class="post-name">${p.author_slug ? `<a href="/u/${esc(p.author_slug)}">${esc(p.author_name)}</a>` : esc(p.author_name)}${mine ? ' <span class="pill">você</span>' : ''}<span class="post-verb muted">${p.is_auto ? 'completou um treino' : 'compartilhou'}</span></div>
       <div class="post-time" title="${esc(fmtDate(p.created_at))}">${timeAgo(p.created_at)}</div>
     </div>
   </div>
+  ${p.is_auto ? activityStatBlock(p) : `
   <div class="post-body">${esc(p.body).replace(/\n/g, '<br>')}</div>
   ${p.photo_path ? `<div class="post-photo"><img src="/uploads/${esc(p.photo_path)}" alt="" loading="lazy"></div>` : ''}
   ${p.activity_title ? `<a class="pill post-activity-pill" href="/activities/${p.activity_id}"><span class="dot"></span>${esc(p.activity_title)}</a>` : ''}
+  `}
   <div class="post-actions">
     <form method="POST" action="/feed/${p.id}/react">
       <button class="kudos-btn${p.reacted ? ' active' : ''}" type="submit">${icon('flame', 'k' + p.id)}<span>${p.kudos_count || 0}</span></button>
@@ -1388,10 +1437,10 @@ function postCard(user, p) {
     <span class="post-comment-count">${icon('chat', 'c' + p.id)}<span>${p.comment_count || 0}</span></span>
   </div>
   ${comments.length ? `<div class="post-comments">
-    ${comments.map((c) => `<div class="comment-item"><span class="comment-author">${esc(c.author_name)}</span> <span class="comment-body">${esc(c.body)}</span><span class="comment-time">${timeAgo(c.created_at)}</span></div>`).join('')}
+    ${comments.map((c) => `<div class="comment-item">${avatarHtml(c.author_name, c.user_id, c.author_avatar_path, 'comment-avatar')}<span class="comment-main"><span class="comment-author">${esc(c.author_name)}</span> <span class="comment-body">${esc(c.body)}</span><span class="comment-time">${timeAgo(c.created_at)}</span></span></div>`).join('')}
   </div>` : ''}
   <form method="POST" action="/feed/${p.id}/comment" class="comment-form">
-    <div class="post-avatar comment-avatar${avatarColorClass(user.id)}">${esc(initials(user.name))}</div>
+    ${avatarHtml(user.name, user.id, user.avatar_path, 'comment-avatar')}
     <input type="text" name="body" placeholder="Comentar..." required maxlength="500">
     <button class="ghost" type="submit">Enviar</button>
   </form>
@@ -1406,7 +1455,7 @@ function feedPage(user, posts, opts) {
 <div class="card feed-composer">
   <form method="POST" action="/feed" enctype="multipart/form-data" id="composerForm">
     <div class="composer-row">
-      <div class="post-avatar composer-avatar${avatarColorClass(user.id)}">${esc(initials(user.name))}</div>
+      ${avatarHtml(user.name, user.id, user.avatar_path, 'composer-avatar')}
       <div class="composer-main">
         ${opts.shareActivity ? `<div class="pill" style="margin-bottom:10px;"><input type="hidden" name="activity_id" value="${opts.shareActivity.id}"><span class="dot"></span>Vinculado a: ${esc(opts.shareActivity.title)}</div>` : ''}
         <textarea name="body" placeholder="Compartilhe algo..." required>${opts.shareDraft ? esc(opts.shareDraft) : ''}</textarea>
@@ -1460,13 +1509,27 @@ ${posts.length ? `<div class="feed-list">${posts.map((p) => postCard(user, p)).j
   return layout({ title: 'Feed', user, body, active: 'feed' });
 }
 
-function publicProfilePage(viewer, profileUser, evolution, races) {
+// Distance medals (5K/10K/Meia/Maratona) — locked ones render dimmed with a
+// lock icon so they read as something to unlock rather than random missing
+// icons; an unlocked one is tappable/hoverable (title attr) to say which run
+// earned it. See computeMedals in lib/stats.js for how "achieved" works.
+const MEDAL_ICON = { '5K': 'shoe', '10K': 'flame', '21K': 'stopwatch', '42K': 'trophy' };
+function medalRow(medals) {
+  return `<div class="medal-row">
+    ${medals.map((m) => `<div class="medal-chip${m.achieved ? ' achieved' : ' locked'}" title="${m.achieved ? esc(`${m.label} — ${m.activity.title}, ${fmtDate(m.activity.started_at || m.activity.created_at)}`) : esc(`${m.label} — ainda não`)}">
+      <span class="medal-icon">${icon(MEDAL_ICON[m.short] || 'trophy', 'md' + m.short)}</span>
+      <span class="medal-label">${esc(m.short)}</span>
+    </div>`).join('')}
+  </div>`;
+}
+
+function publicProfilePage(viewer, profileUser, evolution, races, medals) {
   const weekKm = evolution.weeks.length ? evolution.weeks[evolution.weeks.length - 1].km : 0;
   const longestKm = evolution.longest ? evolution.longest.distance_km : null;
   const bestPaceSec = evolution.bestPace ? evolution.bestPace.avg_pace_sec : null;
   const body = `
 <div class="card profile-hero">
-  <div class="post-avatar profile-avatar${avatarColorClass(profileUser.id)}">${esc(initials(profileUser.name))}</div>
+  ${avatarHtml(profileUser.name, profileUser.id, profileUser.avatar_path, 'profile-avatar')}
   <div>
     <h1 style="margin:0 0 4px;">${esc(profileUser.name)}</h1>
     ${profileUser.city ? `<p class="muted" style="margin:0 0 6px;">${esc(profileUser.city)}</p>` : ''}
@@ -1474,6 +1537,11 @@ function publicProfilePage(viewer, profileUser, evolution, races) {
     ${profileUser.goal_race_name ? `<div class="pill" style="margin-top:10px;"><span class="dot"></span>Meta: ${esc(profileUser.goal_race_name)}${profileUser.goal_time_sec ? ` em ${fmtClock(profileUser.goal_time_sec)}` : ''}</div>` : ''}
   </div>
 </div>
+
+${medals ? `<div class="card">
+  <h2><span class="h-icon">${icon('trophy', 'ppmedals')}</span>Medalhas</h2>
+  ${medalRow(medals)}
+</div>` : ''}
 
 <div class="grid cols-4">
   <div class="card stat"><div class="icon-badge">${icon('mountain', 'pp1')}</div><div class="k">Total</div><div class="v">${evolution.totalKm.toFixed(0)}<span class="u">km</span></div></div>
@@ -1612,7 +1680,14 @@ ${flags.stravaError ? `<div class="err">Não consegui conectar com o Strava agor
 
 <div class="card">
   <h2><span class="h-icon">${icon('pin', 'perfil')}</span>Perfil</h2>
-  <form method="POST" action="/settings">
+  <form method="POST" action="/settings" enctype="multipart/form-data">
+    <div class="settings-avatar-row">
+      ${avatarHtml(user.name, user.id, user.avatar_path, 'settings-avatar')}
+      <label class="photo-input-label">
+        <input type="file" name="avatar" accept="image/*" style="display:none;" onchange="this.nextElementSibling.textContent = this.files[0] ? this.files[0].name : 'Trocar foto';">
+        <span class="ghost btn photo-btn">${icon('camera', 'avatarbtn')}${user.avatar_path ? 'Trocar foto' : 'Adicionar foto'}</span>
+      </label>
+    </div>
     <div class="grid cols-2">
       <div><label>Nome</label><input name="name" value="${esc(user.name)}" required></div>
       <div><label>Cidade</label><input name="city" value="${esc(user.city || '')}"></div>
@@ -1620,7 +1695,7 @@ ${flags.stravaError ? `<div class="err">Não consegui conectar com o Strava agor
       <div><label>Meta de tempo (hh:mm:ss)</label><input name="goal_time" value="${user.goal_time_sec ? fmtClock(user.goal_time_sec) : ''}" placeholder="03:27:58"></div>
     </div>
     <label>Bio</label>
-    <textarea name="bio">${esc(user.bio || '')}</textarea>
+    <textarea name="bio" placeholder="Conte um pouco sobre você como corredor(a)...">${esc(user.bio || '')}</textarea>
     <div style="margin-top:16px;"><button type="submit">Salvar</button></div>
   </form>
 </div>

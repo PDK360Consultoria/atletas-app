@@ -11,11 +11,11 @@ const { parseClock, secToPace } = require('./lib/format');
 const { parseActivityFile } = require('./lib/gpx');
 const { analyzeActivity } = require('./lib/anthropic');
 const strava = require('./lib/strava');
-const { computeEvolution } = require('./lib/stats');
+const { computeEvolution, computeMedals } = require('./lib/stats');
 const { buildContext, buildActivityFocusContext, streamChatWithAssistant } = require('./lib/assistant');
 const { fetchNearbyRaces } = require('./lib/races');
 const { buildMonthCalendar } = require('./lib/calendar');
-const { ensurePublicSlug, buildShareDraft, notify } = require('./lib/social');
+const { ensurePublicSlug, buildShareDraft, notify, ensureAutoPostsForUser } = require('./lib/social');
 const views = require('./views');
 const { coachPage } = require('./views_coach');
 
@@ -139,6 +139,7 @@ async function handle(req, res) {
       const allActivities = db.prepare('SELECT * FROM activities WHERE user_id = ?').all(user.id);
       const evolution = computeEvolution(allActivities);
       const weekKm = evolution.weeks[evolution.weeks.length - 1].km;
+      const medals = computeMedals(allActivities);
 
       let calYear = today.getFullYear(), calMonth = today.getMonth() + 1;
       if (parsed.query.month && /^\d{4}-\d{2}$/.test(parsed.query.month)) {
@@ -147,7 +148,7 @@ async function handle(req, res) {
       }
       const calendar = buildMonthCalendar(calYear, calMonth, allActivities, races);
 
-      return html(res, 200, views.dashboardPage({ user, nextRace, daysToRace, recentActivities, weekKm, evolution, calendar }));
+      return html(res, 200, views.dashboardPage({ user, nextRace, daysToRace, recentActivities, weekKm, evolution, medals, calendar }));
     }
 
     // ---------- races ----------
@@ -227,6 +228,7 @@ async function handle(req, res) {
         summary.started_at,
         JSON.stringify(summary.laps)
       );
+      ensureAutoPostsForUser(db, user.id);
       return redirect(res, `/activities/${info.lastInsertRowid}`);
     }
     if (method === 'POST' && pathname === '/activities/manual') {
@@ -243,6 +245,7 @@ async function handle(req, res) {
         fields.max_hr ? parseInt(fields.max_hr, 10) : null,
         fields.started_at || null, fields.notes || null
       );
+      ensureAutoPostsForUser(db, user.id);
       return redirect(res, `/activities/${info.lastInsertRowid}`);
     }
 
@@ -297,7 +300,11 @@ async function handle(req, res) {
     // intentionally supersedes per the athlete's own request).
     if (method === 'GET' && pathname === '/feed') {
       if (!requireAuth()) return;
-      const posts = db.prepare(`SELECT p.*, a.title as activity_title, u.name as author_name, u.public_slug as author_slug,
+      const posts = db.prepare(`SELECT p.*, a.title as activity_title, a.workout_type as activity_workout_type,
+          a.distance_km as activity_distance_km, a.duration_sec as activity_duration_sec,
+          a.avg_pace_sec as activity_avg_pace_sec, a.elevation_gain_m as activity_elevation_gain_m,
+          a.source as activity_source,
+          u.name as author_name, u.public_slug as author_slug, u.avatar_path as author_avatar_path,
           (SELECT COUNT(*) FROM reactions r WHERE r.post_id = p.id) as kudos_count,
           EXISTS(SELECT 1 FROM reactions r WHERE r.post_id = p.id AND r.user_id = ?) as reacted,
           (SELECT COUNT(*) FROM comments c WHERE c.post_id = p.id) as comment_count
@@ -308,7 +315,7 @@ async function handle(req, res) {
 
       if (posts.length) {
         const placeholders = posts.map(() => '?').join(',');
-        const comments = db.prepare(`SELECT c.*, u.name as author_name FROM comments c
+        const comments = db.prepare(`SELECT c.*, u.name as author_name, u.avatar_path as author_avatar_path FROM comments c
           JOIN users u ON u.id = c.user_id
           WHERE c.post_id IN (${placeholders}) ORDER BY c.created_at ASC`).all(...posts.map((p) => p.id));
         const byPost = new Map();
@@ -372,8 +379,9 @@ async function handle(req, res) {
       if (!profileUser) return notFound(res);
       const activities = db.prepare('SELECT * FROM activities WHERE user_id = ?').all(profileUser.id);
       const evolution = computeEvolution(activities);
+      const medals = computeMedals(activities);
       const upcomingRaces = db.prepare(`SELECT * FROM races WHERE user_id = ? AND (race_date IS NULL OR race_date >= date('now')) ORDER BY race_date ASC LIMIT 3`).all(profileUser.id);
-      return html(res, 200, views.publicProfilePage(user, profileUser, evolution, upcomingRaces));
+      return html(res, 200, views.publicProfilePage(user, profileUser, evolution, upcomingRaces, medals));
     }
 
     // ---------- notifications (in-app only) ----------
@@ -409,6 +417,13 @@ async function handle(req, res) {
     if (method === 'POST' && pathname === '/settings') {
       if (!requireAuth()) return;
       const goalSec = parseClock(fields.goal_time);
+      const photo = files.avatar;
+      if (photo && photo.data && photo.data.length) {
+        const ext = (path.extname(photo.filename || '').slice(0, 5) || '').replace(/[^.a-zA-Z0-9]/g, '') || '.jpg';
+        const avatarPath = `avatar_${user.id}_${Date.now()}${ext}`;
+        fs.writeFileSync(path.join(UPLOAD_DIR, avatarPath), photo.data);
+        db.prepare('UPDATE users SET avatar_path=? WHERE id=?').run(avatarPath, user.id);
+      }
       db.prepare('UPDATE users SET name=?, city=?, bio=?, goal_race_name=?, goal_time_sec=? WHERE id=?')
         .run(fields.name, fields.city || null, fields.bio || null, fields.goal_race_name || null, goalSec, user.id);
       return redirect(res, '/settings?saved=1');
@@ -462,6 +477,7 @@ async function handle(req, res) {
       const full = parsed.query.full === '1' || fields.full === '1';
       const result = await strava.syncUserActivities(db, user, { full }).catch((e) => { console.error(e); return { count: 0, error: 'sync_failed' }; });
       if (result.error) return redirect(res, '/settings?strava_error=1');
+      ensureAutoPostsForUser(db, user.id);
       return redirect(res, `/activities?synced=${result.count}`);
     }
 
