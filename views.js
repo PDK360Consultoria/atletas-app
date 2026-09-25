@@ -960,6 +960,7 @@ function dashboardPage({ user, nextRace, daysToRace, recentActivities, weekKm, e
     <div class="hero-eyebrow">Rumo à Maratona de Curitiba</div>
     <h1>Olá, ${esc(user.name.split(' ')[0])}</h1>
     <p class="lede">${user.city ? esc(user.city) + ' · ' : ''}${user.goal_race_name ? 'Meta: ' + esc(user.goal_race_name) : 'Defina sua meta em Config'}</p>
+    ${user.bio ? `<p class="hero-bio">${esc(user.bio)}</p>` : `<p class="hero-bio hero-bio-empty"><a href="/settings">+ Conte um pouco sobre você como corredor(a) →</a></p>`}
   </div>
 </section>
 
@@ -1093,10 +1094,13 @@ ${synced !== undefined ? `<div class="ok">${synced == 0 ? 'Tudo já estava sincr
 </div>
 <div class="card">
   ${activities.length ? activities.map(a => `
-    <a class="list-item" href="/activities/${a.id}">
-      <div><div class="t">${esc(a.title)}${a.source === 'strava' ? ' <span class="muted mono" style="font-size:11px;">· strava</span>' : ''}</div><div class="d">${fmtDate(a.started_at || a.created_at)} · ${a.distance_km ? a.distance_km + 'km' : '—'} ${a.duration_sec ? '· ' + fmtClock(a.duration_sec) : ''} ${a.avg_pace_sec ? '· ' + secToPace(a.avg_pace_sec) + '/km' : ''}</div></div>
-      <span class="pill"><span class="dot"></span>${esc(a.workout_type || 'treino')}</span>
-    </a>`).join('') : `<p class="muted" style="margin:0;">Nenhum treino registrado ainda.</p>`}
+    <div class="list-item activity-row">
+      <a class="activity-row-link" href="/activities/${a.id}">
+        <div><div class="t">${esc(a.title)}${a.source === 'strava' ? ' <span class="muted mono" style="font-size:11px;">· strava</span>' : ''}</div><div class="d">${fmtDate(a.started_at || a.created_at)} · ${a.distance_km ? a.distance_km + 'km' : '—'} ${a.duration_sec ? '· ' + fmtClock(a.duration_sec) : ''} ${a.avg_pace_sec ? '· ' + secToPace(a.avg_pace_sec) + '/km' : ''}</div></div>
+        <span class="pill"><span class="dot"></span>${esc(a.workout_type || 'treino')}</span>
+      </a>
+      <a class="btn ghost xs activity-row-publish" href="/feed?share_activity=${a.id}" title="Publicar este treino no feed">${icon('chat', 'pub' + a.id)}Publicar</a>
+    </div>`).join('') : `<p class="muted" style="margin:0;">Nenhum treino registrado ainda.</p>`}
 </div>
 `;
   return layout({ title: 'Treinos', user, body, active: 'activities' });
@@ -1393,10 +1397,10 @@ function workoutTypeIcon(workoutType) {
   return 'shoe';
 }
 
-// Every logged training auto-posts itself to the feed (see
-// ensureAutoPostsForUser in lib/social.js) — for those (p.is_auto), the card
-// shows the run's own stats instead of a typed caption, closer to how
-// Strava's activity stream reads than a blank-textarea social post.
+// When a post is linked to an activity the athlete explicitly chose to
+// publish (p.is_auto, set only via "Compartilhar no feed"), the card shows
+// the run's own stats instead of a typed caption, closer to how Strava's
+// activity stream reads than a blank-textarea social post.
 function activityStatBlock(p) {
   const stats = [
     p.activity_distance_km != null ? [`${p.activity_distance_km}`, 'km', 'Distância'] : null,
