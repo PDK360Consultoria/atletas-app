@@ -15,7 +15,7 @@ const { computeEvolution, computeMedals } = require('./lib/stats');
 const { buildContext, buildActivityFocusContext, streamChatWithAssistant } = require('./lib/assistant');
 const { fetchNearbyRaces } = require('./lib/races');
 const { buildMonthCalendar } = require('./lib/calendar');
-const { ensurePublicSlug, buildShareDraft, notify, ensureAutoPostsForUser } = require('./lib/social');
+const { ensurePublicSlug, buildShareDraft, notify } = require('./lib/social');
 const views = require('./views');
 const { coachPage } = require('./views_coach');
 
@@ -228,7 +228,6 @@ async function handle(req, res) {
         summary.started_at,
         JSON.stringify(summary.laps)
       );
-      ensureAutoPostsForUser(db, user.id);
       return redirect(res, `/activities/${info.lastInsertRowid}`);
     }
     if (method === 'POST' && pathname === '/activities/manual') {
@@ -245,7 +244,6 @@ async function handle(req, res) {
         fields.max_hr ? parseInt(fields.max_hr, 10) : null,
         fields.started_at || null, fields.notes || null
       );
-      ensureAutoPostsForUser(db, user.id);
       return redirect(res, `/activities/${info.lastInsertRowid}`);
     }
 
@@ -477,7 +475,6 @@ async function handle(req, res) {
       const full = parsed.query.full === '1' || fields.full === '1';
       const result = await strava.syncUserActivities(db, user, { full }).catch((e) => { console.error(e); return { count: 0, error: 'sync_failed' }; });
       if (result.error) return redirect(res, '/settings?strava_error=1');
-      ensureAutoPostsForUser(db, user.id);
       return redirect(res, `/activities?synced=${result.count}`);
     }
 

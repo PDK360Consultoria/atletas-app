@@ -118,9 +118,10 @@ ensureColumn('posts', 'photo_path', 'photo_path TEXT');
 ensureColumn('users', 'public_slug', 'public_slug TEXT');
 db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_public_slug ON users(public_slug) WHERE public_slug IS NOT NULL`);
 
-// Marks a post that was auto-generated from a logged training rather than
-// typed by the athlete (see ensureAutoPostsForUser in lib/social.js) — the
-// feed renders these as a stats card instead of a caption.
+// Marks a post whose card renders the linked activity's own stats instead of
+// a typed caption (see activityStatBlock in views.js). Nothing creates these
+// automatically — the athlete opts a specific training into the feed via
+// "Compartilhar no feed" on that activity's page, same as any other post.
 ensureColumn('posts', 'is_auto', 'is_auto INTEGER NOT NULL DEFAULT 0');
 
 // Profile photo (Settings) — shown instead of the initials circle wherever
@@ -272,15 +273,28 @@ CREATE TABLE IF NOT EXISTS notifications (
   }
 }
 
-// Backfill: give every already-logged activity a feed entry too, not just
-// ones created after this feature shipped — see ensureAutoPostsForUser in
-// lib/social.js (same function server.js calls after new activities come
-// in). Idempotent (it only inserts for activities that still don't have a
-// linked post), so this is a cheap no-op scan on every boot once caught up.
+// One-time cleanup: an earlier version of this app auto-posted every logged
+// training to the feed without asking. The athlete asked for curation
+// control instead — he picks which run becomes a post (via "Compartilhar no
+// feed" on that activity), so this removes the posts that were created for
+// him rather than by him, plus anything hanging off them. Guarded by
+// _migrations so it runs exactly once and never touches a post created any
+// other way (including a future is_auto post from an explicit share).
+db.exec(`CREATE TABLE IF NOT EXISTS _migrations (name TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (datetime('now')))`);
 {
-  const { ensureAutoPostsForUser } = require('./lib/social');
-  const userIds = db.prepare('SELECT DISTINCT user_id FROM activities').all().map((r) => r.user_id);
-  for (const uid of userIds) ensureAutoPostsForUser(db, uid);
+  const MIGRATION = 'remove_unrequested_auto_posts_v1';
+  const applied = db.prepare('SELECT 1 FROM _migrations WHERE name = ?').get(MIGRATION);
+  if (!applied) {
+    const ids = db.prepare('SELECT id FROM posts WHERE is_auto = 1').all().map((r) => r.id);
+    if (ids.length) {
+      const ph = ids.map(() => '?').join(',');
+      db.prepare(`DELETE FROM comments WHERE post_id IN (${ph})`).run(...ids);
+      db.prepare(`DELETE FROM reactions WHERE post_id IN (${ph})`).run(...ids);
+      db.prepare(`DELETE FROM notifications WHERE post_id IN (${ph})`).run(...ids);
+      db.prepare(`DELETE FROM posts WHERE id IN (${ph})`).run(...ids);
+    }
+    db.prepare('INSERT INTO _migrations (name) VALUES (?)').run(MIGRATION);
+  }
 }
 
 db.exec(`
