@@ -148,6 +148,7 @@ function mount(opts){
   var inputEl = document.getElementById(opts.inputId);
   if (!msgsEl || !formEl || !inputEl) return;
   var aiEnabled = !!opts.aiEnabled;
+  var activityId = opts.activityId != null ? opts.activityId : null;
   var sending = false;
 
   function scrollBottom(){ msgsEl.scrollTop = msgsEl.scrollHeight; }
@@ -197,7 +198,7 @@ function mount(opts){
       var res = await fetch('/api/coach/send', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ message: text, activity_id: opts.activityId || null }),
+        body: JSON.stringify({ message: text, activity_id: activityId }),
       });
       if (!res.ok || !res.body) {
         replyB.textContent = res.status === 412
@@ -257,6 +258,26 @@ function mount(opts){
   } else {
     renderInitial([]);
   }
+
+  // Lets a page swap which conversation this same mounted chat is pointed
+  // at (general vs. a specific activity's thread) without re-creating the
+  // form/input/listeners above — used by the /assistant sidebar to switch
+  // threads in place, ChatGPT-style, instead of a full page reload.
+  function switchThread(newActivityId, historyUrl, emptyText){
+    activityId = newActivityId != null ? newActivityId : null;
+    if (emptyText) opts.emptyText = emptyText;
+    msgsEl.innerHTML = '';
+    var loading = document.createElement('p');
+    loading.className = 'chat-empty';
+    loading.textContent = 'Carregando…';
+    msgsEl.appendChild(loading);
+    fetch(historyUrl).then(function(r){ return r.ok ? r.json() : { messages: [] }; }).then(function(data){
+      aiEnabled = !!data.aiEnabled;
+      renderInitial(data.messages || []);
+    }).catch(function(){ renderInitial([]); });
+  }
+
+  return { switchThread: switchThread };
 }
 window.CoachChat = { mount: mount };
 })();
@@ -1728,19 +1749,24 @@ ${flags.publicUrl ? `<div class="card">
 
 function coachChatPage(user, messages, flags) {
   flags = flags || {};
+  const activeActivityId = flags.activeActivityId != null ? Number(flags.activeActivityId) : null;
+  const activeTitle = flags.activeTitle || 'Geral';
   const initialJson = JSON.stringify(messages.map(m => ({ role: m.role, content: m.content }))).replace(/</g, '\\u003c');
 
   const body = `
 <div class="card chat-card">
   <div class="chat-topbar">
+    <button class="icon-btn chat-menu-btn" id="chatMenuBtn" type="button" aria-label="Abrir lista de conversas">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+    </button>
     <div class="chat-topbar-title">
       <span class="chat-topbar-avatar">${icon('flame', 'topbar')}</span>
-      <div>
-        <div class="chat-topbar-name">Coach de Corrida</div>
+      <div style="min-width:0;">
+        <div class="chat-topbar-name" id="chatActiveTitle">${esc(activeTitle)}</div>
         <div class="chat-topbar-sub">seu treinador, sempre no seu histórico</div>
       </div>
     </div>
-    ${flags.aiEnabled && messages.length ? `<form method="POST" action="/assistant/clear" onsubmit="return confirm('Limpar toda a conversa?')"><button class="chat-topbar-clear" type="submit">Limpar</button></form>` : ''}
+    ${flags.aiEnabled && messages.length ? `<form method="POST" action="/assistant/clear" onsubmit="return confirm('Limpar essa conversa?')"><input type="hidden" name="activity_id" id="chatClearActivityId" value="${activeActivityId != null ? activeActivityId : ''}"><button class="chat-topbar-clear" type="submit">Limpar</button></form>` : ''}
   </div>
   ${flags.error === 'missing_key' ? `<div class="err" style="margin:12px 16px 0;">Cadastre sua chave da API da Anthropic em <a href="/settings">Config</a> para conversar com o coach.</div>` : ''}
   <div class="chat-msgs" id="chatMsgs"></div>
@@ -1750,21 +1776,130 @@ function coachChatPage(user, messages, flags) {
     <button type="submit" aria-label="Enviar">${icon('flame', 'sendbig')}</button>
   </form>
   ` : `<p class="muted" style="margin:0; padding:14px 16px;">Cadastre sua chave da API da Anthropic em <a href="/settings">Config</a> para habilitar o coach.</p>`}
+
+  <div class="chat-drawer-backdrop" id="chatDrawerBackdrop"></div>
+  <div class="chat-drawer" id="chatDrawer" role="dialog" aria-label="Conversas">
+    <div class="chat-drawer-head">
+      <div class="chat-drawer-title">Conversas</div>
+      <button class="icon-btn" id="chatDrawerClose" type="button" aria-label="Fechar lista de conversas">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <button type="button" class="chat-drawer-new" id="chatNewBtn">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      Nova conversa
+    </button>
+    <div class="chat-drawer-list" id="chatDrawerList"><p class="muted" style="margin:14px;">Carregando…</p></div>
+  </div>
 </div>
 `;
   const chatInit = `<script defer>
 (function(){
   try {
-    if (window.CoachChat) {
-      window.CoachChat.mount({
-        msgsId: 'chatMsgs',
-        formId: 'chatForm',
-        inputId: 'chatInput',
-        initialMessages: ${initialJson},
-        aiEnabled: ${flags.aiEnabled ? 'true' : 'false'},
-        emptyText: 'Nenhuma mensagem ainda. Pergunte algo como "como está minha evolução esse mês?" ou "quantos km faltam pra bater minha meta na maratona?".',
+    if (!window.CoachChat) return;
+    var ACTIVE_ID = ${activeActivityId != null ? activeActivityId : 'null'};
+    var chat = window.CoachChat.mount({
+      msgsId: 'chatMsgs',
+      formId: 'chatForm',
+      inputId: 'chatInput',
+      initialMessages: ${initialJson},
+      activityId: ACTIVE_ID,
+      aiEnabled: ${flags.aiEnabled ? 'true' : 'false'},
+      emptyText: 'Nenhuma mensagem ainda. Pergunte algo como "como está minha evolução esse mês?" ou "quantos km faltam pra bater minha meta na maratona?".',
+    });
+
+    var menuBtn = document.getElementById('chatMenuBtn');
+    var closeBtn = document.getElementById('chatDrawerClose');
+    var backdrop = document.getElementById('chatDrawerBackdrop');
+    var drawer = document.getElementById('chatDrawer');
+    var listEl = document.getElementById('chatDrawerList');
+    var newBtn = document.getElementById('chatNewBtn');
+    var titleEl = document.getElementById('chatActiveTitle');
+    var clearInput = document.getElementById('chatClearActivityId');
+    var mode = 'threads';
+    var cache = null;
+
+    function escHtml(s){
+      return String(s == null ? '' : s).replace(/[&<>"]/g, function(c){
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
       });
     }
+
+    function openDrawer(){ backdrop.classList.add('open'); drawer.classList.add('open'); loadThreads(); }
+    function closeDrawer(){ backdrop.classList.remove('open'); drawer.classList.remove('open'); }
+    if (menuBtn) menuBtn.addEventListener('click', openDrawer);
+    if (closeBtn) closeBtn.addEventListener('click', closeDrawer);
+    if (backdrop) backdrop.addEventListener('click', closeDrawer);
+    document.addEventListener('keydown', function(e){ if (e.key === 'Escape') closeDrawer(); });
+
+    function bindThreadClicks(){
+      listEl.querySelectorAll('[data-activity-id]').forEach(function(btn){
+        btn.addEventListener('click', function(){
+          var idAttr = btn.getAttribute('data-activity-id');
+          var newId = idAttr ? Number(idAttr) : null;
+          var title = btn.getAttribute('data-title') || 'Geral';
+          selectThread(newId, title);
+          mode = 'threads';
+          closeDrawer();
+        });
+      });
+    }
+
+    function renderThreads(data){
+      var items = data.threads || [];
+      listEl.innerHTML = items.length ? items.map(function(t){
+        var active = (t.activityId == null ? 'null' : String(t.activityId)) === String(ACTIVE_ID);
+        var letter = (t.title || '?').trim().charAt(0).toUpperCase() || '?';
+        return '<button type="button" class="convo-item' + (active ? ' active' : '') + '" data-activity-id="' + (t.activityId == null ? '' : t.activityId) + '" data-title="' + escHtml(t.title) + '">' +
+          '<div class="convo-dot">' + escHtml(letter) + '</div>' +
+          '<div class="convo-text"><div class="convo-title">' + escHtml(t.title) + '</div>' +
+          '<div class="convo-sub">' + escHtml(t.snippet || 'Sem mensagens ainda') + '</div></div></button>';
+      }).join('') : '<p class="muted" style="margin:14px;">Nenhuma conversa ainda.</p>';
+      bindThreadClicks();
+    }
+
+    function renderStartable(data){
+      var items = data.startable || [];
+      var back = '<button type="button" class="convo-back" id="chatBackBtn">&larr; Voltar</button>';
+      var listHtml = items.length ? items.map(function(a){
+        var letter = (a.title || '?').trim().charAt(0).toUpperCase() || '?';
+        return '<button type="button" class="convo-item" data-activity-id="' + a.activityId + '" data-title="' + escHtml(a.title) + '">' +
+          '<div class="convo-dot">' + escHtml(letter) + '</div>' +
+          '<div class="convo-text"><div class="convo-title">' + escHtml(a.title) + '</div>' +
+          '<div class="convo-sub">Começar uma conversa sobre esse treino</div></div></button>';
+      }).join('') : '<p class="muted" style="margin:14px;">Nenhum treino sem conversa por enquanto.</p>';
+      listEl.innerHTML = back + listHtml;
+      var backBtn = document.getElementById('chatBackBtn');
+      if (backBtn) backBtn.addEventListener('click', function(){ mode = 'threads'; renderThreads(cache || { threads: [] }); });
+      bindThreadClicks();
+    }
+
+    function selectThread(newId, title){
+      ACTIVE_ID = newId;
+      if (titleEl) titleEl.textContent = title;
+      if (clearInput) clearInput.value = newId == null ? '' : newId;
+      var historyUrl = newId == null ? '/api/coach/history' : '/api/coach/activity/' + newId + '/history';
+      if (chat && chat.switchThread) chat.switchThread(newId, historyUrl, 'Nenhuma mensagem ainda nessa conversa.');
+      try {
+        var url = new URL(window.location.href);
+        if (newId == null) url.searchParams.delete('activity'); else url.searchParams.set('activity', newId);
+        window.history.replaceState(null, '', url.pathname + url.search);
+      } catch (e) {}
+    }
+
+    function loadThreads(){
+      fetch('/api/coach/threads').then(function(r){ return r.ok ? r.json() : { threads: [], startable: [] }; }).then(function(data){
+        cache = data;
+        if (mode === 'new') renderStartable(data); else renderThreads(data);
+      }).catch(function(){});
+    }
+
+    if (newBtn) newBtn.addEventListener('click', function(){
+      mode = 'new';
+      if (cache) renderStartable(cache); else loadThreads();
+    });
+
+    loadThreads();
   } catch (e) { console.error('[dbg]', e); }
 })();
 </script>`;

@@ -481,13 +481,66 @@ async function handle(req, res) {
     // ---------- coach chat ----------
     if (method === 'GET' && pathname === '/assistant') {
       if (!requireAuth()) return;
-      const messages = db.prepare('SELECT * FROM chat_messages WHERE user_id = ? AND activity_id IS NULL ORDER BY created_at ASC, id ASC').all(user.id);
-      return html(res, 200, views.coachChatPage(user, messages, { aiEnabled: !!user.anthropic_api_key, error: parsed.query.error }));
+      let activeActivity = null;
+      if (parsed.query.activity) {
+        activeActivity = db.prepare('SELECT * FROM activities WHERE id = ? AND user_id = ?').get(parsed.query.activity, user.id) || null;
+      }
+      const activeActivityId = activeActivity ? activeActivity.id : null;
+      const messages = db.prepare('SELECT * FROM chat_messages WHERE user_id = ? AND activity_id IS ? ORDER BY created_at ASC, id ASC').all(user.id, activeActivityId);
+      return html(res, 200, views.coachChatPage(user, messages, {
+        aiEnabled: !!user.anthropic_api_key,
+        error: parsed.query.error,
+        activeActivityId,
+        activeTitle: activeActivity ? activeActivity.title : 'Geral',
+      }));
     }
     if (method === 'POST' && pathname === '/assistant/clear') {
       if (!requireAuth()) return;
-      db.prepare('DELETE FROM chat_messages WHERE user_id = ? AND activity_id IS NULL').run(user.id);
-      return redirect(res, '/assistant');
+      const rawId = (fields.activity_id || '').trim();
+      const activityId = rawId ? Number(rawId) : null;
+      db.prepare('DELETE FROM chat_messages WHERE user_id = ? AND activity_id IS ?').run(user.id, activityId);
+      return redirect(res, activityId ? `/assistant?activity=${activityId}` : '/assistant');
+    }
+
+    // Lists the athlete's coach conversations for the /assistant sidebar:
+    // the always-present general thread plus one per activity that already
+    // has messages (most recent first), and separately the activities that
+    // don't have a thread yet, for the "nova conversa" picker.
+    if (method === 'GET' && pathname === '/api/coach/threads') {
+      if (!user) { res.writeHead(401); return res.end('{"error":"auth"}'); }
+      const rows = db.prepare(`
+        SELECT cm.activity_id AS activityId, a.title AS activityTitle
+        FROM chat_messages cm
+        LEFT JOIN activities a ON a.id = cm.activity_id
+        WHERE cm.user_id = ?
+        GROUP BY cm.activity_id
+      `).all(user.id);
+      if (!rows.some((r) => r.activityId == null)) {
+        rows.unshift({ activityId: null, activityTitle: null });
+      }
+      const threads = rows.map((r) => {
+        const last = db.prepare('SELECT content, created_at FROM chat_messages WHERE user_id = ? AND activity_id IS ? ORDER BY created_at DESC, id DESC LIMIT 1').get(user.id, r.activityId);
+        return {
+          activityId: r.activityId,
+          title: r.activityId ? (r.activityTitle || 'Treino') : 'Geral',
+          date: last ? last.created_at : null,
+          snippet: last ? last.content.slice(0, 90) : '',
+        };
+      }).sort((a, b) => {
+        if (!a.date && !b.date) return 0;
+        if (!a.date) return 1;
+        if (!b.date) return -1;
+        return b.date.localeCompare(a.date);
+      });
+      const startable = db.prepare(`
+        SELECT id AS activityId, title, started_at AS startedAt
+        FROM activities
+        WHERE user_id = ? AND id NOT IN (SELECT COALESCE(activity_id, -1) FROM chat_messages WHERE user_id = ?)
+        ORDER BY COALESCE(started_at, created_at) DESC
+        LIMIT 20
+      `).all(user.id, user.id);
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+      return res.end(JSON.stringify({ threads, startable }));
     }
 
     // JSON history for the floating coach widget (lazy-loaded so it doesn't
