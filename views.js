@@ -165,6 +165,19 @@ function mount(opts){
       empty.className = 'chat-empty';
       empty.textContent = opts.emptyText || 'Nenhuma mensagem ainda. Pergunte algo sobre seus treinos.';
       msgsEl.appendChild(empty);
+      if (opts.suggestions && opts.suggestions.length) {
+        var chips = document.createElement('div');
+        chips.className = 'chat-suggestions';
+        opts.suggestions.forEach(function(s){
+          var chip = document.createElement('button');
+          chip.type = 'button';
+          chip.className = 'chat-suggestion-chip';
+          chip.textContent = s;
+          chip.addEventListener('click', function(){ send(s); });
+          chips.appendChild(chip);
+        });
+        msgsEl.appendChild(chips);
+      }
       return;
     }
     messages.forEach(function(m){
@@ -263,9 +276,10 @@ function mount(opts){
   // at (general vs. a specific activity's thread) without re-creating the
   // form/input/listeners above — used by the /assistant sidebar to switch
   // threads in place, ChatGPT-style, instead of a full page reload.
-  function switchThread(newActivityId, historyUrl, emptyText){
+  function switchThread(newActivityId, historyUrl, emptyText, suggestions){
     activityId = newActivityId != null ? newActivityId : null;
     if (emptyText) opts.emptyText = emptyText;
+    opts.suggestions = suggestions || null;
     msgsEl.innerHTML = '';
     var loading = document.createElement('p');
     loading.className = 'chat-empty';
@@ -325,6 +339,7 @@ ready(function(){
         inputId: 'coachWidgetInput',
         historyUrl: '/api/coach/history',
         emptyText: 'Fala comigo! Pergunte sobre seus treinos, sua evolução ou sua próxima prova.',
+        suggestions: ['Analise meu último treino', 'Como está minha evolução esse mês?', 'O que eu preciso melhorar?', 'Quanto falta pra minha meta na maratona?'],
       });
     }
   }
@@ -1371,6 +1386,7 @@ ready(function(){
       historyUrl: '/api/coach/activity/${activity.id}/history',
       activityId: ${activity.id},
       emptyText: 'Pergunte ao coach sobre este treino específico — pace, tiros, FC, o que quiser.',
+      suggestions: ['Analise esse treino', 'O que eu preciso melhorar nesse treino?', 'Como foi meu ritmo comparado à meta?'],
     });
   }
 });
@@ -1798,6 +1814,8 @@ function coachChatPage(user, messages, flags) {
   try {
     if (!window.CoachChat) return;
     var ACTIVE_ID = ${activeActivityId != null ? activeActivityId : 'null'};
+    var GENERAL_SUGGESTIONS = ['Analise meu último treino', 'Como está minha evolução esse mês?', 'O que eu preciso melhorar?', 'Quanto falta pra minha meta na maratona?'];
+    var ACTIVITY_SUGGESTIONS = ['Analise esse treino', 'O que eu preciso melhorar nesse treino?', 'Como foi meu ritmo comparado à meta?'];
     var chat = window.CoachChat.mount({
       msgsId: 'chatMsgs',
       formId: 'chatForm',
@@ -1806,6 +1824,7 @@ function coachChatPage(user, messages, flags) {
       activityId: ACTIVE_ID,
       aiEnabled: ${flags.aiEnabled ? 'true' : 'false'},
       emptyText: 'Nenhuma mensagem ainda. Pergunte algo como "como está minha evolução esse mês?" ou "quantos km faltam pra bater minha meta na maratona?".',
+      suggestions: ACTIVE_ID == null ? GENERAL_SUGGESTIONS : ACTIVITY_SUGGESTIONS,
     });
 
     var menuBtn = document.getElementById('chatMenuBtn');
@@ -1832,15 +1851,37 @@ function coachChatPage(user, messages, flags) {
     if (backdrop) backdrop.addEventListener('click', closeDrawer);
     document.addEventListener('keydown', function(e){ if (e.key === 'Escape') closeDrawer(); });
 
+    var TRASH_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 7h16M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2m3 0-1 13a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 7h14Z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
     function bindThreadClicks(){
-      listEl.querySelectorAll('[data-activity-id]').forEach(function(btn){
+      listEl.querySelectorAll('.convo-item[data-activity-id]').forEach(function(btn){
         btn.addEventListener('click', function(){
           var idAttr = btn.getAttribute('data-activity-id');
           var newId = idAttr ? Number(idAttr) : null;
           var title = btn.getAttribute('data-title') || 'Geral';
-          selectThread(newId, title);
+          var suggestions = newId == null ? GENERAL_SUGGESTIONS : ACTIVITY_SUGGESTIONS;
+          selectThread(newId, title, suggestions);
           mode = 'threads';
           closeDrawer();
+        });
+      });
+      listEl.querySelectorAll('.convo-delete[data-activity-id]').forEach(function(btn){
+        btn.addEventListener('click', function(e){
+          e.stopPropagation();
+          var idAttr = btn.getAttribute('data-activity-id');
+          var delId = idAttr ? Number(idAttr) : null;
+          var title = btn.getAttribute('data-title') || 'essa conversa';
+          if (!window.confirm('Excluir a conversa "' + title + '"? Isso apaga o histórico dela.')) return;
+          fetch('/api/coach/threads/delete', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ activity_id: delId }),
+          }).then(function(){
+            if (String(delId) === String(ACTIVE_ID)) {
+              selectThread(null, 'Geral', GENERAL_SUGGESTIONS);
+            }
+            loadThreads();
+          }).catch(function(){});
         });
       });
     }
@@ -1850,10 +1891,14 @@ function coachChatPage(user, messages, flags) {
       listEl.innerHTML = items.length ? items.map(function(t){
         var active = (t.activityId == null ? 'null' : String(t.activityId)) === String(ACTIVE_ID);
         var letter = (t.title || '?').trim().charAt(0).toUpperCase() || '?';
-        return '<button type="button" class="convo-item' + (active ? ' active' : '') + '" data-activity-id="' + (t.activityId == null ? '' : t.activityId) + '" data-title="' + escHtml(t.title) + '">' +
+        var idAttr = t.activityId == null ? '' : t.activityId;
+        return '<div class="convo-row">' +
+          '<button type="button" class="convo-item' + (active ? ' active' : '') + '" data-activity-id="' + idAttr + '" data-title="' + escHtml(t.title) + '">' +
           '<div class="convo-dot">' + escHtml(letter) + '</div>' +
           '<div class="convo-text"><div class="convo-title">' + escHtml(t.title) + '</div>' +
-          '<div class="convo-sub">' + escHtml(t.snippet || 'Sem mensagens ainda') + '</div></div></button>';
+          '<div class="convo-sub">' + escHtml(t.snippet || 'Sem mensagens ainda') + '</div></div></button>' +
+          '<button type="button" class="convo-delete" data-activity-id="' + idAttr + '" data-title="' + escHtml(t.title) + '" aria-label="Excluir conversa">' + TRASH_SVG + '</button>' +
+          '</div>';
       }).join('') : '<p class="muted" style="margin:14px;">Nenhuma conversa ainda.</p>';
       bindThreadClicks();
     }
@@ -1874,12 +1919,12 @@ function coachChatPage(user, messages, flags) {
       bindThreadClicks();
     }
 
-    function selectThread(newId, title){
+    function selectThread(newId, title, suggestions){
       ACTIVE_ID = newId;
       if (titleEl) titleEl.textContent = title;
       if (clearInput) clearInput.value = newId == null ? '' : newId;
       var historyUrl = newId == null ? '/api/coach/history' : '/api/coach/activity/' + newId + '/history';
-      if (chat && chat.switchThread) chat.switchThread(newId, historyUrl, 'Nenhuma mensagem ainda nessa conversa.');
+      if (chat && chat.switchThread) chat.switchThread(newId, historyUrl, 'Nenhuma mensagem ainda nessa conversa.', suggestions || (newId == null ? GENERAL_SUGGESTIONS : ACTIVITY_SUGGESTIONS));
       try {
         var url = new URL(window.location.href);
         if (newId == null) url.searchParams.delete('activity'); else url.searchParams.set('activity', newId);

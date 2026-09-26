@@ -543,6 +543,23 @@ async function handle(req, res) {
       return res.end(JSON.stringify({ threads, startable }));
     }
 
+    // Deletes a whole coach conversation (all its messages). For the general
+    // thread this just empties it — it always stays in the list — while an
+    // activity thread disappears from "Conversas" and returns to the "nova
+    // conversa" picker until the athlete starts it again.
+    if (method === 'POST' && pathname === '/api/coach/threads/delete') {
+      if (!user) { res.writeHead(401); return res.end('{"error":"auth"}'); }
+      let body = {};
+      try {
+        const raw = await readBody(req);
+        body = JSON.parse(raw.toString('utf8') || '{}');
+      } catch (e) { body = {}; }
+      const activityId = body.activity_id ? Number(body.activity_id) : null;
+      db.prepare('DELETE FROM chat_messages WHERE user_id = ? AND activity_id IS ?').run(user.id, activityId);
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+      return res.end(JSON.stringify({ ok: true }));
+    }
+
     // JSON history for the floating coach widget (lazy-loaded so it doesn't
     // slow down every page load).
     if (method === 'GET' && pathname === '/api/coach/history') {
