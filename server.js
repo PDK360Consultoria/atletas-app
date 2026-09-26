@@ -12,7 +12,7 @@ const { parseActivityFile } = require('./lib/gpx');
 const { analyzeActivity } = require('./lib/anthropic');
 const strava = require('./lib/strava');
 const { computeEvolution, computeMedals } = require('./lib/stats');
-const { buildContext, buildActivityFocusContext, streamChatWithAssistant } = require('./lib/assistant');
+const { buildContext, buildActivityFocusContext, streamChatWithAssistant, computeHumanDelayMs } = require('./lib/assistant');
 const { fetchNearbyRaces } = require('./lib/races');
 const { buildMonthCalendar } = require('./lib/calendar');
 const { ensurePublicSlug, buildShareDraft, notify } = require('./lib/social');
@@ -556,6 +556,10 @@ async function handle(req, res) {
         }
         const priorRows = db.prepare('SELECT * FROM chat_messages WHERE user_id = ? AND activity_id IS ? ORDER BY created_at ASC, id ASC').all(user.id, activityId);
         const history = priorRows.slice(0, -1).slice(-20).map((m) => ({ role: m.role, content: m.content }));
+        // A human treinador never replies the instant a message lands — hold
+        // briefly (client already shows the "digitando" dots during this
+        // wait) before the reply starts streaming in.
+        await new Promise((resolve) => setTimeout(resolve, computeHumanDelayMs(text.length)));
         full = await streamChatWithAssistant(user.anthropic_api_key, context, history, text, (delta) => {
           res.write(delta);
         });
