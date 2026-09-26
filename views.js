@@ -382,7 +382,7 @@ ready(function(){
 })();
 </script>`;
 
-function layout({ title, user, body, active, extraHead, bodyEnd, hideCoachWidget }) {
+function layout({ title, user, body, active, extraHead, bodyEnd, hideCoachWidget, bodyClass, wrapClass }) {
   const nav = user
     ? `<nav class="nav">
         <a class="brand" href="/">Atletas</a>
@@ -420,9 +420,9 @@ function layout({ title, user, body, active, extraHead, bodyEnd, hideCoachWidget
 <link rel="stylesheet" href="/style.css">
 ${extraHead || ''}
 </head>
-<body>
+<body${bodyClass ? ` class="${bodyClass}"` : ''}>
 ${nav}
-<div class="wrap">
+<div class="wrap${wrapClass ? ` ${wrapClass}` : ''}">
 ${body}
 </div>
 ${showWidget ? coachWidgetHtml(user) : ''}
@@ -1731,19 +1731,25 @@ function coachChatPage(user, messages, flags) {
   const initialJson = JSON.stringify(messages.map(m => ({ role: m.role, content: m.content }))).replace(/</g, '\\u003c');
 
   const body = `
-<h1>Coach de Corrida</h1>
-<p class="lede">Converse com o seu treinador pessoal — ele responde com base nos seus treinos, sua evolução e sua prova, em tempo real.</p>
-${flags.error === 'missing_key' ? `<div class="err">Cadastre sua chave da API da Anthropic em <a href="/settings">Config</a> para conversar com o coach.</div>` : ''}
-
 <div class="card chat-card">
+  <div class="chat-topbar">
+    <div class="chat-topbar-title">
+      <span class="chat-topbar-avatar">${icon('flame', 'topbar')}</span>
+      <div>
+        <div class="chat-topbar-name">Coach de Corrida</div>
+        <div class="chat-topbar-sub">seu treinador, sempre no seu histórico</div>
+      </div>
+    </div>
+    ${flags.aiEnabled && messages.length ? `<form method="POST" action="/assistant/clear" onsubmit="return confirm('Limpar toda a conversa?')"><button class="chat-topbar-clear" type="submit">Limpar</button></form>` : ''}
+  </div>
+  ${flags.error === 'missing_key' ? `<div class="err" style="margin:12px 16px 0;">Cadastre sua chave da API da Anthropic em <a href="/settings">Config</a> para conversar com o coach.</div>` : ''}
   <div class="chat-msgs" id="chatMsgs"></div>
   ${flags.aiEnabled ? `
   <form class="chat-form" id="chatForm">
     <textarea id="chatInput" placeholder="Fale com o coach..." rows="1" autofocus></textarea>
     <button type="submit" aria-label="Enviar">${icon('flame', 'sendbig')}</button>
   </form>
-  ${messages.length ? `<form method="POST" action="/assistant/clear" style="margin-top:10px;" onsubmit="return confirm('Limpar toda a conversa?')"><button class="ghost danger" type="submit">Limpar conversa</button></form>` : ''}
-  ` : `<p class="muted" style="margin:14px 0 0;">Cadastre sua chave da API da Anthropic em <a href="/settings">Config</a> para habilitar o coach.</p>`}
+  ` : `<p class="muted" style="margin:0; padding:14px 16px;">Cadastre sua chave da API da Anthropic em <a href="/settings">Config</a> para habilitar o coach.</p>`}
 </div>
 `;
   const chatInit = `<script defer>
@@ -1762,7 +1768,7 @@ ${flags.error === 'missing_key' ? `<div class="err">Cadastre sua chave da API da
   } catch (e) { console.error('[dbg]', e); }
 })();
 </script>`;
-  return layout({ title: 'Coach de Corrida', user, body, active: 'assistant', hideCoachWidget: true, bodyEnd: chatInit });
+  return layout({ title: 'Coach de Corrida', user, body, active: 'assistant', hideCoachWidget: true, bodyEnd: chatInit, bodyClass: 'chat-page', wrapClass: 'wrap-chat' });
 }
 
 module.exports = {
