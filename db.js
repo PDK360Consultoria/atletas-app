@@ -273,6 +273,32 @@ CREATE TABLE IF NOT EXISTS notifications (
   }
 }
 
+// Upgrade: replace a still-generic Strava auto-name ("Corrida da tarde",
+// "Corrida matinal"...) with a name that reflects the workout's actual
+// structure — "Tiro 200 8km", "Longão 30km", "Progressivo 12km" — using
+// classification data (intervals_json/laps_json) already synced onto the
+// row, no new Strava API call needed. Only ever touches a title that's
+// still one of Strava's own auto-names (isGenericAutoName); a title the
+// athlete customized, on Strava or here, is never overwritten. Naturally
+// idempotent and safe to run on every boot: once a row is renamed to e.g.
+// "Longão 30km" it no longer matches isGenericAutoName, so it's left alone
+// from then on (including if the athlete edits it further by hand).
+{
+  const { isGenericAutoName, deriveWorkoutTitle } = require('./lib/strava');
+  const rows = db.prepare(`SELECT id, title, workout_type, distance_km, intervals_json, laps_json
+    FROM activities WHERE source = 'strava' AND distance_km IS NOT NULL`).all();
+  const update = db.prepare('UPDATE activities SET title = ? WHERE id = ?');
+  for (const row of rows) {
+    if (!isGenericAutoName(row.title)) continue;
+    let intervals = null;
+    let laps = null;
+    try { intervals = row.intervals_json ? JSON.parse(row.intervals_json) : null; } catch (e) {}
+    try { laps = row.laps_json ? JSON.parse(row.laps_json) : null; } catch (e) {}
+    const smartTitle = deriveWorkoutTitle({ distanceKm: row.distance_km, workoutTypeLabel: row.workout_type, intervals, laps });
+    if (smartTitle && smartTitle !== row.title) update.run(smartTitle, row.id);
+  }
+}
+
 // One-time cleanup: an earlier version of this app auto-posted every logged
 // training to the feed without asking. The athlete asked for curation
 // control instead — he picks which run becomes a post (via "Compartilhar no
