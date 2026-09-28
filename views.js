@@ -1,6 +1,7 @@
 const { secToPace, fmtClock, fmtDate, timeAgo, esc, renderMarkdownLite, icon } = require('./lib/format');
 const { summarizeIntervals } = require('./lib/intervals');
 const { estimateVO2max } = require('./lib/stats');
+const { REGION_LABELS, autoRegionLabel } = require('./lib/races');
 
 // Runs site-wide: fades cards in as they scroll into view and adds a subtle
 // pointer-tilt to cards on hover. Pure progressive enhancement — cards are
@@ -1049,8 +1050,10 @@ ${evoHtml}
   return layout({ title: 'Perfil', user, body, active: 'home', extraHead: HERO_EXTRA_HEAD, bodyEnd: HERO_SCRIPT });
 }
 
-function racesPage(user, races, nearbyRaces, added) {
+function racesPage(user, races, nearbyRaces, added, region, customQuery) {
   nearbyRaces = nearbyRaces || [];
+  region = region || 'auto';
+  customQuery = customQuery || '';
   const existingKeys = new Set(races.map(r => `${r.name}|${r.race_date}`));
   const nearbyHtml = nearbyRaces.length ? nearbyRaces.map((r, i) => {
     const longest = r.distances && r.distances.length ? r.distances[r.distances.length - 1] : '';
@@ -1069,17 +1072,32 @@ function racesPage(user, races, nearbyRaces, added) {
         <div class="race-dists">
           ${r.distances && r.distances.length ? r.distances.map(d => `<span class="race-dist">${Number.isInteger(d) ? d : d.toFixed(1)}km</span>`).join('') : ''}
         </div>
-        ${already ? `<span class="pill">No calendário</span>` : `
-        <form method="POST" action="/races/quickadd">
-          <input type="hidden" name="name" value="${esc(r.name)}">
-          <input type="hidden" name="race_date" value="${esc(isoDate)}">
-          <input type="hidden" name="distance_km" value="${longest || ''}">
-          <input type="hidden" name="city" value="${esc(r.city || '')}">
-          <button class="ghost" type="submit">+ Agenda</button>
-        </form>`}
+        <div class="race-ext-buttons">
+          <a class="btn ghost xs" href="${r.registrationUrl || `https://www.google.com/search?q=${encodeURIComponent('inscrição ' + r.name)}`}" target="_blank" rel="noopener noreferrer">Inscrição ↗</a>
+          ${already ? `<span class="pill">No calendário</span>` : `
+          <form method="POST" action="/races/quickadd">
+            <input type="hidden" name="name" value="${esc(r.name)}">
+            <input type="hidden" name="race_date" value="${esc(isoDate)}">
+            <input type="hidden" name="distance_km" value="${longest || ''}">
+            <input type="hidden" name="city" value="${esc(r.city || '')}">
+            <button class="ghost" type="submit">+ Agenda</button>
+          </form>`}
+        </div>
       </div>
     </div>`;
-  }).join('') : `<p class="muted" style="margin:0;">Nenhuma corrida encontrada perto de ${user.city ? esc(user.city) : 'você'} no momento.</p>`;
+  }).join('') : `<p class="muted" style="margin:0;">Nenhuma corrida encontrada${region === 'custom' && !customQuery ? '' : ' nessa região'} no momento.</p>`;
+
+  const regionOptions = [
+    { value: 'auto', label: autoRegionLabel(user.city) },
+    { value: 'litoral', label: REGION_LABELS.litoral },
+    { value: 'pr', label: REGION_LABELS.pr },
+    { value: 'custom', label: REGION_LABELS.custom + '...' },
+  ].map(o => `<option value="${o.value}"${region === o.value ? ' selected' : ''}>${esc(o.label)}</option>`).join('');
+
+  const regionHeading = region === 'litoral' ? ' no litoral do Paraná'
+    : region === 'pr' ? ' no Paraná'
+    : region === 'custom' ? (customQuery ? ' em ' + esc(customQuery) : '')
+    : ' em ' + esc(autoRegionLabel(user.city));
 
   const body = `
 <h1>Provas</h1>
@@ -1111,9 +1129,15 @@ ${added ? `<div class="ok">Prova adicionada ao seu calendário.</div>` : ''}
 </div>
 
 <div class="card">
-  <h2><span class="h-icon">${icon('pin', 'near')}</span>Provas nos próximos 60 dias${user.city ? ' em ' + esc(user.city) : ' perto de você'}</h2>
+  <div class="race-region-head">
+    <h2><span class="h-icon">${icon('pin', 'near')}</span>Provas nos próximos 60 dias${regionHeading}</h2>
+    <form method="GET" action="/races" class="race-region-form">
+      <select name="region" onchange="this.form.submit()">${regionOptions}</select>
+      ${region === 'custom' ? `<input type="text" name="q" placeholder="Cidade, UF" value="${esc(customQuery)}"><button class="ghost xs" type="submit">Buscar</button>` : ''}
+    </form>
+  </div>
   ${nearbyHtml}
-  <p class="race-source">Dados via Corrida Perfeita.${!user.city ? ' Defina sua cidade em <a href="/settings">Config</a> para ver corridas perto de você.' : ' Clique em "+ Agenda" para incluir uma prova no seu calendário pessoal.'}</p>
+  <p class="race-source">Dados via Corrida Perfeita.${region === 'auto' && !user.city ? ' Defina sua cidade em <a href="/settings">Config</a> para ver corridas perto de você.' : ' "Inscrição" leva à busca pela página oficial da prova; "+ Agenda" inclui no seu calendário aqui no app.'}</p>
 </div>
 `;
   return layout({ title: 'Provas', user, body, active: 'races' });

@@ -155,8 +155,10 @@ async function handle(req, res) {
     if (method === 'GET' && pathname === '/races') {
       if (!requireAuth()) return;
       const races = db.prepare('SELECT * FROM races WHERE user_id = ? ORDER BY race_date ASC').all(user.id);
-      const nearbyRaces = await fetchNearbyRaces(user.city, 60);
-      return html(res, 200, views.racesPage(user, races, nearbyRaces, parsed.query.added));
+      const region = ['auto', 'litoral', 'pr', 'custom'].includes(parsed.query.region) ? parsed.query.region : 'auto';
+      const customQuery = (parsed.query.q || '').trim();
+      const nearbyRaces = await fetchNearbyRaces({ city: user.city, days: 60, region, customQuery });
+      return html(res, 200, views.racesPage(user, races, nearbyRaces, parsed.query.added, region, customQuery));
     }
     if (method === 'POST' && pathname === '/races') {
       if (!requireAuth()) return;
