@@ -175,6 +175,15 @@ details.trn[open] summary::before{content:'–';}
 .race-ext-actions{display:flex; flex-direction:column; align-items:flex-end; gap:8px;}
 .race-ext-actions form{margin:0;}
 .race-ext-actions button{padding:7px 14px; font-size:12px;}
+.race-ext-buttons{display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:flex-end;}
+
+/* ---------- nearby races region picker ---------- */
+.race-region-head{display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; margin-bottom:14px;}
+.race-region-head h2{margin:0;}
+.race-region-form{display:flex; align-items:center; gap:8px; flex-wrap:wrap;}
+.race-region-form select, .race-region-form input[type=text]{background:var(--surface); border:1px solid var(--line); border-radius:9px; color:var(--ink); padding:8px 10px; font-size:12px; font-family:'Archivo',sans-serif;}
+.race-region-form input[type=text]{width:160px;}
+.race-region-form button{padding:7px 12px; font-size:12px;}
 
 /* ---------- dashboard month calendar ---------- */
 .cal-card{overflow:hidden;}
