@@ -128,6 +128,15 @@ ensureColumn('posts', 'is_auto', 'is_auto INTEGER NOT NULL DEFAULT 0');
 // an avatar renders (feed, comments, public profile) once set.
 ensureColumn('users', 'avatar_path', 'avatar_path TEXT');
 
+// Pre-diagnóstico do cadastro: perfil de corredor coletado no signup, usado
+// para gerar a leitura personalizada mostrada em /welcome logo após criar a
+// conta (ver buildDiagnosis em lib/social.js). Nenhum desses campos é
+// obrigatório pra continuar usando o app — se vier vazio (conta criada antes
+// dessa feature), a leitura é só mais genérica.
+ensureColumn('users', 'experience_level', 'experience_level TEXT');
+ensureColumn('users', 'weekly_km', 'weekly_km REAL');
+ensureColumn('users', 'injury_notes', 'injury_notes TEXT');
+
 // Marks a post that was shared via the "🏆 Recorde pessoal" prompt on an
 // activity page (see detectPersonalRecord in lib/stats.js) so the feed card
 // can show a trophy badge instead of the athlete having to say it themselves.
