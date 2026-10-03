@@ -441,6 +441,14 @@ img.post-avatar{object-fit:cover; background:var(--surface2); box-shadow:0 0 0 1
 .post-stat .v{font-family:'Archivo',sans-serif; font-weight:800; font-size:18px; color:var(--ink);}
 .post-stat .v .u{font-size:11px; font-weight:600; color:var(--ink-faint); margin-left:2px;}
 .post-stat .k{font-size:10px; text-transform:uppercase; letter-spacing:0.05em; color:var(--ink-faint); margin-top:3px; font-family:'IBM Plex Mono',monospace;}
+
+/* condensed pace-by-km chart on an auto-posted feed card — reuses the same
+   .bars/.bar-km markup+hover tooltips as the activity page's "Splits por
+   km" card (see paceBarsHtml in views.js), just a little shorter so it
+   doesn't dominate the feed. */
+.post-chart{margin-top:12px; padding:14px 14px 28px; border-radius:14px; background:var(--surface2);}
+.post-chart .bars{height:84px; margin-top:0;}
+
 .post-actions{display:flex; align-items:center; gap:18px; margin-top:14px; padding-top:12px; border-top:1px solid var(--line);}
 .kudos-btn{display:inline-flex; align-items:center; gap:7px; background:transparent; color:var(--ink-dim); border:1px solid var(--line); box-shadow:none; padding:7px 14px; font-size:13px; font-weight:700; transition:transform .12s ease, background .12s ease, color .12s ease, border-color .12s ease;}
 .kudos-btn .icon-svg{width:16px; height:16px;}
@@ -481,6 +489,13 @@ img.post-avatar{object-fit:cover; background:var(--surface2); box-shadow:0 0 0 1
    detectPersonalRecord() in lib/stats.js and p.is_pr / prInfo in views.js. */
 .pr-badge{margin-left:auto; background:linear-gradient(155deg, var(--gold), var(--amber)); color:#15171A; border-color:transparent; font-weight:800;}
 .pr-badge .icon-svg{width:12px; height:12px;}
+
+/* delete-post button (feed post header, own posts only) — see POST
+   /feed/:id/delete in server.js. */
+.post-delete-form{margin-left:auto;}
+.post-delete-btn{display:flex; align-items:center; justify-content:center; width:30px; height:30px; padding:0; border-radius:50%; background:transparent; border:1px solid transparent; color:var(--ink-faint); cursor:pointer; transition:background .15s ease, color .15s ease, border-color .15s ease;}
+.post-delete-btn:hover{background:rgba(255,107,107,0.12); border-color:rgba(255,107,107,0.3); color:var(--red, #FF6B6B);}
+.post-delete-btn .icon-svg{width:16px; height:16px;}
 .pr-banner{display:flex; align-items:center; gap:16px; background:linear-gradient(135deg, color-mix(in srgb, var(--gold) 16%, var(--surface)), var(--surface)); border-color:rgba(var(--glow),0.4);}
 .pr-banner-icon{width:40px; height:40px; flex-shrink:0; border-radius:50%; display:flex; align-items:center; justify-content:center; background:linear-gradient(155deg, var(--gold), var(--amber)); box-shadow:0 8px 18px -10px rgba(var(--glow),0.6);}
 .pr-banner-icon .icon-svg{width:20px; height:20px; color:#15171A;}
