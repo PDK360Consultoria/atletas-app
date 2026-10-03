@@ -448,13 +448,21 @@ function professorPage(user) {
   function pickVoice(){
     if (!canSpeak) return;
     var voices = synth.getVoices() || [];
-    // Prefer a Google/Microsoft pt-BR voice when available — noticeably
-    // less synthetic than the platform-default pt-BR voice on most setups.
+    var ptVoices = voices.filter(function(v){ return v.lang === 'pt-BR' || /^pt/i.test(v.lang); });
+    // A voice with localService:false is one of Chrome's network-synthesized
+    // voices (Google's) — noticeably more natural than whatever flat, local
+    // compact voice the OS falls back to when none is picked. Rank by that
+    // first, Google-by-name second (some setups report it localService even
+    // though it's still the better voice), then just take whatever pt voice
+    // exists rather than leaving this null and letting Chrome pick its own
+    // default, which tends to be the most robotic option installed.
     ptBrVoice =
-      voices.find(function(v){ return v.lang === 'pt-BR' && /google/i.test(v.name); }) ||
-      voices.find(function(v){ return v.lang === 'pt-BR' && /microsoft/i.test(v.name); }) ||
-      voices.find(function(v){ return v.lang === 'pt-BR'; }) ||
-      voices.find(function(v){ return /^pt/i.test(v.lang); }) ||
+      ptVoices.find(function(v){ return v.localService === false && /google/i.test(v.name); }) ||
+      ptVoices.find(function(v){ return v.localService === false; }) ||
+      ptVoices.find(function(v){ return /google/i.test(v.name); }) ||
+      ptVoices.find(function(v){ return /luciana/i.test(v.name); }) ||
+      ptVoices.find(function(v){ return v.lang === 'pt-BR'; }) ||
+      ptVoices[0] ||
       null;
   }
   if (canSpeak) {
@@ -466,13 +474,11 @@ function professorPage(user) {
     if (!canSpeak || !text) { if (onDone) onDone(); return; }
 
     var finished = false;
-    var keepAlive = null;
     var watchdog = null;
 
     function finish(){
       if (finished) return;
       finished = true;
-      clearInterval(keepAlive);
       clearTimeout(watchdog);
       if (onDone) onDone();
     }
@@ -480,20 +486,31 @@ function professorPage(user) {
     // Resets every time we get real evidence speech is progressing
     // (onstart, each word boundary) so a genuinely long reply never gets
     // cut short — it only fires if NOTHING happens for 6s straight, which
-    // only occurs when the utterance is dead.
+    // only occurs when the utterance is dead. NOTE: an earlier version of
+    // this also poked the engine every few seconds with pause()/resume() as
+    // a belt-and-suspenders anti-stall measure — that turned out to be the
+    // cause of the choppy, stuttering, "robotic" playback Felipe reported
+    // right after: pausing and resuming a REAL utterance every 4s chops it
+    // into audible fragments. Removed; the watchdog alone already recovers
+    // from a genuinely dead utterance without touching a healthy one.
     function armWatchdog(){
       clearTimeout(watchdog);
       watchdog = setTimeout(finish, 6000);
     }
 
     function go(){
+      // Re-resolve the voice right before speaking rather than trusting
+      // whatever pickVoice() found at page load — getVoices() can come back
+      // empty on the very first call and only populate a beat later, which
+      // silently left ptBrVoice null and handed the utterance to Chrome's
+      // own default (usually the flattest-sounding voice installed).
+      pickVoice();
       var utter = new SpeechSynthesisUtterance(text);
       utter.lang = 'pt-BR';
       if (ptBrVoice) utter.voice = ptBrVoice;
-      // Neither rushed nor sluggish — a flat 1.0 default reads noticeably
-      // machine-like for pt-BR voices; 0.96/1.0 lands closer to a person
-      // actually talking, per Felipe's brief.
-      utter.rate = 0.96;
+      // 0.96 read as sluggish paired with a non-Google fallback voice —
+      // 1.05 is a brisker, more conversational pace.
+      utter.rate = 1.05;
       utter.pitch = 1.0;
       utter.onstart = armWatchdog;
       utter.onboundary = armWatchdog;
@@ -501,16 +518,6 @@ function professorPage(user) {
       utter.onerror = finish;
       synth.speak(utter);
       armWatchdog();
-
-      // Chrome has a long-standing speechSynthesis bug: playback can stall
-      // silently mid-utterance (or never actually start) with no error and
-      // no further events — the orb sits on "Falando" forever with no
-      // sound and the mic never comes back, exactly what Felipe was
-      // hitting. A periodic pause()/resume() nudge is the standard
-      // workaround for that stall; harmless when playback is healthy.
-      keepAlive = setInterval(function(){
-        if (synth.speaking) { synth.pause(); synth.resume(); }
-      }, 4000);
     }
 
     // Calling speak() in the same tick right after cancel() is a second,
@@ -561,6 +568,7 @@ function professorPage(user) {
       pushLog('professor', clean);
       setState('speaking');
       setCaption(clean, false);
+      startBargeIn();
       speak(clean, function(){
         if (STATE === 'speaking') startAmbient();
       });
@@ -571,6 +579,7 @@ function professorPage(user) {
       pushLog('professor', msg);
       setState('speaking');
       setCaption(msg, false);
+      startBargeIn();
       speak(msg, function(){
         if (STATE === 'speaking') startAmbient();
       });
@@ -650,6 +659,61 @@ function professorPage(user) {
         }
       };
       try { recognition.start(); } catch (e) { showPermError(); }
+    });
+  }
+
+  // ---------- recognition: listening for "Hey Professor" WHILE speaking ----------
+  // Felipe's report: saying "Hey Professor" while the reply was still being
+  // read out loud did nothing. That's because the mic was simply off during
+  // 'speaking' — recognition only restarted once speak() finished. This
+  // starts a second wake-word-only listener for the duration of the spoken
+  // reply, the same way you'd interrupt a person mid-sentence: hearing the
+  // wake word cuts the speech and jumps straight into capturing, instead of
+  // waiting for it to finish first.
+  function startBargeIn(){
+    if (!canListen) return;
+    stopRecognition(function(){
+      if (STATE !== 'speaking') return; // reply already finished/changed by the time stopRecognition settled
+
+      recognition = new SR();
+      recognition.lang = 'pt-BR';
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognitionPhase = 'bargein';
+
+      recognition.onresult = function(event){
+        for (var i = event.resultIndex; i < event.results.length; i++) {
+          var transcript = normalize(event.results[i][0].transcript);
+          if (WAKE_RE.test(transcript)) {
+            var after = transcript.replace(WAKE_RE, '').trim();
+            recognitionPhase = null;
+            // Set synchronously, before cancel(): speak()'s onDone fires
+            // asynchronously off synth.cancel() and checks STATE === 'speaking'
+            // to decide whether to call startAmbient() -- winning that race
+            // here stops it from starting a SECOND recognition instance
+            // moments after beginCapture() starts its own (Chrome allows only
+            // one per tab; that collision is exactly what used to leave the
+            // mic dead).
+            STATE = 'capturing';
+            if (canSpeak) synth.cancel(); // stop the reply being read -- the person is talking now
+            beginCapture(after);
+            return;
+          }
+        }
+      };
+      recognition.onerror = function(){
+        // Ignore — routine for a continuously-listening recognizer, same as
+        // ambient. Permission errors will also surface the next time
+        // startAmbient() runs, no need to duplicate showPermError() here.
+      };
+      recognition.onend = function(){
+        if (recognitionPhase === 'bargein' && STATE === 'speaking') {
+          recognition = null;
+          recognitionPhase = null;
+          startBargeIn();
+        }
+      };
+      try { recognition.start(); } catch (e) { /* no barge-in for this reply, not fatal */ }
     });
   }
 
@@ -771,10 +835,13 @@ function professorPage(user) {
   });
 
   // ---------- push-to-talk fallback (space) + stop (esc) ----------
+  // Space also interrupts a reply in progress (STATE === 'speaking'), same
+  // as saying "Hey Professor" mid-sentence via startBargeIn() above.
   window.addEventListener('keydown', function(e){
-    if (e.code === 'Space' && !e.repeat && (STATE === 'ambient' || STATE === 'standby')) {
+    if (e.code === 'Space' && !e.repeat && (STATE === 'ambient' || STATE === 'standby' || STATE === 'speaking')) {
       e.preventDefault();
       if (STATE === 'standby') { activateBtn.click(); return; }
+      if (STATE === 'speaking') { STATE = 'capturing'; if (canSpeak) synth.cancel(); }
       pttActive = true;
       beginCapture('');
     } else if (e.code === 'Escape') {
@@ -794,6 +861,7 @@ function professorPage(user) {
     if (STATE === 'standby') { activateBtn.click(); return; }
     if (STATE === 'ambient') beginCapture('');
     else if (STATE === 'capturing') finishCapture();
+    else if (STATE === 'speaking') { STATE = 'capturing'; if (canSpeak) synth.cancel(); beginCapture(''); }
   });
 
   window.addEventListener('beforeunload', function(){ stopAll(); });
