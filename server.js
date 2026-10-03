@@ -12,10 +12,10 @@ const { parseActivityFile } = require('./lib/gpx');
 const { analyzeActivity } = require('./lib/anthropic');
 const strava = require('./lib/strava');
 const { computeEvolution, computeMedals, detectPersonalRecord } = require('./lib/stats');
-const { buildContext, buildActivityFocusContext, streamChatWithAssistant, computeHumanDelayMs } = require('./lib/assistant');
+const { buildContext, buildActivityFocusContext, streamChatWithAssistant, computeHumanDelayMs, detectImageRequest, extractWorkoutCard } = require('./lib/assistant');
 const { fetchNearbyRaces } = require('./lib/races');
 const { buildMonthCalendar } = require('./lib/calendar');
-const { ensurePublicSlug, buildShareDraft, buildPRShareDraft, REACTION_KEYS, notify, safePath } = require('./lib/social');
+const { ensurePublicSlug, buildShareDraft, buildPRShareDraft, REACTION_KEYS, notify, safePath, memberNumber, buildDiagnosis } = require('./lib/social');
 const views = require('./views');
 const { coachPage } = require('./views_coach');
 
@@ -51,6 +51,120 @@ async function handle(req, res) {
     const css = fs.readFileSync(path.join(__dirname, 'public', 'style.css'));
     res.writeHead(200, { 'content-type': 'text/css; charset=utf-8' });
     return res.end(css);
+  }
+
+  // Generic static asset serving for public/ (images used by marketing
+  // pages, currently just the landing hero shot) — filename only, no
+  // subdirectories, same traversal guard as the /uploads handler below.
+  const assetMatch = method === 'GET' ? /^\/assets\/([a-zA-Z0-9._-]+)$/.exec(pathname) : null;
+  if (assetMatch) {
+    const PUBLIC_DIR = path.join(__dirname, 'public');
+    const filePath = path.join(PUBLIC_DIR, assetMatch[1]);
+    if (!filePath.startsWith(PUBLIC_DIR) || !fs.existsSync(filePath)) return notFound(res);
+    const ext = path.extname(filePath).toLowerCase();
+    const mime = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.svg': 'image/svg+xml' }[ext] || 'application/octet-stream';
+    res.writeHead(200, { 'content-type': mime, 'cache-control': 'public, max-age=604800' });
+    return res.end(fs.readFileSync(filePath));
+  }
+
+  // TEMPORARY — used once to capture a static PNG of the WebGL shoe hero
+  // for the public landing page (see landingHeroIllustration in views.js).
+  // No auth, no DB access, nothing sensitive — safe to leave briefly, but
+  // remove once the PNG is captured and committed.
+  if (method === 'GET' && pathname === '/internal/hero-shot') {
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+    return res.end(`<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
+html,body{margin:0;padding:0;background:linear-gradient(160deg, #1c1006 0%, #2a1608 55%, #150c05 100%);}
+#hero{width:900px;height:900px;position:relative;overflow:hidden;}
+canvas{position:absolute;inset:0;width:100%;height:100%;display:block;}
+</style></head><body>
+<div id="hero"><canvas id="hero-canvas"></canvas></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script>
+window.SHOE_LOADED = false;
+(function(){
+  var canvas = document.getElementById('hero-canvas');
+  var hero = document.getElementById('hero');
+  var accent = 0xffc24e, accent2 = 0x4e9bff;
+  var renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: true, antialias: true, preserveDrawingBuffer: true });
+  renderer.setPixelRatio(2);
+  if ('outputEncoding' in renderer) renderer.outputEncoding = THREE.sRGBEncoding;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  if ('toneMapping' in renderer) { renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 1.15; }
+  var scene = new THREE.Scene();
+  var camera = new THREE.PerspectiveCamera(36, 1, 0.1, 100);
+  camera.position.set(1.9, 1.5, 6.0);
+  scene.add(new THREE.HemisphereLight(0x4a5568, 0x0b0906, 0.55));
+  var key = new THREE.DirectionalLight(0xfff3e0, 1.9);
+  key.position.set(2.4, 3.6, 2.8); key.castShadow = true;
+  key.shadow.mapSize.set(2048, 2048);
+  key.shadow.camera.left = -2; key.shadow.camera.right = 2;
+  key.shadow.camera.top = 2; key.shadow.camera.bottom = -2;
+  key.shadow.camera.near = 1; key.shadow.camera.far = 10; key.shadow.bias = -0.0025;
+  scene.add(key);
+  var fill = new THREE.DirectionalLight(accent2, 0.5); fill.position.set(-3, 1.4, 1.6); scene.add(fill);
+  var rim = new THREE.PointLight(accent, 1.5, 14); rim.position.set(-1.6, 1.8, -3.2); scene.add(rim);
+  var rim2 = new THREE.PointLight(0xffffff, 0.8, 12); rim2.position.set(1.8, 0.6, -2.6); scene.add(rim2);
+  try {
+    var pmrem = new THREE.PMREMGenerator(renderer);
+    pmrem.compileEquirectangularShader();
+    var envCanvas = document.createElement('canvas');
+    envCanvas.width = 4; envCanvas.height = 128;
+    var ectx = envCanvas.getContext('2d');
+    var grad = ectx.createLinearGradient(0, 0, 0, 128);
+    grad.addColorStop(0, '#4a3d2e'); grad.addColorStop(0.45, '#1c1712'); grad.addColorStop(1, '#030201');
+    ectx.fillStyle = grad; ectx.fillRect(0, 0, 4, 128);
+    var envTex = new THREE.CanvasTexture(envCanvas);
+    envTex.mapping = THREE.EquirectangularReflectionMapping;
+    if ('encoding' in envTex) envTex.encoding = THREE.sRGBEncoding;
+    scene.environment = pmrem.fromEquirectangular(envTex).texture;
+    envTex.dispose(); pmrem.dispose();
+  } catch (e) {}
+  var shadowPlane = new THREE.Mesh(new THREE.CircleGeometry(1.1, 32), new THREE.ShadowMaterial({ opacity: 0.45 }));
+  shadowPlane.rotation.x = -Math.PI / 2; shadowPlane.position.y = 0.001; shadowPlane.receiveShadow = true;
+  scene.add(shadowPlane);
+  function resize() {
+    var w = hero.clientWidth, h = hero.clientHeight;
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h; camera.updateProjectionMatrix();
+  }
+  resize();
+  var lookTarget = new THREE.Vector3(0, 1.1, 0);
+  var loader = new THREE.GLTFLoader();
+  loader.load(
+    'https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Assets@main/Models/MaterialsVariantsShoe/glTF-Binary/MaterialsVariantsShoe.glb',
+    function (gltf) {
+      var model = gltf.scene;
+      model.traverse(function (o) { if (o.isMesh) { o.castShadow = true; o.receiveShadow = false; } });
+      var box = new THREE.Box3().setFromObject(model);
+      var size = box.getSize(new THREE.Vector3());
+      var maxDim = Math.max(size.x, size.y, size.z) || 1;
+      var scale = 2.3 / maxDim;
+      model.scale.setScalar(scale);
+      box.setFromObject(model);
+      var center = box.getCenter(new THREE.Vector3());
+      model.position.x -= center.x; model.position.z -= center.z;
+      model.position.y -= box.min.y; model.position.y += 0.16;
+      model.rotation.y = Math.PI * 0.82; model.rotation.z = -0.1;
+      box.setFromObject(model);
+      var fitted = box.getSize(new THREE.Vector3());
+      var shoeTop = box.min.y + fitted.y;
+      lookTarget.set(0.05, shoeTop + 0.2, 0);
+      scene.add(model);
+      camera.lookAt(lookTarget);
+      renderer.render(scene, camera);
+      window.SHOE_LOADED = true;
+    },
+    undefined,
+    function (err) { window.SHOE_LOADED = 'error'; }
+  );
+  renderer.render(scene, camera);
+  window.__shot = function(){ return canvas.toDataURL('image/png'); };
+})();
+</script>
+</body></html>`);
   }
 
   const cookies = parseCookies(req);
@@ -104,15 +218,24 @@ async function handle(req, res) {
     if (method === 'POST' && pathname === '/signup') {
       const email = (fields.email || '').toLowerCase().trim();
       if (!fields.name || !email || !fields.password || fields.password.length < 6) {
-        return html(res, 200, views.signupPage('Preencha todos os campos (senha com 6+ caracteres).'));
+        return html(res, 200, views.signupPage('Preencha todos os campos (senha com 6+ caracteres).', fields));
       }
       const exists = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
-      if (exists) return html(res, 200, views.signupPage('Já existe uma conta com este e-mail.'));
+      if (exists) return html(res, 200, views.signupPage('Já existe uma conta com este e-mail.', fields));
       const { hash, salt } = hashPassword(fields.password);
-      const info = db.prepare('INSERT INTO users (name, email, password_hash, password_salt) VALUES (?, ?, ?, ?)')
-        .run(fields.name.trim(), email, hash, salt);
-      const token = createSession(info.lastInsertRowid);
-      return redirect(res, '/', serializeCookie('session', token, { maxAge: 30 * 24 * 3600 }));
+      const EXPERIENCE_VALUES = ['iniciante', 'intermediario', 'avancado'];
+      const experienceLevel = EXPERIENCE_VALUES.includes(fields.experience_level) ? fields.experience_level : null;
+      const weeklyKm = fields.weekly_km ? parseFloat(String(fields.weekly_km).replace(',', '.')) : null;
+      const goalTimeSec = fields.goal_time ? parseClock(fields.goal_time) : null;
+      const info = db.prepare(`INSERT INTO users
+          (name, email, password_hash, password_salt, experience_level, weekly_km, goal_race_name, goal_time_sec, injury_notes)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(fields.name.trim(), email, hash, salt, experienceLevel, Number.isFinite(weeklyKm) ? weeklyKm : null,
+          (fields.goal_race_name || '').trim() || null, goalTimeSec, (fields.injury_notes || '').trim() || null);
+      const newUser = db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid);
+      ensurePublicSlug(db, newUser);
+      const token = createSession(newUser.id);
+      return redirect(res, '/welcome', serializeCookie('session', token, { maxAge: 30 * 24 * 3600 }));
     }
 
     if (method === 'GET' && pathname === '/logout') {
@@ -120,9 +243,39 @@ async function handle(req, res) {
       return redirect(res, '/login', serializeCookie('session', '', { expire: true }));
     }
 
+    // One-time (but revisitable) welcome screen right after signup: shows the
+    // athlete's member number and a short personalized read built from the
+    // pre-diagnosis fields they just filled in (see buildDiagnosis).
+    if (method === 'GET' && pathname === '/welcome') {
+      if (!requireAuth()) return;
+      return html(res, 200, views.welcomePage(user));
+    }
+
+    // ---------- discover (find other athletes, Strava-style) ----------
+    if (method === 'GET' && pathname === '/discover') {
+      if (!requireAuth()) return;
+      const q = (parsed.query.q || '').trim();
+      let rows;
+      if (q) {
+        rows = db.prepare(`SELECT * FROM users WHERE id != ? AND (name LIKE ? OR city LIKE ?) ORDER BY name ASC LIMIT 40`)
+          .all(user.id, `%${q}%`, `%${q}%`);
+      } else {
+        rows = db.prepare(`SELECT * FROM users WHERE id != ? ORDER BY created_at DESC LIMIT 40`).all(user.id);
+      }
+      const followingIds = new Set(db.prepare('SELECT followee_id FROM follows WHERE follower_id = ?').all(user.id).map((r) => r.followee_id));
+      const athletes = rows.map((u) => {
+        ensurePublicSlug(db, u);
+        const activities = db.prepare('SELECT * FROM activities WHERE user_id = ?').all(u.id);
+        const evolution = computeEvolution(activities);
+        const followerCount = db.prepare('SELECT COUNT(*) as c FROM follows WHERE followee_id = ?').get(u.id).c;
+        return { user: u, evolution, followerCount, isFollowing: followingIds.has(u.id) };
+      });
+      return html(res, 200, views.discoverPage(user, athletes, q));
+    }
+
     // ---------- dashboard ----------
     if (method === 'GET' && pathname === '/') {
-      if (!requireAuth()) return;
+      if (!user) return html(res, 200, views.landingPage());
       if (user.strava_refresh_token) {
         const staleFor = user.strava_last_synced_at ? (Math.floor(Date.now() / 1000) - user.strava_last_synced_at) : Infinity;
         if (staleFor > 900) {
@@ -465,7 +618,7 @@ async function handle(req, res) {
           notify(db, { userId: profileUser.id, actorUserId: user.id, type: 'follow', body: `${user.name} passou a seguir você` });
         }
       }
-      return redirect(res, safePath(fields.return_to, ['/u/'], `/u/${m[1]}`));
+      return redirect(res, safePath(fields.return_to, ['/u/', '/discover'], `/u/${m[1]}`));
     }
 
     // ---------- notifications (in-app only) ----------
@@ -719,6 +872,25 @@ async function handle(req, res) {
         full = await streamChatWithAssistant(user.anthropic_api_key, context, history, text, (delta) => {
           res.write(delta);
         });
+
+        // A request for a visual ("manda uma imagem desse treino", "quero em
+        // stories"...) gets a second, separate, non-streaming call that
+        // extracts a small structured "card" from the conversation (see
+        // extractWorkoutCard) — kept entirely apart from the persona reply
+        // above so the chat's own no-markdown/no-emoji house style is never
+        // touched. The card rides along as a sentinel appended after the
+        // human reply; the client (COACH_CHAT_SCRIPT) strips it out of the
+        // visible text and draws it on a canvas instead. Silently skipped
+        // (no sentinel at all) when the conversation doesn't actually pin
+        // down a specific workout to draw.
+        if (detectImageRequest(text)) {
+          const card = await extractWorkoutCard(user.anthropic_api_key, context, history, text).catch(() => null);
+          if (card) {
+            const sentinel = `\n[[STORY_CARD]]${JSON.stringify(card)}[[/STORY_CARD]]`;
+            res.write(sentinel);
+            full += sentinel;
+          }
+        }
       } catch (e) {
         const msg = `Não consegui responder agora (${e.message}).`;
         if (!full) res.write(msg);
