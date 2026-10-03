@@ -2,6 +2,7 @@ const { secToPace, fmtClock, fmtDate, timeAgo, esc, renderMarkdownLite, icon } =
 const { summarizeIntervals } = require('./lib/intervals');
 const { estimateVO2max } = require('./lib/stats');
 const { REGION_LABELS, autoRegionLabel } = require('./lib/races');
+const { REACTION_TYPES } = require('./lib/social');
 
 // Runs site-wide: fades cards in as they scroll into view and adds a subtle
 // pointer-tilt to cards on hover. Pure progressive enhancement — cards are
@@ -382,7 +383,7 @@ ready(function(){
       return;
     }
     list.innerHTML = data.notifications.map(function(n){
-      var text = n.type === 'kudos' ? (n.actor_name + ' curtiu seu post') : (n.actor_name + ' comentou no seu post');
+      var text = n.body || (n.type === 'kudos' ? (n.actor_name + ' reagiu ao seu post') : n.type === 'follow' ? (n.actor_name + ' passou a seguir você') : (n.actor_name + ' comentou no seu post'));
       return '<a class="notif-item' + (n.read_at ? '' : ' unread') + '" href="/feed">' +
         '<span class="notif-text">' + text + '</span>' +
         '<span class="notif-time">' + timeAgo(n.created_at) + '</span></a>';
@@ -1270,7 +1271,7 @@ function trainingCompareChart(activity, evolution) {
 </div>`;
 }
 
-function activityDetailPage({ user, activity, laps, intervals, evolution, aiEnabled }) {
+function activityDetailPage({ user, activity, laps, intervals, evolution, prInfo, alreadyShared, aiEnabled }) {
   const tiros = summarizeIntervals(intervals);
   const vo2max = estimateVO2max(activity.distance_km, activity.duration_sec);
 
@@ -1356,6 +1357,15 @@ function activityDetailPage({ user, activity, laps, intervals, evolution, aiEnab
   <div class="card stat"><div class="icon-badge">${icon('trophy', 'ad8')}</div><div class="k">VO2 máx (estimado)</div><div class="v">${vo2max ?? '—'}${vo2max != null ? '<span class="u">ml/kg/min</span>' : ''}</div></div>
 </div>
 
+${prInfo && prInfo.isPR ? `<div class="card pr-banner">
+  <div class="pr-banner-icon">${icon('trophy', 'prb')}</div>
+  <div class="pr-banner-text">
+    <div class="pr-banner-title">Recorde pessoal!</div>
+    <p class="muted" style="margin:2px 0 0;">${esc(prInfo.label)}</p>
+  </div>
+  ${alreadyShared ? `<span class="muted mono" style="font-size:12px;">Já compartilhado</span>` : `<a class="btn" href="/feed?share_activity=${activity.id}&pr=1">Compartilhar</a>`}
+</div>` : ''}
+
 ${tirosHtml}
 
 ${(!tiros && laps.length) ? `<div class="card">
@@ -1389,7 +1399,7 @@ ${aiEnabled ? `<div class="card">
   <h2><span class="h-icon">${icon('chat', 'sh')}</span>Compartilhar</h2>
   <p class="muted" style="margin:0 0 14px;">Poste esse treino no feed com uma legenda pronta a partir da sua análise, ou gere uma imagem para os stories.</p>
   <div class="row">
-    <a class="btn" href="/feed?share_activity=${activity.id}">Compartilhar no feed</a>
+    <a class="${alreadyShared ? 'ghost ' : ''}btn" href="/feed?share_activity=${activity.id}">${alreadyShared ? 'Compartilhar de novo' : 'Compartilhar no feed'}</a>
     <a class="ghost btn" href="/activities/${activity.id}/story">Gerar imagem para Stories</a>
   </div>
 </div>
@@ -1479,9 +1489,37 @@ function activityStatBlock(p) {
   ${stats.length ? `<div class="post-stats">${stats.map(([v, u, k]) => `<div class="post-stat"><div class="v">${esc(String(v))}${u ? `<span class="u">${esc(u)}</span>` : ''}</div><div class="k">${esc(k)}</div></div>`).join('')}</div>` : ''}`;
 }
 
-function postCard(user, p) {
+// Reaction picker: a <details>/<summary> disclosure (same idiom as the
+// title-edit toggle above) so tapping the summary reveals the 4 reaction
+// types without a page reload feeling necessary — each option is still a
+// plain POST form under the hood, so it works with JS fully off too (the
+// menu just starts open-by-click instead of hover). return_to carries the
+// current feed scope/page back through the redirect (see safePath in
+// lib/social.js) so reacting from page 2 of "Seguindo" doesn't bounce you
+// back to page 1 of "Todos".
+function reactionPicker(p, returnTo) {
+  const counts = p.reactionCounts || {};
+  const mine = p.myReactions || new Set();
+  const total = Object.values(counts).reduce((s, n) => s + n, 0);
+  const summaryContent = total > 0
+    ? `${REACTION_TYPES.filter((r) => counts[r.key]).map((r) => r.emoji).join('')} <span>${total}</span>`
+    : `${icon('flame', 'k' + p.id)}<span>Reagir</span>`;
+  return `<details class="reaction-picker">
+    <summary class="reaction-summary${mine.size ? ' active' : ''}">${summaryContent}</summary>
+    <div class="reaction-menu">
+      ${REACTION_TYPES.map((r) => `<form method="POST" action="/feed/${p.id}/react">
+        <input type="hidden" name="type" value="${r.key}">
+        <input type="hidden" name="return_to" value="${esc(returnTo)}">
+        <button class="reaction-opt${mine.has(r.key) ? ' active' : ''}" type="submit">${r.emoji} <span>${r.label}</span>${counts[r.key] ? ` <span class="reaction-count">${counts[r.key]}</span>` : ''}</button>
+      </form>`).join('')}
+    </div>
+  </details>`;
+}
+
+function postCard(user, p, returnTo) {
   const mine = p.user_id === user.id;
   const comments = p.comments || [];
+  returnTo = returnTo || '/feed';
   return `<div class="card post-card${p.is_auto ? ' post-card-auto' : ''}">
   <div class="post-head">
     ${avatarHtml(p.author_name, p.user_id, p.author_avatar_path)}
@@ -1489,6 +1527,7 @@ function postCard(user, p) {
       <div class="post-name">${p.author_slug ? `<a href="/u/${esc(p.author_slug)}">${esc(p.author_name)}</a>` : esc(p.author_name)}${mine ? ' <span class="pill">você</span>' : ''}<span class="post-verb muted">${p.is_auto ? 'completou um treino' : 'compartilhou'}</span></div>
       <div class="post-time" title="${esc(fmtDate(p.created_at))}">${timeAgo(p.created_at)}</div>
     </div>
+    ${p.is_pr ? `<span class="pill pr-badge">${icon('trophy', 'pr' + p.id)}Recorde</span>` : ''}
   </div>
   ${p.is_auto ? activityStatBlock(p) : `
   <div class="post-body">${esc(p.body).replace(/\n/g, '<br>')}</div>
@@ -1496,10 +1535,8 @@ function postCard(user, p) {
   ${p.activity_title ? `<a class="pill post-activity-pill" href="/activities/${p.activity_id}"><span class="dot"></span>${esc(p.activity_title)}</a>` : ''}
   `}
   <div class="post-actions">
-    <form method="POST" action="/feed/${p.id}/react">
-      <button class="kudos-btn${p.reacted ? ' active' : ''}" type="submit">${icon('flame', 'k' + p.id)}<span>${p.kudos_count || 0}</span></button>
-    </form>
-    <span class="post-comment-count">${icon('chat', 'c' + p.id)}<span>${p.comment_count || 0}</span></span>
+    ${reactionPicker(p, returnTo)}
+    <span class="post-comment-count">${icon('chat', 'c' + p.id)}<span>${comments.length}</span></span>
   </div>
   ${comments.length ? `<div class="post-comments">
     ${comments.map((c) => `<div class="comment-item">${avatarHtml(c.author_name, c.user_id, c.author_avatar_path, 'comment-avatar')}<span class="comment-main"><span class="comment-author">${esc(c.author_name)}</span> <span class="comment-body">${esc(c.body)}</span><span class="comment-time">${timeAgo(c.created_at)}</span></span></div>`).join('')}
@@ -1507,6 +1544,7 @@ function postCard(user, p) {
   <form method="POST" action="/feed/${p.id}/comment" class="comment-form">
     ${avatarHtml(user.name, user.id, user.avatar_path, 'comment-avatar')}
     <input type="text" name="body" placeholder="Comentar..." required maxlength="500">
+    <input type="hidden" name="return_to" value="${esc(returnTo)}">
     <button class="ghost" type="submit">Enviar</button>
   </form>
 </div>`;
@@ -1514,15 +1552,38 @@ function postCard(user, p) {
 
 function feedPage(user, posts, opts) {
   opts = opts || {};
+  const scope = opts.scope === 'following' ? 'following' : 'all';
+  const returnQs = [scope === 'following' ? 'scope=following' : null, opts.beforeId ? `before_id=${opts.beforeId}` : null].filter(Boolean).join('&');
+  const returnTo = '/feed' + (returnQs ? `?${returnQs}` : '');
+  const isPr = !!opts.isPrShare;
+
+  const scopeTabs = `<div class="feed-tabs">
+    <a class="feed-tab${scope === 'all' ? ' active' : ''}" href="/feed">Todos</a>
+    <a class="feed-tab${scope === 'following' ? ' active' : ''}" href="/feed?scope=following">Seguindo</a>
+  </div>`;
+
+  const recentChips = (opts.recentUnshared && opts.recentUnshared.length) ? `<div class="composer-recent">
+    <span class="muted mono" style="font-size:12px;">Compartilhar um treino recente:</span>
+    <div class="composer-recent-chips">
+      ${opts.recentUnshared.map((a) => `<a class="pill composer-recent-chip" href="/feed?share_activity=${a.id}${scope === 'following' ? '&scope=following' : ''}"><span class="dot"></span>${esc(a.title)}${a.distance_km != null ? ` · ${a.distance_km}km` : ''}</a>`).join('')}
+    </div>
+  </div>` : '';
+
+  const pagination = opts.nextBeforeId ? `<div class="feed-pagination">
+    <a class="ghost btn" href="/feed?before_id=${opts.nextBeforeId}${scope === 'following' ? '&scope=following' : ''}">Ver mais treinos antigos →</a>
+  </div>` : '';
+
   const body = `
 <h1>Feed</h1>
 <p class="lede">O que a galera está treinando.</p>
+${scopeTabs}
 <div class="card feed-composer">
   <form method="POST" action="/feed" enctype="multipart/form-data" id="composerForm">
     <div class="composer-row">
       ${avatarHtml(user.name, user.id, user.avatar_path, 'composer-avatar')}
       <div class="composer-main">
-        ${opts.shareActivity ? `<div class="pill" style="margin-bottom:10px;"><input type="hidden" name="activity_id" value="${opts.shareActivity.id}"><span class="dot"></span>Vinculado a: ${esc(opts.shareActivity.title)}</div>` : ''}
+        ${opts.shareActivity ? `<div class="pill${isPr ? ' pr-badge' : ''}" style="margin-bottom:10px;"><input type="hidden" name="activity_id" value="${opts.shareActivity.id}">${isPr ? '<input type="hidden" name="is_pr" value="1">' : ''}${isPr ? icon('trophy', 'cpr2') : '<span class="dot"></span>'}${isPr ? 'Recorde pessoal: ' : 'Vinculado a: '}${esc(opts.shareActivity.title)}</div>` : ''}
+        ${!opts.shareActivity ? recentChips : ''}
         <textarea name="body" placeholder="Compartilhe algo..." required>${opts.shareDraft ? esc(opts.shareDraft) : ''}</textarea>
         <div id="composerPreviewWrap" class="composer-preview-wrap" hidden>
           <img id="composerPreview" alt="">
@@ -1539,11 +1600,12 @@ function feedPage(user, posts, opts) {
     </div>
   </form>
 </div>
-${posts.length ? `<div class="feed-list">${posts.map((p) => postCard(user, p)).join('')}</div>` : `<div class="card feed-empty">
+${posts.length ? `<div class="feed-list">${posts.map((p) => postCard(user, p, returnTo)).join('')}</div>` : `<div class="card feed-empty">
   <div class="feed-empty-icon">${icon('flame', 'fe1')}</div>
-  <p style="margin:0; font-weight:800;">Nenhum post ainda</p>
-  <p class="muted" style="margin:4px 0 0;">Seja o primeiro a compartilhar um treino com a galera.</p>
+  <p style="margin:0; font-weight:800;">${scope === 'following' ? 'Ninguém que você segue postou ainda' : 'Nenhum post ainda'}</p>
+  <p class="muted" style="margin:4px 0 0;">${scope === 'following' ? 'Siga outros atletas pelo perfil público deles para ver os treinos aqui.' : 'Seja o primeiro a compartilhar um treino com a galera.'}</p>
 </div>`}
+${pagination}
 <script defer>
 (function(){
   try {
@@ -1588,10 +1650,12 @@ function medalRow(medals) {
   </div>`;
 }
 
-function publicProfilePage(viewer, profileUser, evolution, races, medals) {
+function publicProfilePage(viewer, profileUser, evolution, races, medals, social) {
+  social = social || {};
   const weekKm = evolution.weeks.length ? evolution.weeks[evolution.weeks.length - 1].km : 0;
   const longestKm = evolution.longest ? evolution.longest.distance_km : null;
   const bestPaceSec = evolution.bestPace ? evolution.bestPace.avg_pace_sec : null;
+  const canFollow = !!viewer && viewer.id !== profileUser.id;
   const body = `
 <div class="card profile-hero">
   ${avatarHtml(profileUser.name, profileUser.id, profileUser.avatar_path, 'profile-avatar')}
@@ -1600,7 +1664,12 @@ function publicProfilePage(viewer, profileUser, evolution, races, medals) {
     ${profileUser.city ? `<p class="muted" style="margin:0 0 6px;">${esc(profileUser.city)}</p>` : ''}
     ${profileUser.bio ? `<p style="margin:0;">${esc(profileUser.bio)}</p>` : ''}
     ${profileUser.goal_race_name ? `<div class="pill" style="margin-top:10px;"><span class="dot"></span>Meta: ${esc(profileUser.goal_race_name)}${profileUser.goal_time_sec ? ` em ${fmtClock(profileUser.goal_time_sec)}` : ''}</div>` : ''}
+    <p class="muted follow-counts" style="margin-top:10px;"><strong>${social.followerCount || 0}</strong> seguidores · <strong>${social.followingCount || 0}</strong> seguindo</p>
   </div>
+  ${canFollow ? `<form method="POST" action="/u/${esc(profileUser.public_slug)}/follow" class="follow-form">
+    <input type="hidden" name="return_to" value="/u/${esc(profileUser.public_slug)}">
+    <button class="${social.isFollowing ? 'ghost' : ''} btn" type="submit">${social.isFollowing ? 'Seguindo ✓' : 'Seguir'}</button>
+  </form>` : ''}
 </div>
 
 ${medals ? `<div class="card">
