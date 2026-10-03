@@ -460,6 +460,57 @@ img.post-avatar{object-fit:cover; background:var(--surface2); box-shadow:0 0 0 1
 .comment-form input{margin:0; font-size:13px; padding:9px 12px;}
 .comment-form button{flex-shrink:0; padding:9px 16px; font-size:13px;}
 
+/* multi-type reaction picker: a <details>/<summary> disclosure, same idiom
+   as .title-edit-toggle, so one tap/click reveals the 4 reaction types
+   instead of a single kudos button (see reactionPicker() in views.js). */
+.reaction-picker{position:relative;}
+.reaction-summary{display:inline-flex; align-items:center; gap:7px; background:transparent; color:var(--ink-dim); border:1px solid var(--line); border-radius:12px; padding:7px 14px; font-size:13px; font-weight:700; cursor:pointer; list-style:none; transition:border-color .12s ease, background .12s ease, color .12s ease;}
+.reaction-summary::-webkit-details-marker{display:none;}
+.reaction-summary .icon-svg{width:16px; height:16px;}
+.reaction-summary:hover{border-color:rgba(var(--glow),0.5);}
+.reaction-summary.active{background:linear-gradient(155deg, var(--accent), var(--accent-2)); color:#15171A; border-color:transparent; box-shadow:0 8px 18px -10px rgba(var(--glow),0.6);}
+.reaction-picker[open] .reaction-summary{border-color:rgba(var(--glow),0.6);}
+.reaction-menu{position:absolute; bottom:calc(100% + 8px); left:0; z-index:5; display:flex; flex-direction:column; gap:3px; background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:6px; box-shadow:0 14px 30px -12px rgba(0,0,0,0.35); min-width:168px;}
+.reaction-menu form{margin:0;}
+.reaction-opt{display:flex; align-items:center; gap:8px; width:100%; background:transparent; color:var(--ink); border:none; box-shadow:none; padding:8px 10px; font-size:13px; font-weight:700; border-radius:9px; justify-content:flex-start; text-align:left;}
+.reaction-opt:hover{background:var(--surface2); transform:none; box-shadow:none;}
+.reaction-opt.active{background:var(--surface2); color:var(--accent);}
+.reaction-opt .reaction-count{margin-left:auto; color:var(--ink-faint); font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:12px;}
+
+/* personal-record badge (feed post header) + banner (activity detail) — see
+   detectPersonalRecord() in lib/stats.js and p.is_pr / prInfo in views.js. */
+.pr-badge{margin-left:auto; background:linear-gradient(155deg, var(--gold), var(--amber)); color:#15171A; border-color:transparent; font-weight:800;}
+.pr-badge .icon-svg{width:12px; height:12px;}
+.pr-banner{display:flex; align-items:center; gap:16px; background:linear-gradient(135deg, color-mix(in srgb, var(--gold) 16%, var(--surface)), var(--surface)); border-color:rgba(var(--glow),0.4);}
+.pr-banner-icon{width:40px; height:40px; flex-shrink:0; border-radius:50%; display:flex; align-items:center; justify-content:center; background:linear-gradient(155deg, var(--gold), var(--amber)); box-shadow:0 8px 18px -10px rgba(var(--glow),0.6);}
+.pr-banner-icon .icon-svg{width:20px; height:20px; color:#15171A;}
+.pr-banner-text{flex:1; min-width:0;}
+.pr-banner-title{font-weight:800; font-size:16px;}
+.pr-banner .btn{flex-shrink:0;}
+
+/* feed scope tabs ("Todos" / "Seguindo") — see the follows table / scope
+   query param in server.js. */
+.feed-tabs{display:flex; gap:6px; margin-bottom:16px;}
+.feed-tab{font-family:'IBM Plex Mono',monospace; font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.05em; color:var(--ink-faint); text-decoration:none; padding:8px 14px; border-radius:10px; border:1px solid transparent;}
+.feed-tab:hover{color:var(--ink);}
+.feed-tab.active{background:var(--surface2); border-color:var(--line); color:var(--ink);}
+
+/* composer "share a recent run" suggestion chips — see recentUnshared in
+   the GET /feed route, server.js. */
+.composer-recent{margin-bottom:10px; display:flex; flex-direction:column; gap:6px;}
+.composer-recent-chips{display:flex; gap:8px; flex-wrap:wrap;}
+.composer-recent-chip{text-decoration:none; cursor:pointer;}
+.composer-recent-chip:hover{border-color:rgba(var(--glow),0.5);}
+
+.feed-pagination{text-align:center; margin-top:18px;}
+
+/* follow button + counts on the public profile — see the follows table,
+   db.js, and POST /u/:slug/follow, server.js. */
+.follow-form{margin-left:auto;}
+.follow-counts{font-size:13px;}
+.follow-counts strong{color:var(--ink);}
+@media (max-width:640px){ .follow-form{margin-left:0; width:100%;} }
+
 /* ---------- notification bell ---------- */
 .notif-wrap{position:relative;}
 .notif-bell{position:relative; background:transparent; box-shadow:none; border:none; padding:8px; width:36px; height:36px; display:flex; align-items:center; justify-content:center; cursor:pointer;}
