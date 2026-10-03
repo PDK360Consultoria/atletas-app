@@ -128,6 +128,11 @@ ensureColumn('posts', 'is_auto', 'is_auto INTEGER NOT NULL DEFAULT 0');
 // an avatar renders (feed, comments, public profile) once set.
 ensureColumn('users', 'avatar_path', 'avatar_path TEXT');
 
+// Marks a post that was shared via the "🏆 Recorde pessoal" prompt on an
+// activity page (see detectPersonalRecord in lib/stats.js) so the feed card
+// can show a trophy badge instead of the athlete having to say it themselves.
+ensureColumn('posts', 'is_pr', 'is_pr INTEGER NOT NULL DEFAULT 0');
+
 db.exec(`
 CREATE TABLE IF NOT EXISTS reactions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -162,7 +167,35 @@ CREATE TABLE IF NOT EXISTS notifications (
   FOREIGN KEY(actor_user_id) REFERENCES users(id),
   FOREIGN KEY(post_id) REFERENCES posts(id)
 );
+
+-- Social graph: who follows whom. Lets the feed be filtered to "quem eu
+-- sigo" instead of only the firehose of every athlete on the app (see the
+-- scope param on GET /feed). Following someone is not required to see them
+-- in the default "Todos" feed — it's a curation layer on top of the shared
+-- feed, not a visibility gate.
+CREATE TABLE IF NOT EXISTS follows (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  follower_id INTEGER NOT NULL,
+  followee_id INTEGER NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY(follower_id) REFERENCES users(id),
+  FOREIGN KEY(followee_id) REFERENCES users(id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_follows_unique ON follows(follower_id, followee_id);
 `);
+
+// Multiple reaction types (👏 🔥 🏆 💪) instead of a single kudos. A row's
+// meaning used to be "user X reacted to post Y"; now it's "user X reacted
+// with type Z to post Y", so the same user can leave more than one reaction
+// kind on the same post. The old unique index only allowed one row per
+// (post_id, user_id) — drop it before adding the column, then recreate it
+// scoped to also include type, so existing rows (all implicitly kudos) keep
+// working and newly-expressed reaction types don't collide with them. Runs
+// after the table-creation block above so this also works on a brand-new
+// database, where `reactions` doesn't exist until that block runs.
+db.exec('DROP INDEX IF EXISTS idx_reactions_unique');
+ensureColumn('reactions', 'type', "type TEXT NOT NULL DEFAULT 'kudos'");
+db.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_reactions_unique ON reactions(post_id, user_id, type)');
 
 // One-time cleanup: merge duplicate activities that exist as both a
 // manually-logged row and a separately Strava-synced row for the same real
