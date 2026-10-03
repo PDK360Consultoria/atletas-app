@@ -2,7 +2,7 @@ const { secToPace, fmtClock, fmtDate, timeAgo, esc, renderMarkdownLite, icon } =
 const { summarizeIntervals } = require('./lib/intervals');
 const { estimateVO2max } = require('./lib/stats');
 const { REGION_LABELS, autoRegionLabel } = require('./lib/races');
-const { REACTION_TYPES } = require('./lib/social');
+const { REACTION_TYPES, memberNumber, buildDiagnosis } = require('./lib/social');
 
 // Runs site-wide: fades cards in as they scroll into view and adds a subtle
 // pointer-tilt to cards on hover. Pure progressive enhancement — cards are
@@ -144,6 +144,100 @@ function typingDots(){
   t.innerHTML = '<span></span><span></span><span></span>';
   return t;
 }
+
+// Splits the server's STORY_CARD sentinel (see the coach reply handler in
+// server.js) off the end of a reply — the visible chat text never includes
+// it, it's parsed out here and drawn as a canvas card instead.
+var STORY_RE = /\\n?\\[\\[STORY_CARD\\]\\]([\\s\\S]*?)\\[\\[\\/STORY_CARD\\]\\]/;
+function splitStoryCard(text){
+  var m = STORY_RE.exec(text || '');
+  if (!m) return { text: text, card: null };
+  var card = null;
+  try { card = JSON.parse(m[1]); } catch (e) { card = null; }
+  return { text: text.slice(0, m.index), card: card };
+}
+
+// Draws the same dark/gold "stories" visual language used elsewhere in the
+// app (see storyPage) onto a canvas sized for a quick in-chat reference
+// during a run — a title, a handful of label/value tiles pulled straight
+// from what the coach just said, and an optional closing line.
+function drawStoryCard(canvas, card){
+  var ctx = canvas.getContext('2d');
+  var W = canvas.width, H = canvas.height;
+  var grad = ctx.createLinearGradient(0, 0, W, H);
+  grad.addColorStop(0, '#1c1006');
+  grad.addColorStop(0.55, '#2a1608');
+  grad.addColorStop(1, '#150c05');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.fillStyle = 'rgba(255,255,255,0.05)';
+  for (var i = 0; i < 3; i++) { ctx.beginPath(); ctx.arc(W * 0.2 + i * 90, H * 0.08 + i * 30, 70, 0, Math.PI * 2); ctx.fill(); }
+
+  ctx.fillStyle = '#FFC24E';
+  ctx.font = '700 22px Arial, sans-serif';
+  ctx.fillText((card.eyebrow || 'TREINO').toUpperCase(), 36, 56);
+
+  ctx.fillStyle = '#ffffff';
+  ctx.font = '800 38px Arial, sans-serif';
+  var words = (card.title || '').split(' '), line = '', y = 110, lines = [];
+  for (var n = 0; n < words.length; n++) {
+    var test = line + words[n] + ' ';
+    if (ctx.measureText(test).width > W - 72 && n > 0) { lines.push(line); line = words[n] + ' '; }
+    else line = test;
+  }
+  lines.push(line);
+  lines.slice(0, 2).forEach(function(l, i){ ctx.fillText(l.trim(), 36, y + i * 46); });
+  var blocksTop = y + lines.length * 46 + 30;
+
+  var blocks = (card.blocks || []).slice(0, 6);
+  var rowH = (H - blocksTop - 70) / Math.max(1, blocks.length);
+  blocks.forEach(function(b, i){
+    var by = blocksTop + i * rowH;
+    ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(36, by); ctx.lineTo(W - 36, by); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,0.55)';
+    ctx.font = '600 15px Arial, sans-serif';
+    ctx.fillText(String(b.label || '').toUpperCase(), 36, by + 26);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '800 26px Arial, sans-serif';
+    ctx.fillText(String(b.value || ''), 36, by + 56);
+  });
+
+  if (card.closer) {
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.font = '500 16px Arial, sans-serif';
+    var cwords = card.closer.split(' '), cline = '', cy = H - 44, clines = [];
+    for (var cn = 0; cn < cwords.length; cn++) {
+      var ctest = cline + cwords[cn] + ' ';
+      if (ctx.measureText(ctest).width > W - 72 && cn > 0) { clines.push(cline); cline = cwords[cn] + ' '; }
+      else cline = ctest;
+    }
+    clines.push(cline);
+    clines.slice(0, 2).forEach(function(l, i){ ctx.fillText(l.trim(), 36, cy + i * 20); });
+  }
+}
+function renderStoryCard(container, card){
+  var wrap = document.createElement('div');
+  wrap.className = 'chat-story-card';
+  var canvas = document.createElement('canvas');
+  canvas.width = 640; canvas.height = 420;
+  wrap.appendChild(canvas);
+  var btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'ghost btn xs chat-story-download';
+  btn.textContent = 'Baixar imagem';
+  btn.addEventListener('click', function(){
+    var link = document.createElement('a');
+    link.download = 'treino.png';
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+  });
+  wrap.appendChild(btn);
+  container.appendChild(wrap);
+  try { drawStoryCard(canvas, card); } catch (e) { console.error('[dbg]', e); }
+}
 function mount(opts){
   var msgsEl = document.getElementById(opts.msgsId);
   var formEl = document.getElementById(opts.formId);
@@ -184,7 +278,9 @@ function mount(opts){
     }
     messages.forEach(function(m){
       var b = bubble(msgsEl, m.role === 'user' ? 'user' : 'assistant');
-      b.textContent = m.content;
+      var split = splitStoryCard(m.content);
+      b.textContent = split.text;
+      if (split.card) renderStoryCard(b, split.card);
     });
     scrollBottom();
   }
@@ -223,16 +319,27 @@ function mount(opts){
         var reader = res.body.getReader();
         var decoder = new TextDecoder();
         var started = false;
+        var raw = '';
         while (true) {
           var chunk = await reader.read();
           if (chunk.done) break;
           var piece = decoder.decode(chunk.value, { stream: true });
           if (!piece) continue;
           if (!started) { replyB.textContent = ''; started = true; }
-          replyB.textContent += piece;
+          raw += piece;
+          // The STORY_CARD sentinel (when present) always arrives at the
+          // very end of the stream — hide it from the live-typing text as
+          // it comes in rather than flashing the raw [[STORY_CARD]]... tag
+          // for a frame before the final split below removes it.
+          replyB.textContent = splitStoryCard(raw).text;
           scrollBottom();
         }
         if (!started) replyB.textContent = '(sem resposta)';
+        else {
+          var finalSplit = splitStoryCard(raw);
+          replyB.textContent = finalSplit.text;
+          if (finalSplit.card) renderStoryCard(replyB, finalSplit.card);
+        }
       }
     } catch (e) {
       replyB.textContent = 'Não consegui responder agora. Verifique sua conexão.';
@@ -420,7 +527,7 @@ ready(function(){
 })();
 </script>`;
 
-function layout({ title, user, body, active, extraHead, bodyEnd, hideCoachWidget, bodyClass, wrapClass }) {
+function layout({ title, user, body, active, extraHead, bodyEnd, hideCoachWidget, bodyClass, wrapClass, navVariant }) {
   const nav = user
     ? `<nav class="nav">
         <a class="brand" href="/">Atletas</a>
@@ -429,6 +536,7 @@ function layout({ title, user, body, active, extraHead, bodyEnd, hideCoachWidget
           <a class="link ${active === 'races' ? 'active' : ''}" href="/races">Provas</a>
           <a class="link ${active === 'activities' ? 'active' : ''}" href="/activities">Treinos</a>
           <a class="link ${active === 'feed' ? 'active' : ''}" href="/feed">Feed</a>
+          <a class="link ${active === 'discover' ? 'active' : ''}" href="/discover">Buscar</a>
           <a class="link ${active === 'assistant' ? 'active' : ''}" href="/assistant">Coach IA</a>
           <a class="link ${active === 'coach' ? 'active' : ''}" href="/coach">Coach ao vivo</a>
           <a class="link ${active === 'settings' ? 'active' : ''}" href="/settings">Config</a>
@@ -443,6 +551,14 @@ function layout({ title, user, body, active, extraHead, bodyEnd, hideCoachWidget
             </div>
           </div>
           <a class="link" href="/logout">Sair</a>
+        </div>
+      </nav>`
+    : navVariant === 'public'
+    ? `<nav class="nav">
+        <a class="brand" href="/">Atletas</a>
+        <div class="links">
+          <a class="link" href="/login">Entrar</a>
+          <a class="btn xs" href="/signup">Cadastre-se</a>
         </div>
       </nav>`
     : `<nav class="nav"><a class="brand" href="/">Atletas</a></nav>`;
@@ -505,20 +621,135 @@ ${error ? `<div class="err">${esc(error)}</div>` : ''}
 `);
 }
 
-function signupPage(error) {
+function signupPage(error, prev) {
+  prev = prev || {};
   return authLayout('Criar conta', `
 ${error ? `<div class="err">${esc(error)}</div>` : ''}
-<form method="POST" action="/signup">
+<form method="POST" action="/signup" class="signup-form">
+  <div class="signup-step-label">01 · Sua conta</div>
   <label>Nome</label>
-  <input type="text" name="name" required autofocus>
+  <input type="text" name="name" value="${esc(prev.name || '')}" required autofocus>
   <label>E-mail</label>
-  <input type="email" name="email" required>
+  <input type="email" name="email" value="${esc(prev.email || '')}" required>
   <label>Senha</label>
   <input type="password" name="password" required minlength="6">
+
+  <div class="signup-step-label signup-step-label-2">02 · Pré-diagnóstico</div>
+  <p class="muted" style="margin:0 0 4px;">Algumas perguntas rápidas pra gente te conhecer como atleta — nada aqui é obrigatório.</p>
+  <label>Seu nível como corredor(a)</label>
+  <select name="experience_level">
+    <option value="">Prefiro não dizer</option>
+    <option value="iniciante"${prev.experience_level === 'iniciante' ? ' selected' : ''}>Iniciante</option>
+    <option value="intermediario"${prev.experience_level === 'intermediario' ? ' selected' : ''}>Intermediário</option>
+    <option value="avancado"${prev.experience_level === 'avancado' ? ' selected' : ''}>Avançado</option>
+  </select>
+  <label>Quantos km você corre por semana hoje?</label>
+  <input type="number" step="0.1" min="0" name="weekly_km" value="${esc(prev.weekly_km || '')}" placeholder="ex: 25">
+  <div class="grid cols-2">
+    <div><label>Prova-alvo (se já tiver)</label><input type="text" name="goal_race_name" value="${esc(prev.goal_race_name || '')}" placeholder="ex: Maratona de Curitiba"></div>
+    <div><label>Meta de tempo</label><input type="text" name="goal_time" value="${esc(prev.goal_time || '')}" placeholder="03:30:00"></div>
+  </div>
+  <label>Histórico de lesão ou algo que devemos saber</label>
+  <textarea name="injury_notes" placeholder="Se não tiver nada, pode deixar em branco.">${esc(prev.injury_notes || '')}</textarea>
+
   <div style="margin-top:20px"><button type="submit" style="width:100%">Criar conta</button></div>
 </form>
 <p class="muted" style="text-align:center; margin-top:18px;">Já tem conta? <a href="/login">Entrar</a></p>
 `);
+}
+
+function welcomePage(user) {
+  const number = memberNumber(user);
+  const diagnosis = buildDiagnosis(user);
+  const body = `
+<div class="welcome-number">
+  <span class="welcome-number-eyebrow">Você é o atleta</span>
+  <span class="welcome-number-big">Nº ${esc(number)}</span>
+</div>
+<div class="welcome-diagnosis">
+  <p>${esc(diagnosis)}</p>
+</div>
+<a class="btn" href="/" style="width:100%; text-align:center; margin-top:8px;">Começar</a>
+`;
+  return authLayout('Bem-vindo', body);
+}
+
+// Static "3D-style" sneaker mark for the public landing page — the same
+// shoe silhouette used everywhere else in the app (icon('shoe', ...)),
+// scaled way up and dressed with layered radial glows, a halo ring and a
+// contact shadow so it reads as a dimensional product shot instead of a
+// flat icon, without needing WebGL (that stays reserved for the logged-in
+// dashboard hero further down, where a slower first paint doesn't cost a
+// visitor who hasn't signed up yet).
+function landingHeroIllustration() {
+  return `<svg class="landing-shoe" viewBox="0 0 400 400" aria-hidden="true">
+<defs>
+  <radialGradient id="lh-glow" cx="50%" cy="46%" r="55%">
+    <stop offset="0%" stop-color="#FFC24E" stop-opacity="0.55"/>
+    <stop offset="100%" stop-color="#FFC24E" stop-opacity="0"/>
+  </radialGradient>
+  <linearGradient id="lh-shoe" x1="0" y1="0" x2="1" y2="1">
+    <stop offset="0%" stop-color="#FFD98A"/>
+    <stop offset="55%" stop-color="#FFC24E"/>
+    <stop offset="100%" stop-color="#FF8A3D"/>
+  </linearGradient>
+  <radialGradient id="lh-shadow" cx="50%" cy="50%" r="50%">
+    <stop offset="0%" stop-color="#000000" stop-opacity="0.55"/>
+    <stop offset="100%" stop-color="#000000" stop-opacity="0"/>
+  </radialGradient>
+</defs>
+<circle cx="200" cy="190" r="180" fill="url(#lh-glow)"/>
+<ellipse cx="200" cy="330" rx="130" ry="18" fill="url(#lh-shadow)"/>
+<circle cx="200" cy="190" r="150" fill="none" stroke="#FFC24E" stroke-opacity="0.22" stroke-width="1.5"/>
+<circle cx="78" cy="120" r="3" fill="#FFC24E" opacity="0.5"/>
+<circle cx="330" cy="260" r="4" fill="#4E9BFF" opacity="0.5"/>
+<circle cx="60" cy="260" r="2.5" fill="#4E9BFF" opacity="0.4"/>
+<circle cx="340" cy="110" r="2.5" fill="#FFC24E" opacity="0.4"/>
+<g transform="translate(40 60) scale(13.3)">
+  <path d="M2.5 16.2c0-1.1.9-1.9 1.9-2 .7-2.9 3.6-6.7 6.8-6.7.9 0 1.7.5 2.5 1.2l4.6 2.1c1.4.6 2.7 1.9 2.7 3.6v1.1c0 1.3-1 2.3-2.3 2.3H4.3c-1 0-1.8-.8-1.8-1.6z" fill="url(#lh-shoe)"/>
+  <path d="M8 12.4c1.1-2.1 3.1-3.9 5.3-4.2" stroke="#150c05" stroke-width=".5" fill="none" opacity=".3" stroke-linecap="round"/>
+  <path d="M16.5 13.4c1.6.2 3 .9 3.9 1.9" stroke="#150c05" stroke-width=".4" fill="none" opacity=".22" stroke-linecap="round"/>
+  <path d="M4.6 14.3c3-3.6 6.6-6 11.4-6.5" stroke="#fff" stroke-width=".35" fill="none" opacity=".4" stroke-linecap="round"/>
+</g>
+</svg>`;
+}
+
+function landingPage() {
+  const features = [
+    { icon: 'stopwatch', title: 'Treinos', text: 'Registre manualmente ou sincronize com o Strava — pace, FC, splits km a km e estrutura de tiros, tudo organizado.' },
+    { icon: 'chat', title: 'Coach de corrida com IA', text: 'Um treinador que conhece seu histórico, monta treinos com embasamento técnico e te manda até uma imagem pra consultar durante a corrida.' },
+    { icon: 'flame', title: 'Feed', text: 'Compartilhe treinos, reaja com 👏🔥🏆💪 e acompanhe o que a galera que você segue está treinando.' },
+    { icon: 'trophy', title: 'Provas e evolução', text: 'Calendário de provas, medalhas por distância e sua evolução de volume e pace mês a mês.' },
+  ];
+  const body = `
+<section class="landing-hero">
+  <div class="landing-hero-copy">
+    <div class="hero-eyebrow">Treino, feed e coach de corrida com IA</div>
+    <h1 class="landing-h1">Corra com dados.<br>Não com achismo.</h1>
+    <p class="lede landing-lede">O Atletas junta seus treinos, sua evolução e um coach de corrida com IA num só lugar — e uma comunidade pra te acompanhar no caminho até a sua próxima prova.</p>
+    <div class="landing-cta-row">
+      <a class="btn" href="/signup">Criar minha conta</a>
+      <a class="btn ghost" href="/login">Já tenho conta</a>
+    </div>
+  </div>
+  <div class="landing-hero-art">${landingHeroIllustration()}</div>
+</section>
+
+<section class="landing-features">
+  ${features.map((f) => `<div class="card landing-feature">
+    <div class="icon-badge">${icon(f.icon)}</div>
+    <h2 style="margin-top:10px;">${esc(f.title)}</h2>
+    <p class="muted" style="margin:0;">${esc(f.text)}</p>
+  </div>`).join('')}
+</section>
+
+<section class="landing-cta-final card">
+  <h2 style="margin-bottom:6px;">Cada atleta tem um número.</h2>
+  <p class="muted" style="margin:0 0 18px;">No cadastro você passa por um pré-diagnóstico rápido e recebe o seu — simples assim.</p>
+  <a class="btn" href="/signup">Criar minha conta</a>
+</section>
+`;
+  return layout({ title: 'Atletas', user: null, body, navVariant: 'public', wrapClass: 'landing-wrap' });
 }
 
 const HERO_EXTRA_HEAD = `<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js" defer></script>
@@ -1694,6 +1925,35 @@ ${races.length ? `<div class="card">
   return layout({ title: `${profileUser.name} · Perfil`, user: viewer, body, hideCoachWidget: true });
 }
 
+function discoverPage(viewer, athletes, q) {
+  const rows = athletes.map(({ user: u, evolution, followerCount, isFollowing }) => `
+    <div class="card discover-row">
+      <a href="/u/${esc(u.public_slug)}" class="discover-row-link">
+        ${avatarHtml(u.name, u.id, u.avatar_path, 'discover-avatar')}
+        <div class="discover-row-main">
+          <div class="t">${esc(u.name)}</div>
+          <div class="d">${u.city ? esc(u.city) + ' · ' : ''}${followerCount} seguidor${followerCount === 1 ? '' : 'es'}${evolution.totalCount ? ` · ${evolution.totalKm.toFixed(0)}km registrados` : ''}</div>
+          ${u.goal_race_name ? `<div class="pill" style="margin-top:6px;"><span class="dot"></span>Meta: ${esc(u.goal_race_name)}</div>` : ''}
+        </div>
+      </a>
+      <form method="POST" action="/u/${esc(u.public_slug)}/follow" class="follow-form">
+        <input type="hidden" name="return_to" value="/discover${q ? `?q=${encodeURIComponent(q)}` : ''}">
+        <button class="${isFollowing ? 'ghost' : ''} btn xs" type="submit">${isFollowing ? 'Seguindo ✓' : 'Seguir'}</button>
+      </form>
+    </div>`).join('');
+
+  const body = `
+<h1>Buscar atletas</h1>
+<p class="lede">Encontre outros corredores no Atletas e siga quem você quiser acompanhar.</p>
+<form method="GET" action="/discover" class="discover-search">
+  <input type="text" name="q" value="${esc(q || '')}" placeholder="Buscar por nome ou cidade..." autofocus>
+  <button class="ghost btn" type="submit">Buscar</button>
+</form>
+${rows || `<div class="card feed-empty"><div class="feed-empty-icon">${icon('heart', 'disc1')}</div><p style="margin:0; font-weight:800;">${q ? 'Ninguém encontrado' : 'Ainda não há outros atletas'}</p><p class="muted" style="margin:4px 0 0;">${q ? 'Tenta buscar outro nome ou cidade.' : 'Quando outras pessoas se cadastrarem no Atletas, elas aparecem aqui.'}</p></div>`}
+`;
+  return layout({ title: 'Buscar atletas', user: viewer, body, active: 'discover' });
+}
+
 function storyPage(user, activity) {
   const data = {
     title: activity.title,
@@ -2047,5 +2307,5 @@ function coachChatPage(user, messages, flags) {
 module.exports = {
   layout, loginPage, signupPage, dashboardPage, racesPage,
   activitiesPage, activityNewPage, activityDetailPage, feedPage, settingsPage, coachChatPage,
-  publicProfilePage, storyPage,
+  publicProfilePage, storyPage, landingPage, welcomePage, discoverPage,
 };
