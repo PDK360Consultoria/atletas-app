@@ -539,6 +539,7 @@ function layout({ title, user, body, active, extraHead, bodyEnd, hideCoachWidget
           <a class="link ${active === 'discover' ? 'active' : ''}" href="/discover">Buscar</a>
           <a class="link ${active === 'assistant' ? 'active' : ''}" href="/assistant">Coach IA</a>
           <a class="link ${active === 'coach' ? 'active' : ''}" href="/coach">Coach ao vivo</a>
+          <a class="link ${active === 'professor' ? 'active' : ''}" href="/professor">Professor</a>
           <a class="link ${active === 'settings' ? 'active' : ''}" href="/settings">Config</a>
           <div class="notif-wrap" id="notifWrap">
             <button class="notif-bell" id="notifBell" type="button" aria-label="Notificações">

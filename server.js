@@ -18,6 +18,7 @@ const { buildMonthCalendar } = require('./lib/calendar');
 const { ensurePublicSlug, buildShareDraft, buildPRShareDraft, REACTION_KEYS, notify, safePath, memberNumber, buildDiagnosis } = require('./lib/social');
 const views = require('./views');
 const { coachPage } = require('./views_coach');
+const { professorPage } = require('./views_professor');
 
 const PORT = process.env.PORT || 3000;
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, 'uploads');
@@ -805,6 +806,13 @@ async function handle(req, res) {
     if (method === 'GET' && pathname === '/coach') {
       if (!requireAuth()) return;
       return html(res, 200, coachPage(user));
+    }
+
+    // ---------- professor (voice/JARVIS-style front end onto the same
+    // coach persona + /api/coach/send used by /assistant) ----------
+    if (method === 'GET' && pathname === '/professor') {
+      if (!requireAuth()) return;
+      return html(res, 200, professorPage(user));
     }
 
     return notFound(res);
