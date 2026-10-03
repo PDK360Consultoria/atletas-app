@@ -583,8 +583,13 @@ img.post-avatar{object-fit:cover; background:var(--surface2); box-shadow:0 0 0 1
 .landing-lede{font-size:17px; max-width:480px; margin-bottom:28px;}
 .landing-cta-row{display:flex; gap:12px; flex-wrap:wrap;}
 .landing-hero-art{flex:1 1 320px; min-width:260px; display:flex; justify-content:center;}
-.landing-shoe{width:100%; max-width:380px; height:auto;}
-@media (max-width:760px){ .landing-h1{font-size:38px;} .landing-hero{padding:32px 0 28px; text-align:left;} }
+/* Same real, floating/rotating 3D sneaker scene as the logged-in dashboard
+   hero (.hero + #hero-canvas, driven by HERO_SCRIPT) — just reshaped from a
+   wide banner into a centered square-ish tile that sits beside the copy. */
+.landing-hero-stage{width:100%; max-width:420px; aspect-ratio:1/1; min-height:260px; margin:0; align-items:center; justify-content:center;}
+@media (max-width:760px){ .landing-h1{font-size:38px;} .landing-hero{padding:32px 0 28px; text-align:left;} .landing-hero-stage{max-width:320px; min-height:220px;} }
+/* .landing-shoe (old static SVG mark) retired — kept selector-free now that
+   the hero uses the real 3D canvas above. */
 
 .landing-features{display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:8px;}
 .landing-feature{text-align:left;}
