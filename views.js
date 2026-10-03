@@ -712,46 +712,6 @@ function welcomePage(user) {
   return authLayout('Bem-vindo', body);
 }
 
-// Static "3D-style" sneaker mark for the public landing page — the same
-// shoe silhouette used everywhere else in the app (icon('shoe', ...)),
-// scaled way up and dressed with layered radial glows, a halo ring and a
-// contact shadow so it reads as a dimensional product shot instead of a
-// flat icon, without needing WebGL (that stays reserved for the logged-in
-// dashboard hero further down, where a slower first paint doesn't cost a
-// visitor who hasn't signed up yet).
-function landingHeroIllustration() {
-  return `<svg class="landing-shoe" viewBox="0 0 400 400" aria-hidden="true">
-<defs>
-  <radialGradient id="lh-glow" cx="50%" cy="46%" r="55%">
-    <stop offset="0%" stop-color="#FFC24E" stop-opacity="0.55"/>
-    <stop offset="100%" stop-color="#FFC24E" stop-opacity="0"/>
-  </radialGradient>
-  <linearGradient id="lh-shoe" x1="0" y1="0" x2="1" y2="1">
-    <stop offset="0%" stop-color="#FFD98A"/>
-    <stop offset="55%" stop-color="#FFC24E"/>
-    <stop offset="100%" stop-color="#FF8A3D"/>
-  </linearGradient>
-  <radialGradient id="lh-shadow" cx="50%" cy="50%" r="50%">
-    <stop offset="0%" stop-color="#000000" stop-opacity="0.55"/>
-    <stop offset="100%" stop-color="#000000" stop-opacity="0"/>
-  </radialGradient>
-</defs>
-<circle cx="200" cy="190" r="180" fill="url(#lh-glow)"/>
-<ellipse cx="200" cy="330" rx="130" ry="18" fill="url(#lh-shadow)"/>
-<circle cx="200" cy="190" r="150" fill="none" stroke="#FFC24E" stroke-opacity="0.22" stroke-width="1.5"/>
-<circle cx="78" cy="120" r="3" fill="#FFC24E" opacity="0.5"/>
-<circle cx="330" cy="260" r="4" fill="#4E9BFF" opacity="0.5"/>
-<circle cx="60" cy="260" r="2.5" fill="#4E9BFF" opacity="0.4"/>
-<circle cx="340" cy="110" r="2.5" fill="#FFC24E" opacity="0.4"/>
-<g transform="translate(40 60) scale(13.3)">
-  <path d="M2.5 16.2c0-1.1.9-1.9 1.9-2 .7-2.9 3.6-6.7 6.8-6.7.9 0 1.7.5 2.5 1.2l4.6 2.1c1.4.6 2.7 1.9 2.7 3.6v1.1c0 1.3-1 2.3-2.3 2.3H4.3c-1 0-1.8-.8-1.8-1.6z" fill="url(#lh-shoe)"/>
-  <path d="M8 12.4c1.1-2.1 3.1-3.9 5.3-4.2" stroke="#150c05" stroke-width=".5" fill="none" opacity=".3" stroke-linecap="round"/>
-  <path d="M16.5 13.4c1.6.2 3 .9 3.9 1.9" stroke="#150c05" stroke-width=".4" fill="none" opacity=".22" stroke-linecap="round"/>
-  <path d="M4.6 14.3c3-3.6 6.6-6 11.4-6.5" stroke="#fff" stroke-width=".35" fill="none" opacity=".4" stroke-linecap="round"/>
-</g>
-</svg>`;
-}
-
 function landingPage() {
   const features = [
     { icon: 'stopwatch', title: 'Treinos', text: 'Registre manualmente ou sincronize com o Strava — pace, FC, splits km a km e estrutura de tiros, tudo organizado.' },
@@ -770,7 +730,12 @@ function landingPage() {
       <a class="btn ghost" href="/login">Já tenho conta</a>
     </div>
   </div>
-  <div class="landing-hero-art">${landingHeroIllustration()}</div>
+  <div class="landing-hero-art">
+    <div class="hero landing-hero-stage">
+      <canvas id="hero-canvas"></canvas>
+      <div class="hero-badge" id="hero-badge"><span class="hero-badge-glow"></span>${icon('shoe', 'herolanding')}</div>
+    </div>
+  </div>
 </section>
 
 <section class="landing-features">
@@ -787,7 +752,7 @@ function landingPage() {
   <a class="btn" href="/signup">Criar minha conta</a>
 </section>
 `;
-  return layout({ title: 'Atletas', user: null, body, navVariant: 'public', wrapClass: 'landing-wrap' });
+  return layout({ title: 'Atletas', user: null, body, navVariant: 'public', wrapClass: 'landing-wrap', extraHead: HERO_EXTRA_HEAD, bodyEnd: HERO_SCRIPT });
 }
 
 const HERO_EXTRA_HEAD = `<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js" defer></script>
