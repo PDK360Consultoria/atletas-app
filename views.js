@@ -157,13 +157,68 @@ function splitStoryCard(text){
   return { text: text.slice(0, m.index), card: card };
 }
 
+function wrapLines(ctx, text, maxWidth, maxLines){
+  var words = (text || '').split(' ');
+  var lines = [], line = '';
+  for (var n = 0; n < words.length; n++) {
+    var test = line + words[n] + ' ';
+    if (ctx.measureText(test).width > maxWidth && n > 0) { lines.push(line.trim()); line = words[n] + ' '; }
+    else line = test;
+  }
+  if (line.trim()) lines.push(line.trim());
+  return lines.slice(0, maxLines);
+}
+function roundRect(ctx, x, y, w, h, r){
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
 // Draws the same dark/gold "stories" visual language used elsewhere in the
 // app (see storyPage) onto a canvas sized for a quick in-chat reference
-// during a run — a title, a handful of label/value tiles pulled straight
-// from what the coach just said, and an optional closing line.
+// during a run — a title, a stack of label/value rows pulled straight from
+// what the coach just said, and an optional closing line.
+//
+// The canvas height used to be FIXED (640x420) while the number of rows it
+// had to fit was not — with 4+ blocks and a 2-line title, the computed row
+// height shrank below the text's own line height and labels literally
+// printed on top of the previous row's value. Now the height is computed
+// FROM the content (title line count, block count, closer line count)
+// before anything is drawn, so there's always room, and it's rendered at 2x
+// and downscaled via CSS for a crisp download instead of a soft/blurry one.
+var CARD_W = 640, CARD_SCALE = 2;
 function drawStoryCard(canvas, card){
+  var W = CARD_W, pad = 36, rowH = 64;
+  var measure = canvas.getContext('2d');
+
+  measure.font = '800 36px Arial, sans-serif';
+  var titleLines = wrapLines(measure, card.title || '', W - pad * 2, 3);
+
+  var closerLines = [];
+  if (card.closer) {
+    measure.font = '500 16px Arial, sans-serif';
+    closerLines = wrapLines(measure, card.closer, W - pad * 2, 3);
+  }
+
+  var blocks = (card.blocks || []).slice(0, 6);
+
+  var eyebrowY = 48;
+  var titleTop = eyebrowY + 38;
+  var blocksTop = titleTop + titleLines.length * 44 + 20;
+  var closerTop = blocksTop + blocks.length * rowH + 22;
+  var H = closerTop + (closerLines.length ? closerLines.length * 22 + 12 : 10) + 32;
+
+  canvas.width = W * CARD_SCALE;
+  canvas.height = H * CARD_SCALE;
+  canvas.style.width = '100%';
+  canvas.style.aspectRatio = W + ' / ' + H;
+
   var ctx = canvas.getContext('2d');
-  var W = canvas.width, H = canvas.height;
+  ctx.setTransform(CARD_SCALE, 0, 0, CARD_SCALE, 0, 0);
+
   var grad = ctx.createLinearGradient(0, 0, W, H);
   grad.addColorStop(0, '#1c1006');
   grad.addColorStop(0.55, '#2a1608');
@@ -172,57 +227,39 @@ function drawStoryCard(canvas, card){
   ctx.fillRect(0, 0, W, H);
 
   ctx.fillStyle = 'rgba(255,255,255,0.05)';
-  for (var i = 0; i < 3; i++) { ctx.beginPath(); ctx.arc(W * 0.2 + i * 90, H * 0.08 + i * 30, 70, 0, Math.PI * 2); ctx.fill(); }
+  for (var i = 0; i < 3; i++) { ctx.beginPath(); ctx.arc(W * 0.2 + i * 90, H * 0.1 + i * 30, 70, 0, Math.PI * 2); ctx.fill(); }
 
   ctx.fillStyle = '#FFC24E';
-  ctx.font = '700 22px Arial, sans-serif';
-  ctx.fillText((card.eyebrow || 'TREINO').toUpperCase(), 36, 56);
+  ctx.font = '700 20px Arial, sans-serif';
+  ctx.fillText((card.eyebrow || 'TREINO').toUpperCase(), pad, eyebrowY);
 
   ctx.fillStyle = '#ffffff';
-  ctx.font = '800 38px Arial, sans-serif';
-  var words = (card.title || '').split(' '), line = '', y = 110, lines = [];
-  for (var n = 0; n < words.length; n++) {
-    var test = line + words[n] + ' ';
-    if (ctx.measureText(test).width > W - 72 && n > 0) { lines.push(line); line = words[n] + ' '; }
-    else line = test;
-  }
-  lines.push(line);
-  lines.slice(0, 2).forEach(function(l, i){ ctx.fillText(l.trim(), 36, y + i * 46); });
-  var blocksTop = y + lines.length * 46 + 30;
+  ctx.font = '800 36px Arial, sans-serif';
+  titleLines.forEach(function(l, i){ ctx.fillText(l, pad, titleTop + i * 44); });
 
-  var blocks = (card.blocks || []).slice(0, 6);
-  var rowH = (H - blocksTop - 70) / Math.max(1, blocks.length);
   blocks.forEach(function(b, i){
     var by = blocksTop + i * rowH;
-    ctx.strokeStyle = 'rgba(255,255,255,0.12)';
-    ctx.lineWidth = 1;
-    ctx.beginPath(); ctx.moveTo(36, by); ctx.lineTo(W - 36, by); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,0.04)';
+    roundRect(ctx, pad - 12, by - 6, W - (pad - 12) * 2, rowH - 14, 14);
+    ctx.fill();
     ctx.fillStyle = 'rgba(255,255,255,0.55)';
-    ctx.font = '600 15px Arial, sans-serif';
-    ctx.fillText(String(b.label || '').toUpperCase(), 36, by + 26);
+    ctx.font = '600 14px Arial, sans-serif';
+    ctx.fillText(String(b.label || '').toUpperCase(), pad, by + 18);
     ctx.fillStyle = '#ffffff';
-    ctx.font = '800 26px Arial, sans-serif';
-    ctx.fillText(String(b.value || ''), 36, by + 56);
+    ctx.font = '800 27px Arial, sans-serif';
+    ctx.fillText(String(b.value || ''), pad, by + 48);
   });
 
-  if (card.closer) {
+  if (closerLines.length) {
     ctx.fillStyle = 'rgba(255,255,255,0.7)';
     ctx.font = '500 16px Arial, sans-serif';
-    var cwords = card.closer.split(' '), cline = '', cy = H - 44, clines = [];
-    for (var cn = 0; cn < cwords.length; cn++) {
-      var ctest = cline + cwords[cn] + ' ';
-      if (ctx.measureText(ctest).width > W - 72 && cn > 0) { clines.push(cline); cline = cwords[cn] + ' '; }
-      else cline = ctest;
-    }
-    clines.push(cline);
-    clines.slice(0, 2).forEach(function(l, i){ ctx.fillText(l.trim(), 36, cy + i * 20); });
+    closerLines.forEach(function(l, i){ ctx.fillText(l, pad, closerTop + i * 22); });
   }
 }
 function renderStoryCard(container, card){
   var wrap = document.createElement('div');
   wrap.className = 'chat-story-card';
   var canvas = document.createElement('canvas');
-  canvas.width = 640; canvas.height = 420;
   wrap.appendChild(canvas);
   var btn = document.createElement('button');
   btn.type = 'button';
@@ -1503,12 +1540,17 @@ function trainingCompareChart(activity, evolution) {
 </div>`;
 }
 
-function activityDetailPage({ user, activity, laps, intervals, evolution, prInfo, alreadyShared, aiEnabled }) {
-  const tiros = summarizeIntervals(intervals);
-  const vo2max = estimateVO2max(activity.distance_km, activity.duration_sec);
-
-  const maxSplit = laps.length ? Math.max(...laps.map(l => l.split_sec)) : 1;
-  const bars = laps.map(l => {
+// Shared pace-by-km bar chart — the "Splits por km" card on the activity
+// detail page, and (condensed, see activityStatBlock) the chart shown on an
+// auto-posted feed card, so a workout shared to the feed shows the same
+// at-a-glance shape instead of just flat numbers. `limit` caps how many
+// bars render (feed cards show only the first few so the card doesn't
+// balloon on a long run; the activity page itself passes no limit).
+function paceBarsHtml(activity, laps, limit) {
+  const list = limit ? laps.slice(0, limit) : laps;
+  if (!list.length) return '';
+  const maxSplit = Math.max(...list.map(l => l.split_sec));
+  const bars = list.map(l => {
     const h = Math.max(8, Math.round((l.split_sec / maxSplit) * 100));
     const rows = [`<div class="bar-tip-row"><span>Pace</span><strong>${secToPace(l.split_sec)}/km</strong></div>`];
     if (l.cum_sec != null) rows.push(`<div class="bar-tip-row"><span>Acumulado</span><strong>${fmtClock(l.cum_sec)}</strong></div>`);
@@ -1519,6 +1561,13 @@ function activityDetailPage({ user, activity, laps, intervals, evolution, prInfo
     }
     return `<div class="bar bar-km" style="height:${h}%;" tabindex="0"><div class="bar-tip"><div class="bar-tip-title">Km ${l.km}</div>${rows.join('')}</div><div class="lbl">${l.km}</div></div>`;
   }).join('');
+  return `<div class="bars">${bars}</div>`;
+}
+
+function activityDetailPage({ user, activity, laps, intervals, evolution, prInfo, alreadyShared, aiEnabled }) {
+  const tiros = summarizeIntervals(intervals);
+  const vo2max = estimateVO2max(activity.distance_km, activity.duration_sec);
+  const bars = paceBarsHtml(activity, laps);
 
   let bestKm = null, worstKm = null;
   const timedLaps = laps.filter(l => l.split_sec);
@@ -1603,7 +1652,7 @@ ${tirosHtml}
 ${(!tiros && laps.length) ? `<div class="card">
   <h2><span class="h-icon">${icon('mountain', 'sp')}</span>Splits por km</h2>
   ${bestKm && worstKm ? `<p class="muted" style="margin:-4px 0 14px;">Melhor km: <strong>Km ${bestKm.km} · ${secToPace(bestKm.split_sec)}/km</strong> &nbsp;·&nbsp; Mais lento: <strong>Km ${worstKm.km} · ${secToPace(worstKm.split_sec)}/km</strong></p>` : ''}
-  <div class="bars">${bars}</div>
+  ${bars}
 </div>` : ''}
 
 ${trainingCompareChart(activity, evolution)}
@@ -1718,7 +1767,8 @@ function activityStatBlock(p) {
       <span class="post-activity-type">${esc(p.activity_workout_type || 'treino')}${p.activity_source === 'strava' ? ' · Strava' : ''}</span>
     </span>
   </a>
-  ${stats.length ? `<div class="post-stats">${stats.map(([v, u, k]) => `<div class="post-stat"><div class="v">${esc(String(v))}${u ? `<span class="u">${esc(u)}</span>` : ''}</div><div class="k">${esc(k)}</div></div>`).join('')}</div>` : ''}`;
+  ${stats.length ? `<div class="post-stats">${stats.map(([v, u, k]) => `<div class="post-stat"><div class="v">${esc(String(v))}${u ? `<span class="u">${esc(u)}</span>` : ''}</div><div class="k">${esc(k)}</div></div>`).join('')}</div>` : ''}
+  ${p.activity_laps && p.activity_laps.length > 1 ? `<div class="post-chart">${paceBarsHtml({ avg_pace_sec: p.activity_avg_pace_sec }, p.activity_laps, 12)}</div>` : ''}`;
 }
 
 // Reaction picker: a <details>/<summary> disclosure (same idiom as the
@@ -1760,6 +1810,10 @@ function postCard(user, p, returnTo) {
       <div class="post-time" title="${esc(fmtDate(p.created_at))}">${timeAgo(p.created_at)}</div>
     </div>
     ${p.is_pr ? `<span class="pill pr-badge">${icon('trophy', 'pr' + p.id)}Recorde</span>` : ''}
+    ${mine ? `<form method="POST" action="/feed/${p.id}/delete" class="post-delete-form" onsubmit="return confirm('Excluir este post? Essa ação não pode ser desfeita.')">
+      <input type="hidden" name="return_to" value="${esc(returnTo)}">
+      <button class="post-delete-btn" type="submit" title="Excluir post" aria-label="Excluir post">${icon('trash', 'del' + p.id)}</button>
+    </form>` : ''}
   </div>
   ${p.is_auto ? activityStatBlock(p) : `
   <div class="post-body">${esc(p.body).replace(/\n/g, '<br>')}</div>

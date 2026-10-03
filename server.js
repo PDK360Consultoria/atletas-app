@@ -377,7 +377,7 @@ async function handle(req, res) {
       const rows = db.prepare(`SELECT p.*, a.title as activity_title, a.workout_type as activity_workout_type,
           a.distance_km as activity_distance_km, a.duration_sec as activity_duration_sec,
           a.avg_pace_sec as activity_avg_pace_sec, a.elevation_gain_m as activity_elevation_gain_m,
-          a.source as activity_source,
+          a.source as activity_source, a.laps_json as activity_laps_json,
           u.name as author_name, u.public_slug as author_slug, u.avatar_path as author_avatar_path
         FROM posts p
         JOIN users u ON u.id = p.user_id
@@ -388,6 +388,12 @@ async function handle(req, res) {
       const hasMore = rows.length > FEED_PAGE_SIZE;
       const posts = rows.slice(0, FEED_PAGE_SIZE);
       const nextBeforeId = hasMore ? posts[posts.length - 1].id : null;
+      // Pace-by-km chart on the card (see paceBarsHtml in views.js) — parsed
+      // here rather than shipping the raw JSON column into the view layer.
+      posts.forEach((p) => {
+        try { p.activity_laps = p.activity_laps_json ? JSON.parse(p.activity_laps_json) : null; }
+        catch (e) { p.activity_laps = null; }
+      });
 
       if (posts.length) {
         const placeholders = posts.map(() => '?').join(',');
@@ -490,6 +496,24 @@ async function handle(req, res) {
         db.prepare('INSERT INTO comments (post_id, user_id, body) VALUES (?,?,?)').run(post.id, user.id, body);
         notify(db, { userId: post.user_id, actorUserId: user.id, type: 'comment', postId: post.id, body: `${user.name} comentou no seu post` });
       }
+      return redirect(res, safePath(fields.return_to, ['/feed'], '/feed'));
+    }
+    // Only the post's own author can remove it — cleans up its photo file
+    // (if any) and every row that references it (reactions, comments,
+    // notifications) since this DB has no ON DELETE CASCADE set up.
+    if (method === 'POST' && (m = /^\/feed\/(\d+)\/delete$/.exec(pathname))) {
+      if (!requireAuth()) return;
+      const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(m[1]);
+      if (!post) return notFound(res);
+      if (post.user_id !== user.id) { res.writeHead(403); return res.end('Você só pode excluir seus próprios posts.'); }
+      if (post.photo_path) {
+        const photoFile = path.join(UPLOAD_DIR, post.photo_path);
+        fs.promises.unlink(photoFile).catch(() => {});
+      }
+      db.prepare('DELETE FROM reactions WHERE post_id = ?').run(post.id);
+      db.prepare('DELETE FROM comments WHERE post_id = ?').run(post.id);
+      db.prepare('DELETE FROM notifications WHERE post_id = ?').run(post.id);
+      db.prepare('DELETE FROM posts WHERE id = ?').run(post.id);
       return redirect(res, safePath(fields.return_to, ['/feed'], '/feed'));
     }
 

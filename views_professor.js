@@ -64,6 +64,7 @@ function professorPage(user) {
     font-family:'IBM Plex Mono',monospace; font-size:10.5px; letter-spacing:0.14em; color:var(--ink-faint);
     text-transform:uppercase; margin-top:4px;
   }
+  .topright{display:flex; flex-direction:column; align-items:flex-end; gap:12px;}
   .topnav{display:flex; align-items:center; gap:18px;}
   .topnav a{
     font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:0.08em; text-transform:uppercase;
@@ -166,15 +167,16 @@ function professorPage(user) {
     <div class="brand">PROFESSOR</div>
     <div class="tag">coach de corrida com IA · ${esc(firstName)}</div>
   </div>
-  <div class="topnav">
-    <a href="/assistant">Chat</a>
-    <a href="/">Perfil</a>
-    <a href="/logout">Sair</a>
+  <div class="topright">
+    <div class="topnav">
+      <a href="/assistant">Chat</a>
+      <a href="/">Perfil</a>
+      <a href="/logout">Sair</a>
+    </div>
+    <div class="statusblock">
+      <span class="statuspill" id="statusPill"><span class="dot"></span><span id="statusText">Parado</span></span>
+    </div>
   </div>
-</div>
-
-<div class="statusblock" style="position:absolute; top:26px; right:26px; z-index:2;">
-  <span class="statuspill" id="statusPill"><span class="dot"></span><span id="statusText">Parado</span></span>
 </div>
 
 <div class="stage">
@@ -265,6 +267,31 @@ function professorPage(user) {
     captionEl.textContent = text;
     captionEl.className = 'caption' + (muted ? ' muted' : '');
   }
+  // ---------- shared history (same chat_messages rows as /assistant) ----------
+  // The backend already treats /professor and /assistant as one conversation
+  // (both hit /api/coach/send with activity_id:null, same chat_messages
+  // table) — this just surfaces that on screen too, pulling the tail of the
+  // existing thread into the log on load so it's visibly the same coach,
+  // not a second one that forgot everything.
+  function loadHistory(){
+    fetch('/api/coach/history').then(function(res){
+      return res.ok ? res.json() : null;
+    }).then(function(data){
+      var rows = (data && data.messages) || [];
+      rows.slice(-6).forEach(function(m){
+        if (m.role !== 'user' && m.role !== 'assistant') return;
+        var clean = String(m.content || '').replace(/\\n?\\[\\[STORY_CARD\\]\\][\\s\\S]*?\\[\\[\\/STORY_CARD\\]\\]/, '').trim();
+        if (clean) history.push({ role: m.role === 'assistant' ? 'professor' : 'user', text: clean });
+      });
+      if (history.length) {
+        history = history.slice(-6);
+        renderLog();
+        setCaption('Continuando sua conversa com o coach — é o mesmo de sempre, só em voz.', true);
+      }
+    }).catch(function(){});
+  }
+  loadHistory();
+
   function pushLog(role, text){
     history.push({ role: role, text: text });
     if (history.length > 6) history.shift();
@@ -484,85 +511,122 @@ function professorPage(user) {
     });
   }
 
+  // ---------- recognition lifecycle ----------
+  // Chrome allows only ONE active SpeechRecognition session per tab —
+  // calling .start() on a new instance before the previous one has actually
+  // finished shutting down throws (silently, into the catch below) and
+  // leaves the mic dead with no further error, which was the root cause of
+  // "não consegui conversar com o professor": every ambient→capturing and
+  // capturing→ambient transition used to stop() the old instance and
+  // start() a new one in the same tick, racing the async shutdown. Every
+  // transition now waits for the outgoing instance's real 'end' event (with
+  // a short timeout as a safety net for the rare case it never fires)
+  // before starting the next one.
+  function stopRecognition(done){
+    clearTimeout(captureSilenceTimer);
+    clearTimeout(captureHardStopTimer);
+    if (!recognition) { if (done) done(); return; }
+    var r = recognition;
+    recognition = null;
+    recognitionPhase = null;
+    var called = false;
+    var finish = function(){
+      if (called) return;
+      called = true;
+      if (done) done();
+    };
+    r.onresult = null;
+    r.onerror = null;
+    r.onend = finish;
+    try { r.stop(); } catch (e) { finish(); }
+    setTimeout(finish, 250);
+  }
+
   // ---------- recognition: ambient (wake word) ----------
   function startAmbient(){
     if (!canListen) return;
-    stopRecognition();
-    setState('ambient');
-    setCaption('Diga "Hey Professor" quando quiser perguntar algo.', true);
+    stopRecognition(function(){
+      setState('ambient');
+      setCaption('Diga "Hey Professor" quando quiser perguntar algo.', true);
 
-    recognition = new SR();
-    recognition.lang = 'pt-BR';
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognitionPhase = 'ambient';
+      recognition = new SR();
+      recognition.lang = 'pt-BR';
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognitionPhase = 'ambient';
 
-    recognition.onresult = function(event){
-      for (var i = event.resultIndex; i < event.results.length; i++) {
-        var transcript = normalize(event.results[i][0].transcript);
-        if (WAKE_RE.test(transcript)) {
-          var after = transcript.replace(WAKE_RE, '').trim();
-          beginCapture(after);
-          return;
+      recognition.onresult = function(event){
+        for (var i = event.resultIndex; i < event.results.length; i++) {
+          var transcript = normalize(event.results[i][0].transcript);
+          if (WAKE_RE.test(transcript)) {
+            var after = transcript.replace(WAKE_RE, '').trim();
+            beginCapture(after);
+            return;
+          }
         }
-      }
-    };
-    recognition.onerror = function(event){
-      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
-        showPermError();
-        return;
-      }
-      // 'no-speech' and transient network blips are routine for a
-      // continuously-listening recognizer — just let onend restart it.
-    };
-    recognition.onend = function(){
-      if (recognitionPhase === 'ambient' && STATE === 'ambient') {
-        // Chrome stops continuous recognition on its own after a while —
-        // restart it transparently so "always listening" actually holds.
-        try { recognition.start(); } catch (e) { setTimeout(startAmbient, 400); }
-      }
-    };
-    try { recognition.start(); } catch (e) {}
+      };
+      recognition.onerror = function(event){
+        if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+          showPermError();
+        }
+        // 'no-speech' and transient network blips are routine for a
+        // continuously-listening recognizer — just let onend restart it.
+      };
+      recognition.onend = function(){
+        if (recognitionPhase === 'ambient' && STATE === 'ambient') {
+          // Chrome stops continuous recognition on its own after a while —
+          // restart it transparently so "always listening" actually holds.
+          // This instance has genuinely already ended, so going straight to
+          // startAmbient() here (not through stopRecognition) is safe.
+          recognition = null;
+          recognitionPhase = null;
+          startAmbient();
+        }
+      };
+      try { recognition.start(); } catch (e) { showPermError(); }
+    });
   }
 
   // ---------- recognition: capturing the actual question ----------
   function beginCapture(prefill){
-    stopRecognition();
-    setState('capturing');
-    captureText = prefill || '';
-    setCaption(captureText ? captureText : 'Pode falar…', !captureText);
+    stopRecognition(function(){
+      setState('capturing');
+      captureText = prefill || '';
+      setCaption(captureText ? captureText : 'Pode falar…', !captureText);
 
-    recognition = new SR();
-    recognition.lang = 'pt-BR';
-    recognition.continuous = true;
-    recognition.interimResults = true;
-    recognitionPhase = 'capturing';
+      recognition = new SR();
+      recognition.lang = 'pt-BR';
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognitionPhase = 'capturing';
 
-    recognition.onresult = function(event){
-      var interim = '', finals = '';
-      for (var i = event.resultIndex; i < event.results.length; i++) {
-        var piece = event.results[i][0].transcript;
-        if (event.results[i].isFinal) finals += piece + ' '; else interim += piece;
-      }
-      if (finals) captureText = (captureText + ' ' + finals).trim();
-      setCaption((captureText + ' ' + interim).trim() || 'Pode falar…', !(captureText || interim));
+      recognition.onresult = function(event){
+        var interim = '', finals = '';
+        for (var i = event.resultIndex; i < event.results.length; i++) {
+          var piece = event.results[i][0].transcript;
+          if (event.results[i].isFinal) finals += piece + ' '; else interim += piece;
+        }
+        if (finals) captureText = (captureText + ' ' + finals).trim();
+        setCaption((captureText + ' ' + interim).trim() || 'Pode falar…', !(captureText || interim));
+        armSilenceTimer();
+      };
+      recognition.onerror = function(event){
+        if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+          showPermError();
+        }
+      };
+      recognition.onend = function(){
+        if (recognitionPhase === 'capturing' && STATE === 'capturing') {
+          recognitionPhase = null;
+          finishCapture();
+        }
+      };
+      try { recognition.start(); } catch (e) { showPermError(); }
+
       armSilenceTimer();
-    };
-    recognition.onerror = function(event){
-      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
-        showPermError();
-      }
-    };
-    recognition.onend = function(){
-      if (recognitionPhase === 'capturing' && STATE === 'capturing') {
-        finishCapture();
-      }
-    };
-    try { recognition.start(); } catch (e) {}
-
-    armSilenceTimer();
-    clearTimeout(captureHardStopTimer);
-    captureHardStopTimer = setTimeout(finishCapture, 20000); // hard cap so a stuck mic never listens forever
+      clearTimeout(captureHardStopTimer);
+      captureHardStopTimer = setTimeout(finishCapture, 20000); // hard cap so a stuck mic never listens forever
+    });
   }
 
   function armSilenceTimer(){
@@ -574,22 +638,12 @@ function professorPage(user) {
     if (STATE !== 'capturing') return;
     clearTimeout(captureSilenceTimer);
     clearTimeout(captureHardStopTimer);
-    stopRecognition();
     var q = captureText.trim();
     captureText = '';
-    if (!q) { startAmbient(); return; }
-    askProfessor(q);
-  }
-
-  function stopRecognition(){
-    if (recognition) {
-      var r = recognition;
-      recognition = null;
-      recognitionPhase = null;
-      try { r.onend = null; r.onresult = null; r.onerror = null; r.stop(); } catch (e) {}
-    }
-    clearTimeout(captureSilenceTimer);
-    clearTimeout(captureHardStopTimer);
+    stopRecognition(function(){
+      if (!q) { startAmbient(); return; }
+      askProfessor(q);
+    });
   }
 
   function setState(next){
