@@ -246,7 +246,9 @@ function professorPage(user) {
   var STATE = 'standby';
   var recognition = null;
   var recognitionPhase = null; // 'ambient' | 'capturing' — what the current recognition instance is for
-  var captureText = '';
+  var captureText = '';     // finalized transcript for the CURRENT capture session
+  var captureInterim = '';  // not-yet-finalized transcript for the CURRENT capture session
+  var capturePrefill = '';  // text spoken right after the wake word, from the ambient session
   var captureSilenceTimer = null;
   var captureHardStopTimer = null;
   var pttActive = false;
@@ -608,8 +610,10 @@ function professorPage(user) {
   function beginCapture(prefill){
     stopRecognition(function(){
       setState('capturing');
-      captureText = prefill || '';
-      setCaption(captureText ? captureText : 'Pode falar…', !captureText);
+      captureText = '';
+      captureInterim = '';
+      capturePrefill = prefill || '';
+      setCaption(capturePrefill ? capturePrefill : 'Pode falar…', !capturePrefill);
 
       recognition = new SR();
       recognition.lang = 'pt-BR';
@@ -618,13 +622,23 @@ function professorPage(user) {
       recognitionPhase = 'capturing';
 
       recognition.onresult = function(event){
+        // Recompute from the FULL results list every time (not just the
+        // range from event.resultIndex) and keep interim text in its own
+        // variable instead of discarding it. Chrome routinely never marks a
+        // result isFinal while continuous=true keeps the session open -- if
+        // we only ever stored the finals, a whole short question could live
+        // entirely in the interim text and vanish the moment the silence
+        // timer below fired, which is what was producing "não responde
+        // nada" and read as the Professor cutting the person off mid-sentence.
         var interim = '', finals = '';
-        for (var i = event.resultIndex; i < event.results.length; i++) {
+        for (var i = 0; i < event.results.length; i++) {
           var piece = event.results[i][0].transcript;
-          if (event.results[i].isFinal) finals += piece + ' '; else interim += piece;
+          if (event.results[i].isFinal) finals += piece + ' '; else interim += piece + ' ';
         }
-        if (finals) captureText = (captureText + ' ' + finals).trim();
-        setCaption((captureText + ' ' + interim).trim() || 'Pode falar…', !(captureText || interim));
+        captureText = finals.trim();
+        captureInterim = interim.trim();
+        var shown = [capturePrefill, captureText, captureInterim].filter(Boolean).join(' ').trim();
+        setCaption(shown || 'Pode falar…', !shown);
         armSilenceTimer();
       };
       recognition.onerror = function(event){
@@ -648,15 +662,21 @@ function professorPage(user) {
 
   function armSilenceTimer(){
     clearTimeout(captureSilenceTimer);
-    captureSilenceTimer = setTimeout(finishCapture, 1500);
+    // 1500ms was cutting people off mid-thought on an ordinary conversational
+    // pause (a breath, "deixa eu ver…"); 2200ms gives a more natural beat
+    // before treating silence as "done talking" without making the Professor
+    // feel laggy.
+    captureSilenceTimer = setTimeout(finishCapture, 2200);
   }
 
   function finishCapture(){
     if (STATE !== 'capturing') return;
     clearTimeout(captureSilenceTimer);
     clearTimeout(captureHardStopTimer);
-    var q = captureText.trim();
+    var q = [capturePrefill, captureText, captureInterim].filter(Boolean).join(' ').trim();
+    capturePrefill = '';
     captureText = '';
+    captureInterim = '';
     stopRecognition(function(){
       if (!q) { startAmbient(); return; }
       askProfessor(q);
