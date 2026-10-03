@@ -1819,6 +1819,7 @@ function postCard(user, p, returnTo) {
   <div class="post-body">${esc(p.body).replace(/\n/g, '<br>')}</div>
   ${p.photo_path ? `<div class="post-photo"><img src="/uploads/${esc(p.photo_path)}" alt="" loading="lazy"></div>` : ''}
   ${p.activity_title ? `<a class="pill post-activity-pill" href="/activities/${p.activity_id}"><span class="dot"></span>${esc(p.activity_title)}</a>` : ''}
+  ${p.activity_laps && p.activity_laps.length > 1 ? `<div class="post-chart">${paceBarsHtml({ avg_pace_sec: p.activity_avg_pace_sec }, p.activity_laps, 12)}</div>` : ''}
   `}
   <div class="post-actions">
     ${reactionPicker(p, returnTo)}
