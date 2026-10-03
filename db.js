@@ -103,6 +103,11 @@ ensureColumn('users', 'strava_refresh_token', 'strava_refresh_token TEXT');
 ensureColumn('users', 'strava_token_expires_at', 'strava_token_expires_at INTEGER');
 ensureColumn('users', 'strava_connected_at', 'strava_connected_at TEXT');
 ensureColumn('users', 'strava_last_synced_at', 'strava_last_synced_at INTEGER');
+// Admin flag — gates the /admin dashboard (see server.js). Nothing in the
+// signup flow ever sets this; it's granted once below, to the very first
+// account (Felipe's — see memberNumber's comment above), and from then on
+// only by directly editing the database.
+ensureColumn('users', 'is_admin', 'is_admin INTEGER NOT NULL DEFAULT 0');
 ensureColumn('activities', 'external_id', 'external_id TEXT');
 db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_activities_external ON activities(user_id, external_id) WHERE external_id IS NOT NULL`);
 ensureColumn('activities', 'intervals_json', 'intervals_json TEXT');
@@ -361,6 +366,20 @@ db.exec(`CREATE TABLE IF NOT EXISTS _migrations (name TEXT PRIMARY KEY, applied_
       db.prepare(`DELETE FROM notifications WHERE post_id IN (${ph})`).run(...ids);
       db.prepare(`DELETE FROM posts WHERE id IN (${ph})`).run(...ids);
     }
+    db.prepare('INSERT INTO _migrations (name) VALUES (?)').run(MIGRATION);
+  }
+}
+
+// One-time: grant the admin flag to the very first account (id 1 — Felipe's,
+// per memberNumber's comment above) so the /admin dashboard has someone who
+// can reach it without a manual DB edit. Guarded by _migrations so it never
+// re-runs and never re-grants admin to id 1 after someone deliberately
+// revokes it by hand.
+{
+  const MIGRATION = 'grant_first_user_admin_v1';
+  const applied = db.prepare('SELECT 1 FROM _migrations WHERE name = ?').get(MIGRATION);
+  if (!applied) {
+    db.prepare('UPDATE users SET is_admin = 1 WHERE id = 1').run();
     db.prepare('INSERT INTO _migrations (name) VALUES (?)').run(MIGRATION);
   }
 }

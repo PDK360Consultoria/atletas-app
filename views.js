@@ -578,6 +578,7 @@ function layout({ title, user, body, active, extraHead, bodyEnd, hideCoachWidget
           <a class="link ${active === 'assistant' ? 'active' : ''}" href="/assistant">Professor Chat</a>
           <a class="link ${active === 'professor' ? 'active' : ''}" href="/professor">Professor ao vivo</a>
           <a class="link ${active === 'settings' ? 'active' : ''}" href="/settings">Config</a>
+          ${user.is_admin ? `<a class="link ${active === 'admin' ? 'active' : ''}" href="/admin">Admin</a>` : ''}
           <div class="notif-wrap" id="notifWrap">
             <button class="notif-bell" id="notifBell" type="button" aria-label="Notificações">
               ${icon('bell', 'nb')}
@@ -2714,8 +2715,101 @@ function coachChatPage(user, messages, flags) {
   return layout({ title: 'Coach de Corrida', user, body, active: 'assistant', hideCoachWidget: true, bodyEnd: chatInit, bodyClass: 'chat-page', wrapClass: 'wrap-chat' });
 }
 
+// Admin dashboard — Felipe-only (gated server-side by user.is_admin, see
+// requireAdmin in server.js). One screen: aggregate numbers up top, every
+// athlete underneath, each row linking into their own detail page.
+function adminPage(user, { users, stats }) {
+  const body = `
+<h1>Admin</h1>
+<p class="lede">Todos os atletas cadastrados no Runiqx, num lugar só.</p>
+
+<div class="grid cols-4">
+  <div class="card stat"><div class="k">Atletas</div><div class="v">${stats.totalUsers}</div></div>
+  <div class="card stat"><div class="k">Treinos registrados</div><div class="v">${stats.totalActivities}</div></div>
+  <div class="card stat"><div class="k">Conectados ao Strava</div><div class="v">${stats.stravaConnected}</div></div>
+  <div class="card stat"><div class="k">Com chave própria</div><div class="v">${stats.withOwnKey}</div></div>
+</div>
+
+<div class="card">
+  <h2>Todos os atletas <span class="pill">${users.length}</span></h2>
+  ${users.map((u) => `
+    <a class="list-item" href="/admin/users/${u.id}">
+      <div>
+        <div class="t">${esc(u.name)}${u.is_admin ? ' <span class="pill">Admin</span>' : ''}</div>
+        <div class="muted mono">${esc(u.email)} · Nº ${memberNumber(u)} · desde ${fmtDate(u.created_at)}</div>
+      </div>
+      <div class="row" style="gap:6px; flex-wrap:nowrap;">
+        ${u.strava_refresh_token ? `<span class="pill">Strava</span>` : ''}
+        ${u.anthropic_api_key ? `<span class="pill">Chave própria</span>` : ''}
+        <span class="muted">${u.activity_count} treino${u.activity_count === 1 ? '' : 's'}</span>
+      </div>
+    </a>
+  `).join('')}
+</div>
+`;
+  return layout({ title: 'Admin', user, body, active: 'admin' });
+}
+
+// Single-athlete admin view — their profile fields, a quick look at their
+// training, and the one actual "control" this panel offers: delete the
+// account. Everything else here is read-only on purpose; there's no edit
+// form for someone else's profile, because Felipe asked to *see* and
+// *control* accounts, not to ghostwrite them.
+function adminUserDetailPage(user, { athlete, activities, posts }) {
+  const body = `
+<a class="link mono" href="/admin" style="display:inline-block; margin-top:20px; text-decoration:none;">← Todos os atletas</a>
+<h1>${esc(athlete.name)}${athlete.is_admin ? ' <span class="pill">Admin</span>' : ''}</h1>
+<p class="lede">Nº ${memberNumber(athlete)} · ${esc(athlete.email)} · desde ${fmtDate(athlete.created_at)}</p>
+
+<div class="grid cols-4">
+  <div class="card stat"><div class="k">Treinos</div><div class="v">${activities.length}</div></div>
+  <div class="card stat"><div class="k">Posts no feed</div><div class="v">${posts.length}</div></div>
+  <div class="card stat"><div class="k">Strava</div><div class="v" style="font-size:18px;">${athlete.strava_refresh_token ? 'Conectado' : '—'}</div></div>
+  <div class="card stat"><div class="k">Chave Anthropic</div><div class="v" style="font-size:18px;">${athlete.anthropic_api_key ? 'Própria' : 'Compartilhada'}</div></div>
+</div>
+
+<div class="card">
+  <h2>Perfil</h2>
+  <p class="muted" style="margin:0; font-size:14px;">
+    ${athlete.city ? `Cidade: ${esc(athlete.city)}<br>` : ''}
+    ${athlete.experience_level ? `Nível: ${esc(athlete.experience_level)}<br>` : ''}
+    ${athlete.weekly_km ? `Volume semanal: ${athlete.weekly_km}km<br>` : ''}
+    ${athlete.goal_race_name ? `Meta: ${esc(athlete.goal_race_name)}${athlete.goal_time_sec ? ` em ${fmtClock(athlete.goal_time_sec)}` : ''}<br>` : ''}
+    ${athlete.injury_notes ? `Histórico/lesões: ${esc(athlete.injury_notes)}<br>` : ''}
+    ${athlete.bio ? `Bio: ${esc(athlete.bio)}` : ''}
+    ${!athlete.city && !athlete.experience_level && !athlete.weekly_km && !athlete.goal_race_name && !athlete.injury_notes && !athlete.bio ? 'Sem dados de pré-diagnóstico ou perfil preenchidos.' : ''}
+  </p>
+</div>
+
+<div class="card">
+  <h2>Últimos treinos</h2>
+  ${activities.length ? activities.slice(0, 20).map((a) => `
+    <div class="list-item">
+      <div>
+        <div class="t">${esc(a.title)}</div>
+        <div class="muted">${a.distance_km ? `${a.distance_km}km` : ''}${a.started_at ? ` · ${fmtDate(a.started_at)}` : ''}</div>
+      </div>
+      <span class="pill">${esc(a.workout_type || 'treino')}</span>
+    </div>
+  `).join('') : `<p class="muted" style="margin:0;">Nenhum treino ainda.</p>`}
+</div>
+
+<div class="card">
+  <h2>Zona de risco</h2>
+  <p class="muted">Excluir a conta remove permanentemente o atleta e todos os dados dele(a) — treinos, posts, reações, conversas com o Coach. Essa ação não pode ser desfeita.</p>
+  ${athlete.id === user.id
+    ? `<p class="muted" style="margin:0;">Você não pode excluir sua própria conta de admin por aqui.</p>`
+    : `<form method="POST" action="/admin/users/${athlete.id}/delete" onsubmit="return confirm('Excluir esse atleta e todos os dados dele(a)? Essa ação não pode ser desfeita.');">
+        <button class="danger" type="submit">${icon('trash', 'adel')}Excluir atleta</button>
+      </form>`}
+</div>
+`;
+  return layout({ title: `Admin · ${athlete.name}`, user, body, active: 'admin' });
+}
+
 module.exports = {
   layout, loginPage, signupPage, dashboardPage, racesPage,
   activitiesPage, activityNewPage, activityDetailPage, feedPage, settingsPage, coachChatPage,
   publicProfilePage, storyPage, landingPage, welcomePage, discoverPage,
+  adminPage, adminUserDetailPage,
 };

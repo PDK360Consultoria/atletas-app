@@ -115,6 +115,13 @@ async function handle(req, res) {
   }
 
   const requireAuth = () => { if (!user) { redirect(res, '/login'); return false; } return true; };
+  // 404s (not a redirect) for a logged-in non-admin — the admin dashboard's
+  // existence isn't something a regular athlete needs to know about.
+  const requireAdmin = () => {
+    if (!user) { redirect(res, '/login'); return false; }
+    if (!user.is_admin) { notFound(res); return false; }
+    return true;
+  };
 
   try {
     // ---------- auth ----------
@@ -864,6 +871,60 @@ async function handle(req, res) {
     if (method === 'GET' && pathname === '/professor') {
       if (!requireAuth()) return;
       return html(res, 200, professorPage(user));
+    }
+
+    // ---------- admin (Felipe-only — gated by users.is_admin) ----------
+    if (method === 'GET' && pathname === '/admin') {
+      if (!requireAdmin()) return;
+      const users = db.prepare(`
+        SELECT u.*, (SELECT COUNT(*) FROM activities a WHERE a.user_id = u.id) AS activity_count
+        FROM users u ORDER BY u.id ASC
+      `).all();
+      const stats = {
+        totalUsers: users.length,
+        totalActivities: db.prepare('SELECT COUNT(*) AS n FROM activities').get().n,
+        stravaConnected: users.filter((u) => u.strava_refresh_token).length,
+        withOwnKey: users.filter((u) => u.anthropic_api_key).length,
+      };
+      return html(res, 200, views.adminPage(user, { users, stats }));
+    }
+    if (method === 'GET' && (m = /^\/admin\/users\/(\d+)$/.exec(pathname))) {
+      if (!requireAdmin()) return;
+      const athlete = db.prepare('SELECT * FROM users WHERE id = ?').get(m[1]);
+      if (!athlete) return notFound(res);
+      const activities = db.prepare('SELECT * FROM activities WHERE user_id = ? ORDER BY COALESCE(started_at, created_at) DESC').all(athlete.id);
+      const posts = db.prepare('SELECT id FROM posts WHERE user_id = ?').all(athlete.id);
+      return html(res, 200, views.adminUserDetailPage(user, { athlete, activities, posts }));
+    }
+    if (method === 'POST' && (m = /^\/admin\/users\/(\d+)\/delete$/.exec(pathname))) {
+      if (!requireAdmin()) return;
+      const targetId = Number(m[1]);
+      if (targetId === user.id) return redirect(res, `/admin/users/${targetId}`);
+      const target = db.prepare('SELECT id FROM users WHERE id = ?').get(targetId);
+      if (!target) return notFound(res);
+      // Children first, same ordering the earlier auto-post cleanup in
+      // db.js uses: comments/reactions/notifications that hang off this
+      // athlete's own posts, then the posts themselves, then everything
+      // else that points at this user_id directly.
+      const postIds = db.prepare('SELECT id FROM posts WHERE user_id = ?').all(targetId).map((p) => p.id);
+      if (postIds.length) {
+        const ph = postIds.map(() => '?').join(',');
+        db.prepare(`DELETE FROM comments WHERE post_id IN (${ph})`).run(...postIds);
+        db.prepare(`DELETE FROM reactions WHERE post_id IN (${ph})`).run(...postIds);
+        db.prepare(`DELETE FROM notifications WHERE post_id IN (${ph})`).run(...postIds);
+      }
+      db.prepare('DELETE FROM comments WHERE user_id = ?').run(targetId);
+      db.prepare('DELETE FROM reactions WHERE user_id = ?').run(targetId);
+      db.prepare('DELETE FROM notifications WHERE user_id = ? OR actor_user_id = ?').run(targetId, targetId);
+      db.prepare('DELETE FROM posts WHERE user_id = ?').run(targetId);
+      db.prepare('DELETE FROM blocks WHERE activity_id IN (SELECT id FROM activities WHERE user_id = ?)').run(targetId);
+      db.prepare('DELETE FROM activities WHERE user_id = ?').run(targetId);
+      db.prepare('DELETE FROM races WHERE user_id = ?').run(targetId);
+      db.prepare('DELETE FROM chat_messages WHERE user_id = ?').run(targetId);
+      db.prepare('DELETE FROM follows WHERE follower_id = ? OR followee_id = ?').run(targetId, targetId);
+      db.prepare('DELETE FROM sessions WHERE user_id = ?').run(targetId);
+      db.prepare('DELETE FROM users WHERE id = ?').run(targetId);
+      return redirect(res, '/admin');
     }
 
     return notFound(res);
