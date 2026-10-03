@@ -712,46 +712,57 @@ function welcomePage(user) {
 }
 
 function landingPage() {
-  const features = [
+  // Each chapter after the hero scrolls past the fixed 3D stage (see
+  // .landing-3d-fixed / LANDING_SCRIPT) — the shoe/camera react to scroll
+  // position, not a canned timer, per Felipe's brief ("um objeto 3d móvel
+  // que se mexe enquanto o site se move", referencing the cinematic-scroll
+  // premium sites the site-medico-premium-360 skill builds). Kept in
+  // Atletas' own gold/blue palette, not that skill's brown/gold medical one.
+  const chapters = [
     { icon: 'stopwatch', title: 'Treinos', text: 'Registre manualmente ou sincronize com o Strava — pace, FC, splits km a km e estrutura de tiros, tudo organizado.' },
     { icon: 'chat', title: 'Professor', text: 'O seu treinador com IA — por voz ou por texto, sempre o mesmo, sempre no seu histórico. Monta treinos com embasamento técnico e te manda até uma imagem pra consultar durante a corrida.' },
     { icon: 'flame', title: 'Feed', text: 'Compartilhe treinos, reaja com 👏🔥🏆💪 e acompanhe o que a galera que você segue está treinando.' },
     { icon: 'trophy', title: 'Provas e evolução', text: 'Calendário de provas, medalhas por distância e sua evolução de volume e pace mês a mês.' },
   ];
+  const total = chapters.length + 2; // hero + feature chapters + closing CTA
+  const pad2 = (n) => String(n).padStart(2, '0');
+
   const body = `
-<section class="landing-hero">
-  <div class="landing-hero-copy">
-    <div class="hero-eyebrow">Treino, feed e coach de corrida com IA</div>
+<div class="landing-3d-fixed"><canvas id="landing-canvas"></canvas></div>
+
+<div class="landing-chapters">
+  <section class="landing-chapter landing-chapter-hero" data-chapter="0">
+    <div class="chapter-num">${pad2(1)}<span class="total">/ ${pad2(total)}</span></div>
     <h1 class="landing-h1">Corra com dados.<br>Não com achismo.</h1>
     <p class="lede landing-lede">O Atletas junta seus treinos, sua evolução e um coach de corrida com IA num só lugar — e uma comunidade pra te acompanhar no caminho até a sua próxima prova.</p>
     <div class="landing-cta-row">
       <a class="btn" href="/signup">Criar minha conta</a>
       <a class="btn ghost" href="/login">Já tenho conta</a>
     </div>
-  </div>
-  <div class="landing-hero-art">
-    <div class="hero landing-hero-stage">
-      <canvas id="hero-canvas"></canvas>
-      <div class="hero-badge" id="hero-badge"><span class="hero-badge-glow"></span>${icon('shoe', 'herolanding')}</div>
+  </section>
+
+  ${chapters.map((f, i) => `<section class="landing-chapter" data-chapter="${i + 1}">
+    <div class="chapter-card">
+      <div class="chapter-num">${pad2(i + 2)}<span class="total">/ ${pad2(total)}</span></div>
+      <div class="icon-badge">${icon(f.icon, 'lc' + i)}</div>
+      <h2>${esc(f.title)}</h2>
+      <p>${esc(f.text)}</p>
     </div>
-  </div>
-</section>
+  </section>`).join('')}
 
-<section class="landing-features">
-  ${features.map((f) => `<div class="card landing-feature">
-    <div class="icon-badge">${icon(f.icon)}</div>
-    <h2 style="margin-top:10px;">${esc(f.title)}</h2>
-    <p class="muted" style="margin:0;">${esc(f.text)}</p>
-  </div>`).join('')}
-</section>
+  <section class="landing-chapter landing-chapter-cta" data-chapter="${chapters.length + 1}">
+    <div class="chapter-card landing-cta-final">
+      <div class="chapter-num" style="justify-content:center;">${pad2(total)}<span class="total">/ ${pad2(total)}</span></div>
+      <h2>Cada atleta tem um número.</h2>
+      <p class="muted" style="margin:0 0 18px;">No cadastro você passa por um pré-diagnóstico rápido e recebe o seu — simples assim.</p>
+      <a class="btn" href="/signup">Criar minha conta</a>
+    </div>
+  </section>
+</div>
 
-<section class="landing-cta-final card">
-  <h2 style="margin-bottom:6px;">Cada atleta tem um número.</h2>
-  <p class="muted" style="margin:0 0 18px;">No cadastro você passa por um pré-diagnóstico rápido e recebe o seu — simples assim.</p>
-  <a class="btn" href="/signup">Criar minha conta</a>
-</section>
+<div class="landing-dots" id="landingDots"></div>
 `;
-  return layout({ title: 'Atletas', user: null, body, navVariant: 'public', wrapClass: 'landing-wrap', extraHead: HERO_EXTRA_HEAD, bodyEnd: HERO_SCRIPT });
+  return layout({ title: 'Atletas', user: null, body, navVariant: 'public', wrapClass: 'landing-wrap', bodyClass: 'landing-dark', extraHead: HERO_EXTRA_HEAD, bodyEnd: LANDING_SCRIPT });
 }
 
 const HERO_EXTRA_HEAD = `<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js" defer></script>
@@ -1065,6 +1076,335 @@ const HERO_SCRIPT = `<script defer>
 
         camera.position.x += (1.7 + mouseX * 1.0 - camera.position.x) * 0.04;
         camera.position.y += (1.4 - mouseY * 0.35 - camera.position.y) * 0.04;
+        camera.lookAt(lookTarget);
+
+        renderFrame();
+        requestAnimationFrame(animate);
+      }
+      requestAnimationFrame(animate);
+    } catch (e) { console.error('[dbg]', e); }
+  }
+  if (document.readyState === 'complete') { boot(); }
+  else { window.addEventListener('load', boot); }
+})();
+</script>`;
+
+// Landing-page-only cinematic scroll script. Deliberately a separate
+// constant from HERO_SCRIPT (not shared) — the dashboard hero is a small
+// confined box driven by mouse parallax, this one is a full-viewport fixed
+// WebGL layer driven by scroll position, with its own dot nav. Same shoe
+// model + lighting/orb setup as HERO_SCRIPT (copy, not reuse, since the two
+// scenes attach to differently-shaped canvases and have no shared state) so
+// the product rendering stays visually consistent across the app.
+const LANDING_SCRIPT = `<script defer>
+(function(){
+  function boot(){
+    try {
+      var canvas = document.getElementById('landing-canvas');
+      var chapters = Array.prototype.slice.call(document.querySelectorAll('.landing-chapter'));
+      var dotsWrap = document.getElementById('landingDots');
+      var reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+      // ---- dot nav: one button per chapter, synced to whichever chapter
+      // is in view, independent of whether WebGL loads at all.
+      if (dotsWrap && chapters.length) {
+        chapters.forEach(function(ch, i){
+          var b = document.createElement('button');
+          b.type = 'button';
+          b.setAttribute('aria-label', 'Ir para a seção ' + (i + 1));
+          b.addEventListener('click', function(){
+            ch.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'start' });
+          });
+          dotsWrap.appendChild(b);
+        });
+        var dotEls = Array.prototype.slice.call(dotsWrap.children);
+        if ('IntersectionObserver' in window) {
+          var io = new IntersectionObserver(function(entries){
+            entries.forEach(function(entry){
+              if (!entry.isIntersecting) return;
+              var idx = chapters.indexOf(entry.target);
+              if (idx < 0) return;
+              dotEls.forEach(function(d, j){ d.classList.toggle('active', j === idx); });
+            });
+          }, { threshold: 0.5 });
+          chapters.forEach(function(ch){ io.observe(ch); });
+        }
+      }
+
+      if (!canvas || typeof THREE === 'undefined') return;
+
+      // Always the dark palette here (body.landing-dark forces it in CSS
+      // regardless of OS theme — see style.css) — no prefers-color-scheme
+      // branch needed, unlike HERO_SCRIPT which lives on pages that still
+      // follow the visitor's light/dark setting.
+      var accent = 0xffc24e, accent2 = 0x4e9bff;
+
+      var renderer;
+      try {
+        renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: true, antialias: true });
+      } catch (e) { return; }
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      if ('outputEncoding' in renderer) renderer.outputEncoding = THREE.sRGBEncoding;
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      if ('toneMapping' in renderer) {
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.15;
+      }
+
+      var scene = new THREE.Scene();
+      var camera = new THREE.PerspectiveCamera(36, 1, 0.1, 100);
+      camera.position.set(1.7, 1.4, 6.0);
+
+      scene.add(new THREE.HemisphereLight(0x4a5568, 0x0b0906, 0.55));
+      var key = new THREE.DirectionalLight(0xfff3e0, 1.9);
+      key.position.set(2.4, 3.6, 2.8);
+      key.castShadow = true;
+      key.shadow.mapSize.set(1024, 1024);
+      key.shadow.camera.left = -2; key.shadow.camera.right = 2;
+      key.shadow.camera.top = 2; key.shadow.camera.bottom = -2;
+      key.shadow.camera.near = 1; key.shadow.camera.far = 10;
+      key.shadow.bias = -0.0025;
+      scene.add(key);
+      var fill = new THREE.DirectionalLight(accent2, 0.5);
+      fill.position.set(-3, 1.4, 1.6);
+      scene.add(fill);
+      var rim = new THREE.PointLight(accent, 1.5, 14);
+      rim.position.set(-1.6, 1.8, -3.2);
+      scene.add(rim);
+      var rim2 = new THREE.PointLight(0xffffff, 0.8, 12);
+      rim2.position.set(1.8, 0.6, -2.6);
+      scene.add(rim2);
+
+      try {
+        var pmrem = new THREE.PMREMGenerator(renderer);
+        pmrem.compileEquirectangularShader();
+        var envCanvas = document.createElement('canvas');
+        envCanvas.width = 4; envCanvas.height = 128;
+        var ectx = envCanvas.getContext('2d');
+        var grad = ectx.createLinearGradient(0, 0, 0, 128);
+        grad.addColorStop(0, '#4a3d2e');
+        grad.addColorStop(0.45, '#1c1712');
+        grad.addColorStop(1, '#030201');
+        ectx.fillStyle = grad;
+        ectx.fillRect(0, 0, 4, 128);
+        var envTex = new THREE.CanvasTexture(envCanvas);
+        envTex.mapping = THREE.EquirectangularReflectionMapping;
+        if ('encoding' in envTex) envTex.encoding = THREE.sRGBEncoding;
+        scene.environment = pmrem.fromEquirectangular(envTex).texture;
+        envTex.dispose();
+        pmrem.dispose();
+      } catch (e) { /* reflections are a nice-to-have, safe to skip */ }
+
+      var group = new THREE.Group();
+      scene.add(group);
+      var ring = new THREE.Mesh(
+        new THREE.TorusGeometry(1.3, 0.02, 16, 120),
+        new THREE.MeshStandardMaterial({ color: accent, roughness: 0.35, metalness: 0.5 })
+      );
+      ring.rotation.x = Math.PI / 2.15;
+      group.add(ring);
+
+      var dotCount = 50;
+      var dotGeo = new THREE.BufferGeometry();
+      var positions = new Float32Array(dotCount * 3);
+      for (var i = 0; i < dotCount; i++) {
+        var angle = (i / dotCount) * Math.PI * 2;
+        var radius = 1.3 + (Math.random() - 0.5) * 0.3;
+        positions[i * 3] = Math.cos(angle) * radius;
+        positions[i * 3 + 1] = (Math.random() - 0.5) * 0.2;
+        positions[i * 3 + 2] = Math.sin(angle) * radius;
+      }
+      dotGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      var dots3d = new THREE.Points(dotGeo, new THREE.PointsMaterial({ color: accent, size: 0.04 }));
+      group.add(dots3d);
+
+      var shadowPlane = new THREE.Mesh(
+        new THREE.CircleGeometry(1.1, 32),
+        new THREE.ShadowMaterial({ opacity: 0.45 })
+      );
+      shadowPlane.rotation.x = -Math.PI / 2;
+      shadowPlane.position.y = 0.001;
+      shadowPlane.receiveShadow = true;
+      scene.add(shadowPlane);
+
+      var orbGroup = new THREE.Group();
+      scene.add(orbGroup);
+      var orbBaseY = 1.6;
+      var orbCore = new THREE.Mesh(
+        new THREE.SphereGeometry(0.14, 24, 24),
+        new THREE.MeshBasicMaterial({ color: accent, transparent: true, opacity: 0.55, blending: THREE.AdditiveBlending, depthWrite: false })
+      );
+      orbGroup.add(orbCore);
+      var orbWire = new THREE.Mesh(
+        new THREE.IcosahedronGeometry(0.23, 1),
+        new THREE.MeshBasicMaterial({ color: accent2, wireframe: true, transparent: true, opacity: 0.85 })
+      );
+      orbGroup.add(orbWire);
+      var satellites = [];
+      for (var si = 0; si < 3; si++) {
+        var sat = new THREE.Mesh(
+          new THREE.SphereGeometry(0.03, 12, 12),
+          new THREE.MeshBasicMaterial({ color: si % 2 ? accent : accent2 })
+        );
+        satellites.push({ mesh: sat, r: 0.36 + si * 0.08, speed: 0.55 + si * 0.3, offset: si * 2.1, incl: 0.3 + si * 0.22 });
+        orbGroup.add(sat);
+      }
+
+      function makeGlowSprite(colorHex, size) {
+        var c = document.createElement('canvas');
+        c.width = c.height = 64;
+        var ctx = c.getContext('2d');
+        var g = ctx.createRadialGradient(32, 32, 0, 32, 32, 32);
+        var col = '#' + colorHex.toString(16).padStart(6, '0');
+        g.addColorStop(0, col);
+        g.addColorStop(0.4, col);
+        g.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, 64, 64);
+        var sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false }));
+        sprite.scale.set(size, size, 1);
+        return sprite;
+      }
+
+      var tetherCurve = new THREE.QuadraticBezierCurve3(
+        new THREE.Vector3(0, 0.7, 0),
+        new THREE.Vector3(0.12, 1.05, 0.08),
+        new THREE.Vector3(0.08, 1.35, 0)
+      );
+      var tetherMesh = new THREE.Mesh(
+        new THREE.TubeGeometry(tetherCurve, 24, 0.005, 6, false),
+        new THREE.MeshBasicMaterial({ color: accent, transparent: true, opacity: 0.5 })
+      );
+      scene.add(tetherMesh);
+      var tetherPulse = makeGlowSprite(accent, 0.12);
+      scene.add(tetherPulse);
+
+      // ---- scroll + mouse drive the camera/shoe instead of mouse alone:
+      // this is the actual answer to "um objeto 3d móvel que se mexe
+      // enquanto o site se move" — progress is read fresh every animation
+      // frame (not via a throttled scroll listener), so the rotation stays
+      // perfectly in lockstep with the scrollbar, trackpad or mouse wheel.
+      var mouseX = 0, mouseY = 0;
+      window.addEventListener('mousemove', function(e){
+        mouseX = (e.clientX / window.innerWidth - 0.5) * 2;
+        mouseY = (e.clientY / window.innerHeight - 0.5) * 2;
+      });
+      function scrollProgress(){
+        var max = document.documentElement.scrollHeight - window.innerHeight;
+        if (max <= 0) return 0;
+        var p = window.scrollY / max;
+        return p < 0 ? 0 : (p > 1 ? 1 : p);
+      }
+
+      function resize() {
+        var w = window.innerWidth, h = window.innerHeight;
+        if (!w || !h) return;
+        renderer.setSize(w, h, false);
+        camera.aspect = w / h;
+        camera.updateProjectionMatrix();
+      }
+      resize();
+      window.addEventListener('resize', resize);
+
+      function renderFrame() { renderer.render(scene, camera); }
+
+      var shoe = null;
+      var lookTarget = new THREE.Vector3(0, 1.1, 0);
+      var hoverBase = 0.16;
+
+      if (typeof THREE.GLTFLoader === 'function') {
+        try {
+          var loader = new THREE.GLTFLoader();
+          loader.load(
+            'https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Assets@main/Models/MaterialsVariantsShoe/glTF-Binary/MaterialsVariantsShoe.glb',
+            function (gltf) {
+              try {
+                var model = gltf.scene;
+                model.traverse(function (o) {
+                  if (o.isMesh) { o.castShadow = true; o.receiveShadow = false; }
+                });
+                var box = new THREE.Box3().setFromObject(model);
+                var size = box.getSize(new THREE.Vector3());
+                var maxDim = Math.max(size.x, size.y, size.z) || 1;
+                var scale = 2.1 / maxDim;
+                model.scale.setScalar(scale);
+                box.setFromObject(model);
+                var center = box.getCenter(new THREE.Vector3());
+                model.position.x -= center.x;
+                model.position.z -= center.z;
+                model.position.y -= box.min.y;
+                model.position.y += hoverBase;
+                model.rotation.y = Math.PI * 0.15;
+                model.rotation.z = -0.12;
+                box.setFromObject(model);
+                var fitted = box.getSize(new THREE.Vector3());
+                var shoeTop = box.min.y + fitted.y;
+                lookTarget.set(0.05, shoeTop + 0.2, 0);
+                orbBaseY = shoeTop + 0.5;
+                orbGroup.position.set(0.1, orbBaseY, 0);
+                tetherCurve.v0.set(0, shoeTop - 0.05, 0);
+                tetherCurve.v1.set(0.12, shoeTop + 0.28, 0.08);
+                tetherCurve.v2.set(0.08, shoeTop + 0.5, 0);
+                tetherMesh.geometry.dispose();
+                tetherMesh.geometry = new THREE.TubeGeometry(tetherCurve, 24, 0.005, 6, false);
+                shoe = model;
+                scene.add(model);
+              } catch (e) { console.error('[dbg]', e); }
+            },
+            undefined,
+            function (err) { console.error('[dbg]', err); }
+          );
+        } catch (e) { console.error('[dbg]', e); }
+      }
+
+      if (reduced) {
+        // Static but still composed — a fixed three-quarter product shot,
+        // no idle spin, no scroll-linked motion, no mouse parallax.
+        renderFrame();
+        var reducedRetry = setInterval(function(){ if (shoe) { renderFrame(); clearInterval(reducedRetry); } }, 300);
+        return;
+      }
+
+      var clock = new THREE.Clock();
+      var t = 0;
+
+      function animate() {
+        var dt = Math.min(0.05, clock.getDelta());
+        t += dt;
+        var p = scrollProgress();
+
+        group.rotation.y += dt * 0.15;
+        ring.rotation.z += dt * 0.08;
+
+        if (shoe) {
+          // ~1.75 turns across the whole page, plus a slow idle spin so the
+          // shoe is never perfectly still even at the top/bottom of a chapter.
+          shoe.rotation.y = Math.PI * 0.15 + p * Math.PI * 3.5 + t * 0.06;
+          shoe.position.y = hoverBase + Math.sin(t * 1.1) * 0.06;
+        }
+
+        orbWire.rotation.y += dt * 0.6;
+        orbWire.rotation.x += dt * 0.2;
+        orbGroup.position.y = orbBaseY + Math.sin(t * 1.3) * 0.05;
+        for (var si2 = 0; si2 < satellites.length; si2++) {
+          var s = satellites[si2];
+          var a = t * s.speed + s.offset;
+          s.mesh.position.set(Math.cos(a) * s.r, Math.sin(a * 0.7) * s.r * s.incl, Math.sin(a) * s.r);
+        }
+        var tp = tetherCurve.getPointAt((t * 0.6) % 1);
+        tetherPulse.position.copy(tp);
+
+        // Camera orbits the shoe across the page's scroll range — a
+        // different "shot" per chapter — with mouse parallax layered on
+        // top for extra life while the visitor isn't scrolling.
+        var orbitA = p * Math.PI * 1.7;
+        var targetX = Math.sin(orbitA) * 2.3 + mouseX * 0.5;
+        var targetZ = 4.6 + Math.cos(orbitA) * 1.7;
+        var targetY = 1.3 + Math.sin(p * Math.PI) * 0.5 - mouseY * 0.2;
+        camera.position.x += (targetX - camera.position.x) * 0.05;
+        camera.position.y += (targetY - camera.position.y) * 0.05;
+        camera.position.z += (targetZ - camera.position.z) * 0.05;
         camera.lookAt(lookTarget);
 
         renderFrame();
