@@ -574,9 +574,8 @@ function layout({ title, user, body, active, extraHead, bodyEnd, hideCoachWidget
           <a class="link ${active === 'activities' ? 'active' : ''}" href="/activities">Treinos</a>
           <a class="link ${active === 'feed' ? 'active' : ''}" href="/feed">Feed</a>
           <a class="link ${active === 'discover' ? 'active' : ''}" href="/discover">Buscar</a>
-          <a class="link ${active === 'assistant' ? 'active' : ''}" href="/assistant">Coach IA</a>
           <a class="link ${active === 'coach' ? 'active' : ''}" href="/coach">Coach ao vivo</a>
-          <a class="link ${active === 'professor' ? 'active' : ''}" href="/professor">Professor</a>
+          <a class="link ${active === 'professor' || active === 'assistant' ? 'active' : ''}" href="/professor">Professor</a>
           <a class="link ${active === 'settings' ? 'active' : ''}" href="/settings">Config</a>
           <div class="notif-wrap" id="notifWrap">
             <button class="notif-bell" id="notifBell" type="button" aria-label="Notificações">
@@ -715,7 +714,7 @@ function welcomePage(user) {
 function landingPage() {
   const features = [
     { icon: 'stopwatch', title: 'Treinos', text: 'Registre manualmente ou sincronize com o Strava — pace, FC, splits km a km e estrutura de tiros, tudo organizado.' },
-    { icon: 'chat', title: 'Coach de corrida com IA', text: 'Um treinador que conhece seu histórico, monta treinos com embasamento técnico e te manda até uma imagem pra consultar durante a corrida.' },
+    { icon: 'chat', title: 'Professor', text: 'O seu treinador com IA — por voz ou por texto, sempre o mesmo, sempre no seu histórico. Monta treinos com embasamento técnico e te manda até uma imagem pra consultar durante a corrida.' },
     { icon: 'flame', title: 'Feed', text: 'Compartilhe treinos, reaja com 👏🔥🏆💪 e acompanhe o que a galera que você segue está treinando.' },
     { icon: 'trophy', title: 'Provas e evolução', text: 'Calendário de provas, medalhas por distância e sua evolução de volume e pace mês a mês.' },
   ];
@@ -1780,12 +1779,9 @@ function postCard(user, p, returnTo) {
       <button class="post-delete-btn" type="submit" title="Excluir post" aria-label="Excluir post">${icon('trash', 'del' + p.id)}</button>
     </form>` : ''}
   </div>
-  ${p.is_auto ? activityStatBlock(p) : `
-  <div class="post-body">${esc(p.body).replace(/\n/g, '<br>')}</div>
+  ${p.body ? `<div class="post-body">${esc(p.body).replace(/\n/g, '<br>')}</div>` : ''}
   ${p.photo_path ? `<div class="post-photo"><img src="/uploads/${esc(p.photo_path)}" alt="" loading="lazy"></div>` : ''}
-  ${p.activity_title ? `<a class="pill post-activity-pill" href="/activities/${p.activity_id}"><span class="dot"></span>${esc(p.activity_title)}</a>` : ''}
-  ${p.activity_laps && p.activity_laps.length > 1 ? `<div class="post-chart">${paceBarsHtml({ avg_pace_sec: p.activity_avg_pace_sec }, p.activity_laps, 12)}</div>` : ''}
-  `}
+  ${p.activity_id ? activityStatBlock(p) : ''}
   <div class="post-actions">
     ${reactionPicker(p, returnTo)}
     <span class="post-comment-count">${icon('chat', 'c' + p.id)}<span>${comments.length}</span></span>

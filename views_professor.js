@@ -254,6 +254,23 @@ function professorPage(user) {
 
   var history = []; // {role:'user'|'professor', text} — just for the on-screen log, last few only
 
+  // Strips the server's STORY_CARD sentinel the same way the text chat does
+  // (views.js splitStoryCard): everything from the FIRST "[[STORY_CARD]]"
+  // onward is dropped, not just the first replace()'d occurrence — a single
+  // reply can end up carrying the sentinel twice back-to-back (seen live:
+  // asking the Professor to resend a workout image produced one assistant
+  // row with two "[[STORY_CARD]]...[[/STORY_CARD]]" blocks concatenated),
+  // and a plain non-global .replace() only ate the first one, leaving raw
+  // JSON visible in the on-screen log and read out loud by speechSynthesis.
+  // There's no canvas here to draw the card on anyway, so slicing to the
+  // first sentinel and discarding the rest is exactly right.
+  var STORY_RE = /\n?\[\[STORY_CARD\]\]/;
+  function stripStoryCard(text){
+    var s = String(text || '');
+    var m = STORY_RE.exec(s);
+    return (m ? s.slice(0, m.index) : s).trim();
+  }
+
   function normalize(s){
     return (s || '').toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').trim();
   }
@@ -280,7 +297,7 @@ function professorPage(user) {
       var rows = (data && data.messages) || [];
       rows.slice(-6).forEach(function(m){
         if (m.role !== 'user' && m.role !== 'assistant') return;
-        var clean = String(m.content || '').replace(/\\n?\\[\\[STORY_CARD\\]\\][\\s\\S]*?\\[\\[\\/STORY_CARD\\]\\]/, '').trim();
+        var clean = stripStoryCard(m.content);
         if (clean) history.push({ role: m.role === 'assistant' ? 'professor' : 'user', text: clean });
       });
       if (history.length) {
@@ -490,7 +507,7 @@ function professorPage(user) {
     }).then(function(){
       // Strip the STORY_CARD sentinel (see server.js) — nothing to draw a
       // card on here, so just speak the human text that precedes it.
-      var clean = full.replace(/\\n?\\[\\[STORY_CARD\\]\\][\\s\\S]*?\\[\\[\\/STORY_CARD\\]\\]/, '').trim();
+      var clean = stripStoryCard(full);
       if (!clean) clean = 'Não consegui responder agora.';
       pushLog('professor', clean);
       setState('speaking');
@@ -675,7 +692,7 @@ function professorPage(user) {
   activateBtn.addEventListener('click', function(){
     permErrEl.hidden = true;
     if (!canListen) {
-      setCaption('Esse navegador não tem reconhecimento de voz (funciona no Chrome). Você ainda pode acompanhar o Coach IA por texto em /assistant.', true);
+      setCaption('Esse navegador não tem reconhecimento de voz (funciona no Chrome). Você ainda pode falar com o Professor por texto em /assistant.', true);
       return;
     }
     activateBlock.style.display = 'none';
