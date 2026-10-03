@@ -559,4 +559,46 @@ img.post-avatar{object-fit:cover; background:var(--surface2); box-shadow:0 0 0 1
 
 /* ---------- story image generator ---------- */
 .story-card{display:flex; flex-direction:column; align-items:center;}
+
+/* ---------- public landing page (/, logged out) ---------- */
+.landing-wrap{max-width:1080px;}
+.landing-hero{display:flex; align-items:center; gap:40px; padding:56px 0 48px; flex-wrap:wrap;}
+.landing-hero-copy{flex:1 1 420px; min-width:300px;}
+.landing-h1{font-family:'Archivo Black',sans-serif; font-size:52px; line-height:1.04; letter-spacing:-0.01em; margin:14px 0 18px;}
+.landing-lede{font-size:17px; max-width:480px; margin-bottom:28px;}
+.landing-cta-row{display:flex; gap:12px; flex-wrap:wrap;}
+.landing-hero-art{flex:1 1 320px; min-width:260px; display:flex; justify-content:center;}
+.landing-shoe{width:100%; max-width:380px; height:auto;}
+@media (max-width:760px){ .landing-h1{font-size:38px;} .landing-hero{padding:32px 0 28px; text-align:left;} }
+
+.landing-features{display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:8px;}
+.landing-feature{text-align:left;}
+@media (max-width:900px){ .landing-features{grid-template-columns:1fr 1fr;} }
+@media (max-width:560px){ .landing-features{grid-template-columns:1fr;} }
+
+.landing-cta-final{text-align:center; margin-top:8px; padding:40px 24px;}
+
+/* ---------- signup pré-diagnóstico ---------- */
+.signup-step-label{font-family:'IBM Plex Mono',monospace; font-size:11px; text-transform:uppercase; letter-spacing:0.08em; color:var(--accent); margin:0 0 4px;}
+.signup-step-label-2{margin-top:22px; padding-top:18px; border-top:1px solid var(--line);}
+
+/* ---------- welcome / member number ---------- */
+.welcome-number{text-align:center; margin-bottom:22px;}
+.welcome-number-eyebrow{display:block; font-family:'IBM Plex Mono',monospace; font-size:12px; text-transform:uppercase; letter-spacing:0.1em; color:var(--ink-faint); margin-bottom:6px;}
+.welcome-number-big{display:block; font-family:'Archivo Black',sans-serif; font-size:48px; background:linear-gradient(135deg, var(--accent), var(--accent-2)); -webkit-background-clip:text; background-clip:text; color:transparent;}
+.welcome-diagnosis{background:var(--surface2); border-left:3px solid var(--accent); border-radius:8px; padding:18px 20px; font-size:14px; line-height:1.65;}
+
+/* ---------- discover / find athletes ---------- */
+.discover-search{display:flex; gap:10px; margin-bottom:18px;}
+.discover-search input{flex:1;}
+.discover-row{display:flex; align-items:center; gap:14px; flex-wrap:wrap;}
+.discover-row-link{display:flex; align-items:center; gap:14px; flex:1; min-width:220px; text-decoration:none; color:inherit;}
+.discover-avatar{width:48px; height:48px; font-size:17px; flex-shrink:0;}
+.discover-row-main .t{font-weight:800;}
+.discover-row-main .d{font-size:12px; color:var(--ink-faint); font-family:'IBM Plex Mono',monospace; margin-top:2px;}
+
+/* ---------- coach chat: in-chat workout story card ---------- */
+.chat-story-card{margin-top:10px; display:flex; flex-direction:column; align-items:flex-start; gap:8px;}
+.chat-story-card canvas{width:100%; max-width:320px; border-radius:14px; box-shadow:0 14px 30px -16px rgba(0,0,0,0.5);}
+.chat-story-download{padding:7px 12px; font-size:12px;}
 .story-card canvas{width:100%; max-width:360px; aspect-ratio:1080/1350; border-radius:18px; box-shadow:0 18px 40px -16px rgba(0,0,0,0.45);}
