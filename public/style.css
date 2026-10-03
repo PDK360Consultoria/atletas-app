@@ -31,6 +31,31 @@ a{color:inherit;}
 .nav a.link{font-family:'IBM Plex Mono',monospace; font-size:13px; text-transform:uppercase; letter-spacing:0.04em; color:var(--ink-dim); text-decoration:none; padding:8px 12px; border-radius:10px;}
 .nav a.link:hover{background:var(--surface2); color:var(--ink);}
 .nav a.link.active{color:var(--ink); background:var(--surface2);}
+
+/* Mobile menu toggle — hidden on desktop, where .links renders inline as
+   before; on narrow screens .links collapses into a dropdown and this
+   button is what opens/closes it. See the max-width:760px block below and
+   MOBILE_NAV_SCRIPT in views.js for the open/close behavior. */
+.nav-toggle{display:none; flex-direction:column; align-items:center; justify-content:center; gap:4px; width:40px; height:40px; background:transparent; border:none; border-radius:10px; padding:0; cursor:pointer; flex-shrink:0;}
+.nav-toggle:hover{background:var(--surface2);}
+.nav-toggle-bar{display:block; width:18px; height:2px; border-radius:2px; background:var(--ink); transition:transform .15s ease, opacity .15s ease;}
+.nav-toggle[aria-expanded="true"] .nav-toggle-bar:nth-child(1){transform:translateY(6px) rotate(45deg);}
+.nav-toggle[aria-expanded="true"] .nav-toggle-bar:nth-child(2){opacity:0;}
+.nav-toggle[aria-expanded="true"] .nav-toggle-bar:nth-child(3){transform:translateY(-6px) rotate(-45deg);}
+
+@media (max-width:760px){
+  .nav-toggle{display:flex;}
+  .nav .links{
+    display:none; position:absolute; left:0; right:0; top:100%;
+    flex-direction:column; align-items:stretch; gap:2px; flex-wrap:nowrap;
+    background:var(--surface); border-bottom:1px solid var(--line);
+    padding:10px 14px 16px; box-shadow:0 24px 40px -24px rgba(0,0,0,0.35);
+    max-height:calc(100vh - 64px); overflow-y:auto;
+  }
+  .nav .links.open{display:flex;}
+  .nav a.link{padding:13px 14px; width:100%;}
+  .nav .notif-wrap{order:-1; align-self:flex-end;}
+}
 h1{font-family:'Archivo Black',sans-serif; font-size:34px; letter-spacing:-0.01em; margin:28px 0 6px;}
 h2{font-family:'Archivo',sans-serif; font-weight:800; font-size:20px; margin:0 0 12px; display:flex; align-items:center; gap:10px;}
 p.lede{color:var(--ink-dim); font-size:16px; margin:0 0 24px;}
