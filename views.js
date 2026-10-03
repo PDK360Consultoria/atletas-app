@@ -501,6 +501,42 @@ ready(function(){
 })();
 </script>`;
 
+// Mobile nav — the shared nav bar in layout() carries ~9 links plus the
+// notif bell and Sair, which is fine spread out on desktop but was wrapping
+// into a dense multi-line block covering the whole top of the screen on a
+// phone (Felipe sent a screenshot of exactly this). On narrow screens
+// style.css hides .links by default and this toggles it into a dropdown.
+const MOBILE_NAV_SCRIPT = `<script defer>
+(function(){
+function ready(fn){ if (document.readyState !== 'loading') fn(); else document.addEventListener('DOMContentLoaded', fn); }
+ready(function(){
+  var toggle = document.getElementById('navToggle');
+  var links = document.getElementById('navLinks');
+  if (!toggle || !links) return;
+
+  function setOpen(open){
+    links.classList.toggle('open', open);
+    toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+
+  toggle.addEventListener('click', function(){
+    setOpen(!links.classList.contains('open'));
+  });
+  // Tapping a nav link navigates away anyway, but close first so a user who
+  // hits back doesn't land on the page with the menu still stuck open.
+  links.addEventListener('click', function(e){
+    if (e.target.closest && e.target.closest('a.link')) setOpen(false);
+  });
+  document.addEventListener('click', function(e){
+    if (!links.contains(e.target) && !toggle.contains(e.target)) setOpen(false);
+  });
+  window.addEventListener('resize', function(){
+    if (window.innerWidth > 760) setOpen(false);
+  });
+});
+})();
+</script>`;
+
 const NOTIF_SCRIPT = `<script defer>
 (function(){
 function ready(fn){ if (document.readyState !== 'loading') fn(); else document.addEventListener('DOMContentLoaded', fn); }
@@ -568,7 +604,10 @@ function layout({ title, user, body, active, extraHead, bodyEnd, hideCoachWidget
   const nav = user
     ? `<nav class="nav">
         <a class="brand" href="/">Runiqx</a>
-        <div class="links">
+        <button class="nav-toggle" id="navToggle" type="button" aria-label="Abrir menu" aria-expanded="false" aria-controls="navLinks">
+          <span class="nav-toggle-bar"></span><span class="nav-toggle-bar"></span><span class="nav-toggle-bar"></span>
+        </button>
+        <div class="links" id="navLinks">
           <a class="link ${active === 'home' ? 'active' : ''}" href="/">Perfil</a>
           <a class="link ${active === 'races' ? 'active' : ''}" href="/races">Provas</a>
           <a class="link ${active === 'activities' ? 'active' : ''}" href="/activities">Treinos</a>
@@ -622,6 +661,7 @@ ${showWidget ? coachWidgetHtml(user) : ''}
 ${MICRO_INTERACTIONS_SCRIPT}
 ${COACH_CHAT_SCRIPT}
 ${showWidget ? COACH_WIDGET_SCRIPT : ''}
+${user ? MOBILE_NAV_SCRIPT : ''}
 ${user ? NOTIF_SCRIPT : ''}
 ${bodyEnd || ''}
 </body>
