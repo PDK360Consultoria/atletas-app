@@ -42,6 +42,18 @@ function baseUrl(req) {
   return `${proto}://${req.headers.host}`;
 }
 
+// AI features (Professor, Coach chat, análise automática de treino) used to
+// require every single user to bring their own Anthropic API key — a real
+// barrier for non-technical athletes. Felipe now covers usage on his own
+// Anthropic account by default (ANTHROPIC_SHARED_API_KEY, set in Render's
+// environment settings), while a user can still paste their own key in
+// Configurações to use their own account/billing instead — that choice
+// always wins when present.
+const SHARED_ANTHROPIC_KEY = (process.env.ANTHROPIC_SHARED_API_KEY || '').trim();
+function apiKeyFor(user) {
+  return (user && user.anthropic_api_key) || SHARED_ANTHROPIC_KEY || '';
+}
+
 async function handle(req, res) {
   const parsed = url.parse(req.url, true);
   const pathname = decodeURIComponent(parsed.pathname);
@@ -318,7 +330,7 @@ async function handle(req, res) {
       const evolution = computeEvolution(allActivities);
       const prInfo = detectPersonalRecord(activity, allActivities);
       const alreadyShared = !!db.prepare('SELECT 1 FROM posts WHERE activity_id = ?').get(activity.id);
-      return html(res, 200, views.activityDetailPage({ user, activity, laps, intervals, evolution, prInfo, alreadyShared, aiEnabled: !!user.anthropic_api_key }));
+      return html(res, 200, views.activityDetailPage({ user, activity, laps, intervals, evolution, prInfo, alreadyShared, aiEnabled: !!apiKeyFor(user) }));
     }
     if (method === 'POST' && (m = /^\/activities\/(\d+)\/rename$/.exec(pathname))) {
       if (!requireAuth()) return;
@@ -335,7 +347,7 @@ async function handle(req, res) {
       const laps = activity.laps_json ? JSON.parse(activity.laps_json) : [];
       const intervals = activity.intervals_json ? JSON.parse(activity.intervals_json) : [];
       try {
-        const text = await analyzeActivity(user.anthropic_api_key, activity, laps, intervals);
+        const text = await analyzeActivity(apiKeyFor(user), activity, laps, intervals);
         db.prepare('UPDATE activities SET ai_analysis = ? WHERE id = ?').run(text, activity.id);
       } catch (e) {
         db.prepare('UPDATE activities SET ai_analysis = ? WHERE id = ?').run(`Não foi possível gerar a análise agora (${e.message}).`, activity.id);
@@ -579,6 +591,7 @@ async function handle(req, res) {
         stravaDisconnected: parsed.query.strava_disconnected,
         stravaConfigured: strava.isConfigured(),
         publicUrl: `${baseUrl(req)}/u/${slug}`,
+        aiSharedAvailable: !!SHARED_ANTHROPIC_KEY,
       }));
     }
     if (method === 'POST' && pathname === '/settings') {
@@ -607,7 +620,7 @@ async function handle(req, res) {
     // ---------- strava ----------
     if (method === 'GET' && pathname === '/strava/connect') {
       if (!requireAuth()) return;
-      if (!strava.isConfigured()) return html(res, 200, views.settingsPage(user, { stravaConfigured: false }));
+      if (!strava.isConfigured()) return html(res, 200, views.settingsPage(user, { stravaConfigured: false, aiSharedAvailable: !!SHARED_ANTHROPIC_KEY }));
       const state = crypto.randomBytes(16).toString('hex');
       const redirectUri = `${baseUrl(req)}/strava/callback`;
       const authUrl = strava.getAuthorizeUrl(redirectUri, state);
@@ -667,7 +680,7 @@ async function handle(req, res) {
       const activeActivityId = activeActivity ? activeActivity.id : null;
       const messages = db.prepare('SELECT * FROM chat_messages WHERE user_id = ? AND activity_id IS ? ORDER BY created_at ASC, id ASC').all(user.id, activeActivityId);
       return html(res, 200, views.coachChatPage(user, messages, {
-        aiEnabled: !!user.anthropic_api_key,
+        aiEnabled: !!apiKeyFor(user),
         error: parsed.query.error,
         activeActivityId,
         activeTitle: activeActivity ? activeActivity.title : 'Geral',
@@ -745,7 +758,7 @@ async function handle(req, res) {
       if (!user) { res.writeHead(401); return res.end('{"error":"auth"}'); }
       const messages = db.prepare('SELECT role, content, created_at FROM chat_messages WHERE user_id = ? AND activity_id IS NULL ORDER BY created_at ASC, id ASC').all(user.id);
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
-      return res.end(JSON.stringify({ messages, aiEnabled: !!user.anthropic_api_key }));
+      return res.end(JSON.stringify({ messages, aiEnabled: !!apiKeyFor(user) }));
     }
 
     // Same as above but scoped to one activity's own chat thread, used by the
@@ -756,7 +769,7 @@ async function handle(req, res) {
       if (!activity) { res.writeHead(404); return res.end('{"error":"not_found"}'); }
       const messages = db.prepare('SELECT role, content, created_at FROM chat_messages WHERE user_id = ? AND activity_id = ? ORDER BY created_at ASC, id ASC').all(user.id, activity.id);
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
-      return res.end(JSON.stringify({ messages, aiEnabled: !!user.anthropic_api_key }));
+      return res.end(JSON.stringify({ messages, aiEnabled: !!apiKeyFor(user) }));
     }
 
     // Streams the coach's reply as plain chunked text so the client can type
@@ -775,7 +788,7 @@ async function handle(req, res) {
       } catch (e) { body = {}; }
       const text = (body.message || '').trim();
       if (!text) { res.writeHead(400); return res.end('empty'); }
-      if (!user.anthropic_api_key) { res.writeHead(412); return res.end('missing_key'); }
+      if (!apiKeyFor(user)) { res.writeHead(412); return res.end('missing_key'); }
 
       let activity = null;
       if (body.activity_id) {
@@ -809,7 +822,7 @@ async function handle(req, res) {
         // briefly (client already shows the "digitando" dots during this
         // wait) before the reply starts streaming in.
         await new Promise((resolve) => setTimeout(resolve, computeHumanDelayMs(text.length)));
-        full = await streamChatWithAssistant(user.anthropic_api_key, context, history, text, (delta) => {
+        full = await streamChatWithAssistant(apiKeyFor(user), context, history, text, (delta) => {
           res.write(delta);
         });
 
@@ -824,7 +837,7 @@ async function handle(req, res) {
         // (no sentinel at all) when the conversation doesn't actually pin
         // down a specific workout to draw.
         if (detectImageRequest(text)) {
-          const card = await extractWorkoutCard(user.anthropic_api_key, context, history, text).catch(() => null);
+          const card = await extractWorkoutCard(apiKeyFor(user), context, history, text).catch(() => null);
           if (card) {
             const sentinel = `\n[[STORY_CARD]]${JSON.stringify(card)}[[/STORY_CARD]]`;
             res.write(sentinel);

@@ -809,16 +809,30 @@ const HERO_SCRIPT = `<script defer>
       if (!canvas || !hero || typeof THREE === 'undefined') return;
 
       var dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      // Phones report a high devicePixelRatio (often 3) on top of a full
+      // fixed-viewport canvas — combined with MSAA + shadow maps that's
+      // enough framebuffer memory to make mobile Safari/Chrome silently
+      // drop (or never finish compositing) the WebGL context, which looks
+      // exactly like "the shoe never shows up" while the same scene is
+      // fine on desktop at an identical CSS size. Scale quality down on
+      // coarse-pointer/narrow devices instead of rendering at full desktop
+      // fidelity everywhere.
+      var lowPower = (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) || window.innerWidth < 760;
       var accent = dark ? 0xffc24e : 0xffae5c;
       var accent2 = dark ? 0x4e9bff : 0x6fa8ff;
 
       var renderer;
       try {
-        renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: true, antialias: true });
+        renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: true, antialias: !lowPower, powerPreference: 'low-power' });
       } catch (e) { return; }
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      // If the GPU context is lost (common under memory pressure on phones)
+      // the canvas would otherwise just go blank forever with no visible
+      // error — at minimum stop the browser from tearing down the whole
+      // page over it.
+      canvas.addEventListener('webglcontextlost', function (e) { e.preventDefault(); console.error('[dbg] webgl context lost (hero)'); }, false);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, lowPower ? 1.5 : 2));
       if ('outputEncoding' in renderer) renderer.outputEncoding = THREE.sRGBEncoding;
-      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.enabled = !lowPower;
       renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
       if ('toneMapping' in renderer) {
@@ -837,8 +851,8 @@ const HERO_SCRIPT = `<script defer>
       scene.add(new THREE.HemisphereLight(dark ? 0x4a5568 : 0xffffff, 0x0b0906, 0.55));
       var key = new THREE.DirectionalLight(0xfff3e0, 1.9);
       key.position.set(2.4, 3.6, 2.8);
-      key.castShadow = true;
-      key.shadow.mapSize.set(1024, 1024);
+      key.castShadow = !lowPower;
+      key.shadow.mapSize.set(lowPower ? 512 : 1024, lowPower ? 512 : 1024);
       key.shadow.camera.left = -2; key.shadow.camera.right = 2;
       key.shadow.camera.top = 2; key.shadow.camera.bottom = -2;
       key.shadow.camera.near = 1; key.shadow.camera.far = 10;
@@ -1005,63 +1019,70 @@ const HERO_SCRIPT = `<script defer>
       var lookTarget = new THREE.Vector3(0, 1.1, 0);
       var hoverBase = 0.16;
 
-      if (typeof THREE.GLTFLoader === 'function') {
+      var SHOE_URL = 'https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Assets@main/Models/MaterialsVariantsShoe/glTF-Binary/MaterialsVariantsShoe.glb';
+      function onShoeLoaded(gltf) {
         try {
-          var loader = new THREE.GLTFLoader();
-          loader.load(
-            'https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Assets@main/Models/MaterialsVariantsShoe/glTF-Binary/MaterialsVariantsShoe.glb',
-            function (gltf) {
-              try {
-                var model = gltf.scene;
-                model.traverse(function (o) {
-                  if (o.isMesh) { o.castShadow = true; o.receiveShadow = false; }
-                });
+          var model = gltf.scene;
+          model.traverse(function (o) {
+            if (o.isMesh) { o.castShadow = true; o.receiveShadow = false; }
+          });
 
-                // Auto-fit: normalize whatever native scale/units the model
-                // ships with to a fixed on-screen size, centered on its own
-                // footprint, instead of hand-tuned position/scale guesses.
-                var box = new THREE.Box3().setFromObject(model);
-                var size = box.getSize(new THREE.Vector3());
-                var maxDim = Math.max(size.x, size.y, size.z) || 1;
-                var targetSize = 2.1;
-                var scale = targetSize / maxDim;
-                model.scale.setScalar(scale);
+          // Auto-fit: normalize whatever native scale/units the model
+          // ships with to a fixed on-screen size, centered on its own
+          // footprint, instead of hand-tuned position/scale guesses.
+          var box = new THREE.Box3().setFromObject(model);
+          var size = box.getSize(new THREE.Vector3());
+          var maxDim = Math.max(size.x, size.y, size.z) || 1;
+          var targetSize = 2.1;
+          var scale = targetSize / maxDim;
+          model.scale.setScalar(scale);
 
-                box.setFromObject(model);
-                var center = box.getCenter(new THREE.Vector3());
-                model.position.x -= center.x;
-                model.position.z -= center.z;
-                model.position.y -= box.min.y; // rest on the ground plane
-                model.position.y += hoverBase; // then lift slightly, floating
+          box.setFromObject(model);
+          var center = box.getCenter(new THREE.Vector3());
+          model.position.x -= center.x;
+          model.position.z -= center.z;
+          model.position.y -= box.min.y; // rest on the ground plane
+          model.position.y += hoverBase; // then lift slightly, floating
 
-                model.rotation.y = Math.PI * 0.15;
-                model.rotation.z = -0.12;
+          model.rotation.y = Math.PI * 0.15;
+          model.rotation.z = -0.12;
 
-                box.setFromObject(model);
-                var fitted = box.getSize(new THREE.Vector3());
-                var shoeTop = box.min.y + fitted.y;
-                lookTarget.set(0.05, shoeTop + 0.2, 0);
+          box.setFromObject(model);
+          var fitted = box.getSize(new THREE.Vector3());
+          var shoeTop = box.min.y + fitted.y;
+          lookTarget.set(0.05, shoeTop + 0.2, 0);
 
-                // anchor the AI orb and its tether to the shoe's real
-                // (auto-fitted) top, instead of the placeholder guess used
-                // before the model's actual size was known.
-                orbBaseY = shoeTop + 0.5;
-                orbGroup.position.set(0.1, orbBaseY, 0);
-                tetherCurve.v0.set(0, shoeTop - 0.05, 0);
-                tetherCurve.v1.set(0.12, shoeTop + 0.28, 0.08);
-                tetherCurve.v2.set(0.08, shoeTop + 0.5, 0);
-                tetherMesh.geometry.dispose();
-                tetherMesh.geometry = new THREE.TubeGeometry(tetherCurve, 24, 0.005, 6, false);
+          // anchor the AI orb and its tether to the shoe's real
+          // (auto-fitted) top, instead of the placeholder guess used
+          // before the model's actual size was known.
+          orbBaseY = shoeTop + 0.5;
+          orbGroup.position.set(0.1, orbBaseY, 0);
+          tetherCurve.v0.set(0, shoeTop - 0.05, 0);
+          tetherCurve.v1.set(0.12, shoeTop + 0.28, 0.08);
+          tetherCurve.v2.set(0.08, shoeTop + 0.5, 0);
+          tetherMesh.geometry.dispose();
+          tetherMesh.geometry = new THREE.TubeGeometry(tetherCurve, 24, 0.005, 6, false);
 
-                shoe = model;
-                scene.add(model);
-              } catch (e) { console.error('[dbg]', e); }
-            },
-            undefined,
-            function (err) { console.error('[dbg]', err); }
-          );
+          shoe = model;
+          scene.add(model);
+          renderFrame();
         } catch (e) { console.error('[dbg]', e); }
       }
+      // Mobile networks (and the CDN itself) occasionally drop the first
+      // request for a ~1-2MB binary — one silent retry costs nothing and
+      // fixes the "shoe just never shows up" case that a flaky load can't
+      // self-heal from otherwise.
+      function loadShoe(attempt) {
+        if (typeof THREE.GLTFLoader !== 'function') return;
+        try {
+          var loader = new THREE.GLTFLoader();
+          loader.load(SHOE_URL, onShoeLoaded, undefined, function (err) {
+            console.error('[dbg] shoe load failed (hero) attempt ' + attempt, err);
+            if (attempt < 3) setTimeout(function () { loadShoe(attempt + 1); }, 1500);
+          });
+        } catch (e) { console.error('[dbg]', e); }
+      }
+      loadShoe(1);
 
       if (reduced) { renderFrame(); return; }
 
@@ -1155,14 +1176,20 @@ const LANDING_SCRIPT = `<script defer>
       // branch needed, unlike HERO_SCRIPT which lives on pages that still
       // follow the visitor's light/dark setting.
       var accent = 0xffc24e, accent2 = 0x4e9bff;
+      // See the matching comment in HERO_SCRIPT: full devicePixelRatio +
+      // MSAA + shadow maps on a phone-size GPU is the classic cause of a
+      // WebGL canvas that renders fine on desktop but silently stays blank
+      // (or loses its context) on a real phone.
+      var lowPower = (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) || window.innerWidth < 760;
 
       var renderer;
       try {
-        renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: true, antialias: true });
+        renderer = new THREE.WebGLRenderer({ canvas: canvas, alpha: true, antialias: !lowPower, powerPreference: 'low-power' });
       } catch (e) { return; }
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      canvas.addEventListener('webglcontextlost', function (e) { e.preventDefault(); console.error('[dbg] webgl context lost (landing)'); }, false);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, lowPower ? 1.5 : 2));
       if ('outputEncoding' in renderer) renderer.outputEncoding = THREE.sRGBEncoding;
-      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.enabled = !lowPower;
       renderer.shadowMap.type = THREE.PCFSoftShadowMap;
       if ('toneMapping' in renderer) {
         renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -1176,8 +1203,8 @@ const LANDING_SCRIPT = `<script defer>
       scene.add(new THREE.HemisphereLight(0x4a5568, 0x0b0906, 0.55));
       var key = new THREE.DirectionalLight(0xfff3e0, 1.9);
       key.position.set(2.4, 3.6, 2.8);
-      key.castShadow = true;
-      key.shadow.mapSize.set(1024, 1024);
+      key.castShadow = !lowPower;
+      key.shadow.mapSize.set(lowPower ? 512 : 1024, lowPower ? 512 : 1024);
       key.shadow.camera.left = -2; key.shadow.camera.right = 2;
       key.shadow.camera.top = 2; key.shadow.camera.bottom = -2;
       key.shadow.camera.near = 1; key.shadow.camera.far = 10;
@@ -1330,50 +1357,56 @@ const LANDING_SCRIPT = `<script defer>
       var lookTarget = new THREE.Vector3(0, 1.1, 0);
       var hoverBase = 0.16;
 
-      if (typeof THREE.GLTFLoader === 'function') {
+      var SHOE_URL = 'https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Assets@main/Models/MaterialsVariantsShoe/glTF-Binary/MaterialsVariantsShoe.glb';
+      function onShoeLoaded(gltf) {
         try {
-          var loader = new THREE.GLTFLoader();
-          loader.load(
-            'https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Assets@main/Models/MaterialsVariantsShoe/glTF-Binary/MaterialsVariantsShoe.glb',
-            function (gltf) {
-              try {
-                var model = gltf.scene;
-                model.traverse(function (o) {
-                  if (o.isMesh) { o.castShadow = true; o.receiveShadow = false; }
-                });
-                var box = new THREE.Box3().setFromObject(model);
-                var size = box.getSize(new THREE.Vector3());
-                var maxDim = Math.max(size.x, size.y, size.z) || 1;
-                var scale = 2.1 / maxDim;
-                model.scale.setScalar(scale);
-                box.setFromObject(model);
-                var center = box.getCenter(new THREE.Vector3());
-                model.position.x -= center.x;
-                model.position.z -= center.z;
-                model.position.y -= box.min.y;
-                model.position.y += hoverBase;
-                model.rotation.y = Math.PI * 0.15;
-                model.rotation.z = -0.12;
-                box.setFromObject(model);
-                var fitted = box.getSize(new THREE.Vector3());
-                var shoeTop = box.min.y + fitted.y;
-                lookTarget.set(0.05, shoeTop + 0.2, 0);
-                orbBaseY = shoeTop + 0.5;
-                orbGroup.position.set(0.1, orbBaseY, 0);
-                tetherCurve.v0.set(0, shoeTop - 0.05, 0);
-                tetherCurve.v1.set(0.12, shoeTop + 0.28, 0.08);
-                tetherCurve.v2.set(0.08, shoeTop + 0.5, 0);
-                tetherMesh.geometry.dispose();
-                tetherMesh.geometry = new THREE.TubeGeometry(tetherCurve, 24, 0.005, 6, false);
-                shoe = model;
-                scene.add(model);
-              } catch (e) { console.error('[dbg]', e); }
-            },
-            undefined,
-            function (err) { console.error('[dbg]', err); }
-          );
+          var model = gltf.scene;
+          model.traverse(function (o) {
+            if (o.isMesh) { o.castShadow = true; o.receiveShadow = false; }
+          });
+          var box = new THREE.Box3().setFromObject(model);
+          var size = box.getSize(new THREE.Vector3());
+          var maxDim = Math.max(size.x, size.y, size.z) || 1;
+          var scale = 2.1 / maxDim;
+          model.scale.setScalar(scale);
+          box.setFromObject(model);
+          var center = box.getCenter(new THREE.Vector3());
+          model.position.x -= center.x;
+          model.position.z -= center.z;
+          model.position.y -= box.min.y;
+          model.position.y += hoverBase;
+          model.rotation.y = Math.PI * 0.15;
+          model.rotation.z = -0.12;
+          box.setFromObject(model);
+          var fitted = box.getSize(new THREE.Vector3());
+          var shoeTop = box.min.y + fitted.y;
+          lookTarget.set(0.05, shoeTop + 0.2, 0);
+          orbBaseY = shoeTop + 0.5;
+          orbGroup.position.set(0.1, orbBaseY, 0);
+          tetherCurve.v0.set(0, shoeTop - 0.05, 0);
+          tetherCurve.v1.set(0.12, shoeTop + 0.28, 0.08);
+          tetherCurve.v2.set(0.08, shoeTop + 0.5, 0);
+          tetherMesh.geometry.dispose();
+          tetherMesh.geometry = new THREE.TubeGeometry(tetherCurve, 24, 0.005, 6, false);
+          shoe = model;
+          scene.add(model);
+          renderFrame();
         } catch (e) { console.error('[dbg]', e); }
       }
+      // See the matching comment in HERO_SCRIPT — a flaky mobile-network
+      // load of the ~1-2MB model shouldn't mean the shoe is gone for the
+      // whole session, so retry a couple of times before giving up.
+      function loadShoe(attempt) {
+        if (typeof THREE.GLTFLoader !== 'function') return;
+        try {
+          var loader = new THREE.GLTFLoader();
+          loader.load(SHOE_URL, onShoeLoaded, undefined, function (err) {
+            console.error('[dbg] shoe load failed (landing) attempt ' + attempt, err);
+            if (attempt < 3) setTimeout(function () { loadShoe(attempt + 1); }, 1500);
+          });
+        } catch (e) { console.error('[dbg]', e); }
+      }
+      loadShoe(1);
 
       if (reduced) {
         // Static but still composed — a fixed three-quarter product shot,
@@ -2478,8 +2511,11 @@ ${flags.publicUrl ? `<div class="card">
 </div>` : ''}
 
 <div class="card">
-  <h2><span class="h-icon">${icon('heart', 'ai2')}</span>Análise com IA (opcional)</h2>
-  <p class="muted">Cole sua própria chave da API da Anthropic para habilitar o Professor, o Coach por chat e as análises técnicas automáticas dos seus treinos. A chave fica salva só na sua conta e é usada apenas pra você — o uso é cobrado na sua própria conta Anthropic. Não tem uma chave ainda? <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Crie uma em console.anthropic.com</a>.</p>
+  <h2><span class="h-icon">${icon('heart', 'ai2')}</span>Chave da API da Anthropic (opcional)</h2>
+  <p class="muted">${flags.aiSharedAvailable
+    ? 'O Professor, o Coach por chat e as análises técnicas de treino já funcionam por padrão pra todo mundo. Se preferir, você pode colar sua própria chave da Anthropic aqui embaixo pra usar a sua conta em vez da conta compartilhada do app — nesse caso o uso passa a ser cobrado na sua própria conta.'
+    : 'Cole sua própria chave da API da Anthropic para habilitar o Professor, o Coach por chat e as análises técnicas automáticas dos seus treinos. A chave fica salva só na sua conta e é usada apenas pra você — o uso é cobrado na sua própria conta Anthropic.'
+  } Não tem uma chave ainda? <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Crie uma em console.anthropic.com</a>.</p>
   <form method="POST" action="/settings/api-key">
     <label>Chave da API (sk-ant-...)</label>
     <input name="anthropic_api_key" value="${user.anthropic_api_key ? '••••••••••••' + esc(user.anthropic_api_key.slice(-4)) : ''}" placeholder="sk-ant-...">
