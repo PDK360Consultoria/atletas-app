@@ -684,10 +684,10 @@ ${error ? `<div class="err">${esc(error)}</div>` : ''}
   </select>
   <label>Quantos km você corre por semana hoje?</label>
   <input type="number" step="0.1" min="0" name="weekly_km" value="${esc(prev.weekly_km || '')}" placeholder="ex: 25">
-  <div class="grid cols-2">
-    <div><label>Prova-alvo (se já tiver)</label><input type="text" name="goal_race_name" value="${esc(prev.goal_race_name || '')}" placeholder="ex: Maratona de Curitiba"></div>
-    <div><label>Meta de tempo</label><input type="text" name="goal_time" value="${esc(prev.goal_time || '')}" placeholder="03:30:00"></div>
-  </div>
+  <label>Prova-alvo (se já tiver)</label>
+  <input type="text" name="goal_race_name" value="${esc(prev.goal_race_name || '')}" placeholder="ex: Maratona de Curitiba">
+  <label>Meta de tempo</label>
+  <input type="text" name="goal_time" value="${esc(prev.goal_time || '')}" placeholder="03:30:00">
   <label>Histórico de lesão ou algo que devemos saber</label>
   <textarea name="injury_notes" placeholder="Se não tiver nada, pode deixar em branco.">${esc(prev.injury_notes || '')}</textarea>
 
