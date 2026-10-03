@@ -575,28 +575,69 @@ img.post-avatar{object-fit:cover; background:var(--surface2); box-shadow:0 0 0 1
 /* ---------- story image generator ---------- */
 .story-card{display:flex; flex-direction:column; align-items:center;}
 
-/* ---------- public landing page (/, logged out) ---------- */
-.landing-wrap{max-width:1080px;}
-.landing-hero{display:flex; align-items:center; gap:40px; padding:56px 0 48px; flex-wrap:wrap;}
-.landing-hero-copy{flex:1 1 420px; min-width:300px;}
-.landing-h1{font-family:'Archivo Black',sans-serif; font-size:52px; line-height:1.04; letter-spacing:-0.01em; margin:14px 0 18px;}
-.landing-lede{font-size:17px; max-width:480px; margin-bottom:28px;}
+/* ---------- public landing page (/, logged out) — cinematic 3D scroll ----------
+   Felipe's brief, twice: a 3D object that moves AS the page scrolls (not just
+   on a timer), like the premium 360 sites (site-medico-premium-360 skill) —
+   a persistent 3D stage pinned behind the page while numbered "chapters"
+   scroll past it, a right-edge progress-dot nav, and the shoe/camera driven
+   by scroll position instead of a confined, static hero box. Forced dark
+   regardless of the visitor's OS theme (same reasoning as .hero/.professor:
+   a cinematic product-shot backdrop can't flip to a light cream background),
+   done by re-pointing the theme custom properties at this class instead of
+   hardcoding hex into every rule below — every existing var(--ink)/var(--btn)
+   etc. rule (nav included) picks the dark palette up for free. */
+body.landing-dark{
+  --ground:#0B0D10; --surface:#0B0D10; --surface2:#15181D; --line:rgba(255,255,255,0.12);
+  --ink:#F6F7F5; --ink-dim:#9BA1A8; --ink-faint:#6A7078;
+  --accent:#FFC24E; --accent-2:#FF8A3D; --gold:#FFC24E; --blue:#4E9BFF; --green:#6FD46A; --red:#FF6B6B; --amber:#FFB454; --purple:#B497FF;
+  --glow:255,194,78;
+  background:var(--ground); color:var(--ink);
+}
+.landing-wrap{max-width:1080px; position:relative;}
+
+/* Full-viewport, fixed WebGL layer — behind everything (z-index:0), in
+   normal flow nowhere, so it stays put while .landing-chapters scrolls over
+   it. pointer-events:none so it never blocks clicks on the content above. */
+.landing-3d-fixed{position:fixed; inset:0; z-index:0; pointer-events:none;}
+.landing-3d-fixed canvas{position:absolute; inset:0; width:100%; height:100%; display:block;}
+
+.landing-chapters{position:relative; z-index:1;}
+.landing-chapter{min-height:90vh; display:flex; align-items:center; padding:48px 0;}
+.landing-chapter-hero{align-items:flex-start; flex-direction:column; justify-content:center;}
+.landing-chapter-cta{justify-content:center;}
+
+.chapter-num{font-family:'IBM Plex Mono',monospace; font-size:12px; letter-spacing:0.16em; color:var(--gold); display:flex; align-items:center; gap:8px; margin-bottom:16px; text-transform:uppercase;}
+.chapter-num .total{color:var(--ink-faint); font-weight:400;}
+
+.chapter-card{max-width:440px; padding:34px 32px; border-radius:24px; background:rgba(11,13,16,0.6); border:1px solid rgba(255,255,255,0.1); backdrop-filter:blur(20px); -webkit-backdrop-filter:blur(20px); box-shadow:0 30px 60px -30px rgba(0,0,0,0.6);}
+.landing-chapter:nth-of-type(even) .chapter-card{margin-left:auto;}
+.chapter-card h2{margin:0 0 10px; font-size:26px;}
+.chapter-card p{margin:0; color:var(--ink-dim);}
+
+.landing-h1{font-family:'Archivo Black',sans-serif; font-size:56px; line-height:1.03; letter-spacing:-0.01em; margin:14px 0 18px; max-width:620px;}
+.landing-lede{font-size:17px; max-width:460px; margin-bottom:28px; color:var(--ink-dim);}
 .landing-cta-row{display:flex; gap:12px; flex-wrap:wrap;}
-.landing-hero-art{flex:1 1 320px; min-width:260px; display:flex; justify-content:center;}
-/* Same real, floating/rotating 3D sneaker scene as the logged-in dashboard
-   hero (.hero + #hero-canvas, driven by HERO_SCRIPT) — just reshaped from a
-   wide banner into a centered square-ish tile that sits beside the copy. */
-.landing-hero-stage{width:100%; max-width:420px; aspect-ratio:1/1; min-height:260px; margin:0; align-items:center; justify-content:center;}
-@media (max-width:760px){ .landing-h1{font-size:38px;} .landing-hero{padding:32px 0 28px; text-align:left;} .landing-hero-stage{max-width:320px; min-height:220px;} }
-/* .landing-shoe (old static SVG mark) retired — kept selector-free now that
-   the hero uses the real 3D canvas above. */
 
-.landing-features{display:grid; grid-template-columns:repeat(4,1fr); gap:16px; margin-bottom:8px;}
-.landing-feature{text-align:left;}
-@media (max-width:900px){ .landing-features{grid-template-columns:1fr 1fr;} }
-@media (max-width:560px){ .landing-features{grid-template-columns:1fr;} }
+.landing-cta-final{text-align:center;}
+.landing-cta-final h2{margin-bottom:6px;}
 
-.landing-cta-final{text-align:center; margin-top:8px; padding:40px 24px;}
+/* Right-edge progress dots, echoing the reference site's section nav —
+   synced to whichever chapter is in view via IntersectionObserver. */
+.landing-dots{position:fixed; right:26px; top:50%; transform:translateY(-50%); z-index:5; display:flex; flex-direction:column; gap:16px;}
+.landing-dots button{width:9px; height:9px; border-radius:50%; background:rgba(255,255,255,0.22); border:none; padding:0; cursor:pointer; transition:background .2s ease, transform .2s ease;}
+.landing-dots button:hover{background:rgba(255,255,255,0.4);}
+.landing-dots button.active{background:var(--gold); transform:scale(1.5);}
+
+@media (max-width:760px){
+  .landing-h1{font-size:36px;}
+  .landing-chapter{min-height:auto; padding:40px 0;}
+  .chapter-card{max-width:100%;}
+  .landing-chapter:nth-of-type(even) .chapter-card{margin-left:0;}
+  .landing-dots{display:none;}
+}
+@media (prefers-reduced-motion: reduce){
+  .landing-chapter{scroll-margin-top:0;}
+}
 
 /* ---------- signup pré-diagnóstico ---------- */
 .signup-step-label{font-family:'IBM Plex Mono',monospace; font-size:11px; text-transform:uppercase; letter-spacing:0.08em; color:var(--accent); margin:0 0 4px;}
