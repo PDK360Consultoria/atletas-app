@@ -264,7 +264,7 @@ function professorPage(user) {
   // JSON visible in the on-screen log and read out loud by speechSynthesis.
   // There's no canvas here to draw the card on anyway, so slicing to the
   // first sentinel and discarding the rest is exactly right.
-  var STORY_RE = /\n?\[\[STORY_CARD\]\]/;
+  var STORY_RE = /\\n?\\[\\[STORY_CARD\\]\\]/;
   function stripStoryCard(text){
     var s = String(text || '');
     var m = STORY_RE.exec(s);
