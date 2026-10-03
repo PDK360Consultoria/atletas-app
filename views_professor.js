@@ -464,18 +464,65 @@ function professorPage(user) {
 
   function speak(text, onDone){
     if (!canSpeak || !text) { if (onDone) onDone(); return; }
-    synth.cancel();
-    var utter = new SpeechSynthesisUtterance(text);
-    utter.lang = 'pt-BR';
-    if (ptBrVoice) utter.voice = ptBrVoice;
-    // Neither rushed nor sluggish — a flat 1.0 default reads noticeably
-    // machine-like for pt-BR voices; 0.96/1.0 lands closer to a person
-    // actually talking, per Felipe's brief.
-    utter.rate = 0.96;
-    utter.pitch = 1.0;
-    utter.onend = function(){ if (onDone) onDone(); };
-    utter.onerror = function(){ if (onDone) onDone(); };
-    synth.speak(utter);
+
+    var finished = false;
+    var keepAlive = null;
+    var watchdog = null;
+
+    function finish(){
+      if (finished) return;
+      finished = true;
+      clearInterval(keepAlive);
+      clearTimeout(watchdog);
+      if (onDone) onDone();
+    }
+
+    // Resets every time we get real evidence speech is progressing
+    // (onstart, each word boundary) so a genuinely long reply never gets
+    // cut short — it only fires if NOTHING happens for 6s straight, which
+    // only occurs when the utterance is dead.
+    function armWatchdog(){
+      clearTimeout(watchdog);
+      watchdog = setTimeout(finish, 6000);
+    }
+
+    function go(){
+      var utter = new SpeechSynthesisUtterance(text);
+      utter.lang = 'pt-BR';
+      if (ptBrVoice) utter.voice = ptBrVoice;
+      // Neither rushed nor sluggish — a flat 1.0 default reads noticeably
+      // machine-like for pt-BR voices; 0.96/1.0 lands closer to a person
+      // actually talking, per Felipe's brief.
+      utter.rate = 0.96;
+      utter.pitch = 1.0;
+      utter.onstart = armWatchdog;
+      utter.onboundary = armWatchdog;
+      utter.onend = finish;
+      utter.onerror = finish;
+      synth.speak(utter);
+      armWatchdog();
+
+      // Chrome has a long-standing speechSynthesis bug: playback can stall
+      // silently mid-utterance (or never actually start) with no error and
+      // no further events — the orb sits on "Falando" forever with no
+      // sound and the mic never comes back, exactly what Felipe was
+      // hitting. A periodic pause()/resume() nudge is the standard
+      // workaround for that stall; harmless when playback is healthy.
+      keepAlive = setInterval(function(){
+        if (synth.speaking) { synth.pause(); synth.resume(); }
+      }, 4000);
+    }
+
+    // Calling speak() in the same tick right after cancel() is a second,
+    // separate trigger for that same Chrome bug — it can leave the new
+    // utterance stuck "pending" forever instead of actually starting. Give
+    // the cancel a beat to actually land before queuing the next utterance.
+    if (synth.speaking || synth.pending) {
+      synth.cancel();
+      setTimeout(go, 150);
+    } else {
+      go();
+    }
   }
 
   // ---------- backend call (same endpoint the text chat uses) ----------
