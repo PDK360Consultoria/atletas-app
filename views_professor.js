@@ -21,7 +21,7 @@ function professorPage(user) {
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
-<title>Professor · Atletas</title>
+<title>Professor · Runiqx</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>

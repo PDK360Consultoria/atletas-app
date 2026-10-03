@@ -150,7 +150,11 @@ async function handle(req, res) {
     // pre-diagnosis fields they just filled in (see buildDiagnosis).
     if (method === 'GET' && pathname === '/welcome') {
       if (!requireAuth()) return;
-      return html(res, 200, views.welcomePage(user));
+      return html(res, 200, views.welcomePage(user, {
+        stravaConfigured: strava.isConfigured(),
+        stravaConnected: parsed.query.strava_connected,
+        stravaError: parsed.query.strava_error,
+      }));
     }
 
     // ---------- discover (find other athletes, Strava-style) ----------
@@ -607,9 +611,17 @@ async function handle(req, res) {
       const state = crypto.randomBytes(16).toString('hex');
       const redirectUri = `${baseUrl(req)}/strava/callback`;
       const authUrl = strava.getAuthorizeUrl(redirectUri, state);
+      // Lets the welcome screen send people through the OAuth dance and get
+      // dropped back on /welcome afterwards instead of /settings — a
+      // brand-new signup hasn't seen the rest of the app yet, so landing on
+      // Settings right away would feel like a detour. Only a known internal
+      // destination is accepted here, never an arbitrary redirect target.
+      const returnTo = parsed.query.return_to === 'welcome' ? 'welcome' : '';
+      const setCookies = [serializeCookie('strava_state', state, { maxAge: 600 })];
+      if (returnTo) setCookies.push(serializeCookie('strava_return_to', returnTo, { maxAge: 600 }));
       const headers = {
         location: authUrl,
-        'set-cookie': serializeCookie('strava_state', state, { maxAge: 600 }),
+        'set-cookie': setCookies,
       };
       res.writeHead(302, headers);
       return res.end();
@@ -617,8 +629,10 @@ async function handle(req, res) {
     if (method === 'GET' && pathname === '/strava/callback') {
       if (!requireAuth()) return;
       const { code, state, error } = parsed.query;
-      if (error) return redirect(res, '/settings?strava_error=1');
-      if (!state || state !== cookies.strava_state) return redirect(res, '/settings?strava_error=1');
+      const returnTo = cookies.strava_return_to === 'welcome' ? '/welcome' : '/settings';
+      const clearCookies = [serializeCookie('strava_state', '', { expire: true }), serializeCookie('strava_return_to', '', { expire: true })];
+      if (error) return redirect(res, `${returnTo}?strava_error=1`, clearCookies);
+      if (!state || state !== cookies.strava_state) return redirect(res, `${returnTo}?strava_error=1`, clearCookies);
       try {
         const redirectUri = `${baseUrl(req)}/strava/callback`;
         const tok = await strava.exchangeCodeForToken(code, redirectUri);
@@ -626,9 +640,9 @@ async function handle(req, res) {
           .run(String(tok.athlete && tok.athlete.id), tok.access_token, tok.refresh_token, tok.expires_at, user.id);
       } catch (e) {
         console.error(e);
-        return redirect(res, '/settings?strava_error=1', serializeCookie('strava_state', '', { expire: true }));
+        return redirect(res, `${returnTo}?strava_error=1`, clearCookies);
       }
-      return redirect(res, '/settings?strava_connected=1', serializeCookie('strava_state', '', { expire: true }));
+      return redirect(res, `${returnTo}?strava_connected=1`, clearCookies);
     }
     if (method === 'POST' && pathname === '/strava/disconnect') {
       if (!requireAuth()) return;
@@ -858,5 +872,5 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`Atletas app rodando em http://localhost:${PORT}`);
+  console.log(`Runiqx app rodando em http://localhost:${PORT}`);
 });

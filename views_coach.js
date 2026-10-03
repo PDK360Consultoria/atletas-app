@@ -9,7 +9,7 @@ function coachPage(user) {
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
-<title>Coach de Ritmo · Atletas</title>
+<title>Coach de Ritmo · Runiqx</title>
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -157,7 +157,7 @@ footer{color:var(--muted); font-size:12.5px; border-top:1px solid var(--line); p
 <body>
 
 <div class="topbar">
-  <a class="brand" href="/">Atletas</a>
+  <a class="brand" href="/">Runiqx</a>
   <a href="/activities">Treinos</a>
   <a href="/races">Provas</a>
   <a href="/logout">Sair</a>

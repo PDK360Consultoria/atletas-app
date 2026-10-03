@@ -567,7 +567,7 @@ ready(function(){
 function layout({ title, user, body, active, extraHead, bodyEnd, hideCoachWidget, bodyClass, wrapClass, navVariant }) {
   const nav = user
     ? `<nav class="nav">
-        <a class="brand" href="/">Atletas</a>
+        <a class="brand" href="/">Runiqx</a>
         <div class="links">
           <a class="link ${active === 'home' ? 'active' : ''}" href="/">Perfil</a>
           <a class="link ${active === 'races' ? 'active' : ''}" href="/races">Provas</a>
@@ -593,13 +593,13 @@ function layout({ title, user, body, active, extraHead, bodyEnd, hideCoachWidget
       </nav>`
     : navVariant === 'public'
     ? `<nav class="nav">
-        <a class="brand" href="/">Atletas</a>
+        <a class="brand" href="/">Runiqx</a>
         <div class="links">
           <a class="link" href="/login">Entrar</a>
           <a class="btn xs" href="/signup">Cadastre-se</a>
         </div>
       </nav>`
-    : `<nav class="nav"><a class="brand" href="/">Atletas</a></nav>`;
+    : `<nav class="nav"><a class="brand" href="/">Runiqx</a></nav>`;
 
   const showWidget = !!user && !hideCoachWidget;
 
@@ -608,7 +608,7 @@ function layout({ title, user, body, active, extraHead, bodyEnd, hideCoachWidget
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${esc(title)} · Atletas</title>
+<title>${esc(title)} · Runiqx</title>
 <link rel="stylesheet" href="/style.css">
 ${extraHead || ''}
 </head>
@@ -633,12 +633,12 @@ function authLayout(title, body) {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${esc(title)} · Atletas</title>
+<title>${esc(title)} · Runiqx</title>
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
 <div class="auth-box">
-<div class="center-logo">Atletas</div>
+<div class="center-logo">Runiqx</div>
 ${body}
 </div>
 </body>
@@ -696,9 +696,11 @@ ${error ? `<div class="err">${esc(error)}</div>` : ''}
 `);
 }
 
-function welcomePage(user) {
+function welcomePage(user, flags) {
+  flags = flags || {};
   const number = memberNumber(user);
   const diagnosis = buildDiagnosis(user);
+  const stravaConnected = !!user.strava_refresh_token || !!flags.stravaConnected;
   const body = `
 <div class="welcome-number">
   <span class="welcome-number-eyebrow">Você é o atleta</span>
@@ -707,7 +709,21 @@ function welcomePage(user) {
 <div class="welcome-diagnosis">
   <p>${esc(diagnosis)}</p>
 </div>
-<a class="btn" href="/" style="width:100%; text-align:center; margin-top:8px;">Começar</a>
+
+<div class="card" style="margin-top:18px; text-align:left;">
+  <h2 style="display:flex; align-items:center; gap:8px; margin:0 0 10px;"><span class="h-icon">${icon('flame', 'welcomestrava')}</span>Conecte o Strava</h2>
+  ${flags.stravaError ? `<div class="err" style="margin-bottom:10px;">Não consegui conectar com o Strava agora. Tente de novo.</div>` : ''}
+  ${stravaConnected ? `
+    <p class="muted" style="margin:0;">Conectado! Agora é só ir em <a href="/activities">Treinos</a> e clicar em "Sincronizar com Strava" pra importar o seu histórico — e os próximos treinos (inclusive do Garmin, se ele já sincroniza pro Strava) entram automaticamente.</p>
+  ` : !flags.stravaConfigured ? `
+    <p class="muted" style="margin:0;">Integração com Strava ainda não configurada no servidor. Você pode registrar seus treinos manualmente por enquanto, e conectar depois em Configurações.</p>
+  ` : `
+    <p class="muted" style="margin:0 0 12px;">É a forma mais rápida de começar: conecte sua conta do Strava e seus treinos entram automaticamente — pace, FC, splits, tudo. Se você usa Garmin, Coros ou outro relógio que já sincroniza com o Strava, funciona do mesmo jeito, sem precisar conectar o relógio direto.</p>
+    <a class="btn" href="/strava/connect?return_to=welcome" style="width:100%; text-align:center;">Conectar com Strava</a>
+  `}
+</div>
+
+<a class="btn${stravaConnected ? '' : ' ghost'}" href="/" style="width:100%; text-align:center; margin-top:14px;">${stravaConnected ? 'Começar' : 'Pular por agora'}</a>
 `;
   return authLayout('Bem-vindo', body);
 }
@@ -718,7 +734,7 @@ function landingPage() {
   // position, not a canned timer, per Felipe's brief ("um objeto 3d móvel
   // que se mexe enquanto o site se move", referencing the cinematic-scroll
   // premium sites the site-medico-premium-360 skill builds). Kept in
-  // Atletas' own gold/blue palette, not that skill's brown/gold medical one.
+  // Runiqx' own gold/blue palette, not that skill's brown/gold medical one.
   const chapters = [
     { icon: 'stopwatch', title: 'Treinos', text: 'Registre manualmente ou sincronize com o Strava — pace, FC, splits km a km e estrutura de tiros, tudo organizado.' },
     { icon: 'chat', title: 'Professor', text: 'O seu treinador com IA — por voz ou por texto, sempre o mesmo, sempre no seu histórico. Monta treinos com embasamento técnico e te manda até uma imagem pra consultar durante a corrida.' },
@@ -735,7 +751,7 @@ function landingPage() {
   <section class="landing-chapter landing-chapter-hero" data-chapter="0">
     <div class="chapter-num">${pad2(1)}<span class="total">/ ${pad2(total)}</span></div>
     <h1 class="landing-h1">Corra com dados.<br>Não com achismo.</h1>
-    <p class="lede landing-lede">O Atletas junta seus treinos, sua evolução e um coach de corrida com IA num só lugar — e uma comunidade pra te acompanhar no caminho até a sua próxima prova.</p>
+    <p class="lede landing-lede">O Runiqx junta seus treinos, sua evolução e um coach de corrida com IA num só lugar — e uma comunidade pra te acompanhar no caminho até a sua próxima prova.</p>
     <div class="landing-cta-row">
       <a class="btn" href="/signup">Criar minha conta</a>
       <a class="btn ghost" href="/login">Já tenho conta</a>
@@ -763,7 +779,7 @@ function landingPage() {
 
 <div class="landing-dots" id="landingDots"></div>
 `;
-  return layout({ title: 'Atletas', user: null, body, navVariant: 'public', wrapClass: 'landing-wrap', bodyClass: 'landing-dark', extraHead: HERO_EXTRA_HEAD, bodyEnd: LANDING_SCRIPT });
+  return layout({ title: 'Runiqx', user: null, body, navVariant: 'public', wrapClass: 'landing-wrap', bodyClass: 'landing-dark', extraHead: HERO_EXTRA_HEAD, bodyEnd: LANDING_SCRIPT });
 }
 
 const HERO_EXTRA_HEAD = `<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js" defer></script>
@@ -2278,7 +2294,7 @@ ${races.length ? `<div class="card">
   ${races.map((r) => `<div class="list-item"><div><div class="t">${esc(r.name)}</div><div class="d">${r.race_date ? fmtDate(r.race_date) : 'Data a definir'}${r.city ? ' · ' + esc(r.city) : ''}</div></div>${r.distance_km ? `<span class="pill">${r.distance_km}km</span>` : ''}</div>`).join('')}
 </div>` : ''}
 
-<p class="muted" style="margin-top:20px;">Perfil público do Atletas.${!viewer ? ' <a href="/signup">Crie o seu.</a>' : ''}</p>
+<p class="muted" style="margin-top:20px;">Perfil público do Runiqx.${!viewer ? ' <a href="/signup">Crie o seu.</a>' : ''}</p>
 `;
   return layout({ title: `${profileUser.name} · Perfil`, user: viewer, body, hideCoachWidget: true });
 }
@@ -2302,12 +2318,12 @@ function discoverPage(viewer, athletes, q) {
 
   const body = `
 <h1>Buscar atletas</h1>
-<p class="lede">Encontre outros corredores no Atletas e siga quem você quiser acompanhar.</p>
+<p class="lede">Encontre outros corredores no Runiqx e siga quem você quiser acompanhar.</p>
 <form method="GET" action="/discover" class="discover-search">
   <input type="text" name="q" value="${esc(q || '')}" placeholder="Buscar por nome ou cidade..." autofocus>
   <button class="ghost btn" type="submit">Buscar</button>
 </form>
-${rows || `<div class="card feed-empty"><div class="feed-empty-icon">${icon('heart', 'disc1')}</div><p style="margin:0; font-weight:800;">${q ? 'Ninguém encontrado' : 'Ainda não há outros atletas'}</p><p class="muted" style="margin:4px 0 0;">${q ? 'Tenta buscar outro nome ou cidade.' : 'Quando outras pessoas se cadastrarem no Atletas, elas aparecem aqui.'}</p></div>`}
+${rows || `<div class="card feed-empty"><div class="feed-empty-icon">${icon('heart', 'disc1')}</div><p style="margin:0; font-weight:800;">${q ? 'Ninguém encontrado' : 'Ainda não há outros atletas'}</p><p class="muted" style="margin:4px 0 0;">${q ? 'Tenta buscar outro nome ou cidade.' : 'Quando outras pessoas se cadastrarem no Runiqx, elas aparecem aqui.'}</p></div>`}
 `;
   return layout({ title: 'Buscar atletas', user: viewer, body, active: 'discover' });
 }
@@ -2363,7 +2379,7 @@ function storyPage(user, activity) {
 
     ctx.fillStyle = '#FFC24E';
     ctx.font = '700 34px Arial, sans-serif';
-    ctx.fillText('ATLETAS', 60, 110);
+    ctx.fillText('RUNIQX', 60, 110);
 
     ctx.fillStyle = '#ffffff';
     ctx.font = '800 56px Arial, sans-serif';
@@ -2419,7 +2435,7 @@ ${flags.stravaError ? `<div class="err">Não consegui conectar com o Strava agor
   ${!flags.stravaConfigured && !stravaConnected ? `
     <p class="muted" style="margin:0;">Integração com Strava ainda não configurada no servidor (faltam as credenciais do app Strava).</p>
   ` : stravaConnected ? `
-    <p class="muted">Conectado — o Garmin sincroniza com o Strava automaticamente, e o Atletas importa suas corridas de lá.</p>
+    <p class="muted">Conectado — o Garmin sincroniza com o Strava automaticamente, e o Runiqx importa suas corridas de lá.</p>
     <div class="row" style="gap:10px; display:flex;">
       <a class="ghost btn" href="/activities">Ir para Treinos e sincronizar</a>
       <form method="POST" action="/strava/disconnect"><button class="danger" type="submit">Desconectar</button></form>
@@ -2463,7 +2479,7 @@ ${flags.publicUrl ? `<div class="card">
 
 <div class="card">
   <h2><span class="h-icon">${icon('heart', 'ai2')}</span>Análise com IA (opcional)</h2>
-  <p class="muted">Cole sua própria chave da API da Anthropic para habilitar análises técnicas automáticas dos seus treinos. A chave fica salva só na sua conta e é usada apenas para gerar suas análises — o uso é cobrado na sua própria conta Anthropic.</p>
+  <p class="muted">Cole sua própria chave da API da Anthropic para habilitar o Professor, o Coach por chat e as análises técnicas automáticas dos seus treinos. A chave fica salva só na sua conta e é usada apenas pra você — o uso é cobrado na sua própria conta Anthropic. Não tem uma chave ainda? <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">Crie uma em console.anthropic.com</a>.</p>
   <form method="POST" action="/settings/api-key">
     <label>Chave da API (sk-ant-...)</label>
     <input name="anthropic_api_key" value="${user.anthropic_api_key ? '••••••••••••' + esc(user.anthropic_api_key.slice(-4)) : ''}" placeholder="sk-ant-...">
