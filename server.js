@@ -11,11 +11,11 @@ const { parseClock, secToPace } = require('./lib/format');
 const { parseActivityFile } = require('./lib/gpx');
 const { analyzeActivity } = require('./lib/anthropic');
 const strava = require('./lib/strava');
-const { computeEvolution, computeMedals } = require('./lib/stats');
+const { computeEvolution, computeMedals, detectPersonalRecord } = require('./lib/stats');
 const { buildContext, buildActivityFocusContext, streamChatWithAssistant, computeHumanDelayMs } = require('./lib/assistant');
 const { fetchNearbyRaces } = require('./lib/races');
 const { buildMonthCalendar } = require('./lib/calendar');
-const { ensurePublicSlug, buildShareDraft, notify } = require('./lib/social');
+const { ensurePublicSlug, buildShareDraft, buildPRShareDraft, REACTION_KEYS, notify, safePath } = require('./lib/social');
 const views = require('./views');
 const { coachPage } = require('./views_coach');
 
@@ -255,8 +255,11 @@ async function handle(req, res) {
       if (!activity) return notFound(res);
       const laps = activity.laps_json ? JSON.parse(activity.laps_json) : [];
       const intervals = activity.intervals_json ? JSON.parse(activity.intervals_json) : [];
-      const evolution = computeEvolution(db.prepare('SELECT * FROM activities WHERE user_id = ?').all(user.id));
-      return html(res, 200, views.activityDetailPage({ user, activity, laps, intervals, evolution, aiEnabled: !!user.anthropic_api_key }));
+      const allActivities = db.prepare('SELECT * FROM activities WHERE user_id = ?').all(user.id);
+      const evolution = computeEvolution(allActivities);
+      const prInfo = detectPersonalRecord(activity, allActivities);
+      const alreadyShared = !!db.prepare('SELECT 1 FROM posts WHERE activity_id = ?').get(activity.id);
+      return html(res, 200, views.activityDetailPage({ user, activity, laps, intervals, evolution, prInfo, alreadyShared, aiEnabled: !!user.anthropic_api_key }));
     }
     if (method === 'POST' && (m = /^\/activities\/(\d+)\/rename$/.exec(pathname))) {
       if (!requireAuth()) return;
@@ -295,43 +298,103 @@ async function handle(req, res) {
     }
 
     // ---------- feed ----------
-    // Shared feed: every registered athlete sees everyone else's posts (no
-    // follow graph — see README's "sem grafo social" note, which this
-    // intentionally supersedes per the athlete's own request).
+    // Shared feed: every registered athlete sees everyone else's posts by
+    // default (no follow graph required to see someone — see README's "sem
+    // grafo social" note, superseded per the athlete's own request). Follows
+    // (below) are a curation layer on top of that: scope=following narrows
+    // the same feed to just your own posts + people you follow, it never
+    // hides anyone from the default "Todos" view.
+    const FEED_PAGE_SIZE = 20;
     if (method === 'GET' && pathname === '/feed') {
       if (!requireAuth()) return;
-      const posts = db.prepare(`SELECT p.*, a.title as activity_title, a.workout_type as activity_workout_type,
+      const scope = parsed.query.scope === 'following' ? 'following' : 'all';
+      const beforeId = parsed.query.before_id ? parseInt(parsed.query.before_id, 10) : null;
+
+      const where = [];
+      const params = [];
+      if (beforeId) { where.push('p.id < ?'); params.push(beforeId); }
+      if (scope === 'following') {
+        where.push('(p.user_id = ? OR p.user_id IN (SELECT followee_id FROM follows WHERE follower_id = ?))');
+        params.push(user.id, user.id);
+      }
+      const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+      const rows = db.prepare(`SELECT p.*, a.title as activity_title, a.workout_type as activity_workout_type,
           a.distance_km as activity_distance_km, a.duration_sec as activity_duration_sec,
           a.avg_pace_sec as activity_avg_pace_sec, a.elevation_gain_m as activity_elevation_gain_m,
           a.source as activity_source,
-          u.name as author_name, u.public_slug as author_slug, u.avatar_path as author_avatar_path,
-          (SELECT COUNT(*) FROM reactions r WHERE r.post_id = p.id) as kudos_count,
-          EXISTS(SELECT 1 FROM reactions r WHERE r.post_id = p.id AND r.user_id = ?) as reacted,
-          (SELECT COUNT(*) FROM comments c WHERE c.post_id = p.id) as comment_count
+          u.name as author_name, u.public_slug as author_slug, u.avatar_path as author_avatar_path
         FROM posts p
         JOIN users u ON u.id = p.user_id
         LEFT JOIN activities a ON a.id = p.activity_id
-        ORDER BY p.created_at DESC LIMIT 100`).all(user.id);
+        ${whereSql}
+        ORDER BY p.id DESC LIMIT ?`).all(...params, FEED_PAGE_SIZE + 1);
+
+      const hasMore = rows.length > FEED_PAGE_SIZE;
+      const posts = rows.slice(0, FEED_PAGE_SIZE);
+      const nextBeforeId = hasMore ? posts[posts.length - 1].id : null;
 
       if (posts.length) {
         const placeholders = posts.map(() => '?').join(',');
+        const postIds = posts.map((p) => p.id);
         const comments = db.prepare(`SELECT c.*, u.name as author_name, u.avatar_path as author_avatar_path FROM comments c
           JOIN users u ON u.id = c.user_id
-          WHERE c.post_id IN (${placeholders}) ORDER BY c.created_at ASC`).all(...posts.map((p) => p.id));
+          WHERE c.post_id IN (${placeholders}) ORDER BY c.created_at ASC`).all(...postIds);
         const byPost = new Map();
         for (const c of comments) {
           if (!byPost.has(c.post_id)) byPost.set(c.post_id, []);
           byPost.get(c.post_id).push(c);
         }
-        posts.forEach((p) => { p.comments = byPost.get(p.id) || []; });
+
+        // Reaction counts per type + which types the current viewer already
+        // used, grouped in JS rather than N separate subqueries per post —
+        // one query for the whole page either way, this just avoids 4x the
+        // subqueries now that there are 4 reaction types instead of 1.
+        const reactionRows = db.prepare(`SELECT post_id, user_id, type FROM reactions WHERE post_id IN (${placeholders})`).all(...postIds);
+        const reactionsByPost = new Map();
+        for (const r of reactionRows) {
+          if (!reactionsByPost.has(r.post_id)) reactionsByPost.set(r.post_id, { counts: {}, mine: new Set() });
+          const entry = reactionsByPost.get(r.post_id);
+          entry.counts[r.type] = (entry.counts[r.type] || 0) + 1;
+          if (r.user_id === user.id) entry.mine.add(r.type);
+        }
+
+        posts.forEach((p) => {
+          p.comments = byPost.get(p.id) || [];
+          const entry = reactionsByPost.get(p.id);
+          p.reactionCounts = entry ? entry.counts : {};
+          p.myReactions = entry ? entry.mine : new Set();
+        });
       }
 
-      let shareDraft = null, shareActivity = null;
+      let shareDraft = null, shareActivity = null, isPrShare = false;
       if (parsed.query.share_activity) {
         shareActivity = db.prepare('SELECT * FROM activities WHERE id = ? AND user_id = ?').get(parsed.query.share_activity, user.id);
-        if (shareActivity) shareDraft = buildShareDraft(shareActivity);
+        if (shareActivity) {
+          if (parsed.query.pr === '1') {
+            const otherActivities = db.prepare('SELECT * FROM activities WHERE user_id = ?').all(user.id);
+            const prInfo = detectPersonalRecord(shareActivity, otherActivities);
+            shareDraft = buildPRShareDraft(shareActivity, prInfo);
+            isPrShare = true;
+          } else {
+            shareDraft = buildShareDraft(shareActivity);
+          }
+        }
       }
-      return html(res, 200, views.feedPage(user, posts, { shareDraft, shareActivity }));
+
+      // A quick-pick list of recent trainings not yet posted, so opening the
+      // Feed directly (not via "Compartilhar treino" on an activity) doesn't
+      // start from a blank composer with no obvious next step.
+      let recentUnshared = [];
+      if (!shareActivity) {
+        recentUnshared = db.prepare(`SELECT id, title, workout_type, distance_km, started_at, created_at FROM activities
+          WHERE user_id = ? AND id NOT IN (SELECT activity_id FROM posts WHERE activity_id IS NOT NULL)
+          ORDER BY COALESCE(started_at, created_at) DESC LIMIT 5`).all(user.id);
+      }
+
+      return html(res, 200, views.feedPage(user, posts, {
+        shareDraft, shareActivity, isPrShare, recentUnshared, scope, nextBeforeId, beforeId,
+      }));
     }
     if (method === 'POST' && pathname === '/feed') {
       if (!requireAuth()) return;
@@ -343,8 +406,8 @@ async function handle(req, res) {
           photoPath = `post_${Date.now()}_${crypto.randomBytes(4).toString('hex')}${ext}`;
           fs.writeFileSync(path.join(UPLOAD_DIR, photoPath), photo.data);
         }
-        db.prepare('INSERT INTO posts (user_id, activity_id, body, photo_path) VALUES (?,?,?,?)')
-          .run(user.id, fields.activity_id ? parseInt(fields.activity_id, 10) : null, fields.body.trim(), photoPath);
+        db.prepare('INSERT INTO posts (user_id, activity_id, body, photo_path, is_pr) VALUES (?,?,?,?,?)')
+          .run(user.id, fields.activity_id ? parseInt(fields.activity_id, 10) : null, fields.body.trim(), photoPath, fields.is_pr === '1' ? 1 : 0);
       }
       return redirect(res, fields.activity_id ? `/activities/${fields.activity_id}` : '/feed');
     }
@@ -352,14 +415,16 @@ async function handle(req, res) {
       if (!requireAuth()) return;
       const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(m[1]);
       if (!post) return notFound(res);
-      const existing = db.prepare('SELECT id FROM reactions WHERE post_id = ? AND user_id = ?').get(post.id, user.id);
+      const type = REACTION_KEYS.includes(fields.type) ? fields.type : 'kudos';
+      const existing = db.prepare('SELECT id FROM reactions WHERE post_id = ? AND user_id = ? AND type = ?').get(post.id, user.id, type);
       if (existing) {
         db.prepare('DELETE FROM reactions WHERE id = ?').run(existing.id);
       } else {
-        db.prepare('INSERT INTO reactions (post_id, user_id) VALUES (?,?)').run(post.id, user.id);
-        notify(db, { userId: post.user_id, actorUserId: user.id, type: 'kudos', postId: post.id, body: `${user.name} curtiu seu post` });
+        db.prepare('INSERT INTO reactions (post_id, user_id, type) VALUES (?,?,?)').run(post.id, user.id, type);
+        const emoji = { kudos: '👏', fire: '🔥', pr: '🏆', strong: '💪' }[type] || '👏';
+        notify(db, { userId: post.user_id, actorUserId: user.id, type: 'kudos', postId: post.id, body: `${user.name} reagiu ${emoji} ao seu post` });
       }
-      return redirect(res, '/feed');
+      return redirect(res, safePath(fields.return_to, ['/feed'], '/feed'));
     }
     if (method === 'POST' && (m = /^\/feed\/(\d+)\/comment$/.exec(pathname))) {
       if (!requireAuth()) return;
@@ -370,7 +435,7 @@ async function handle(req, res) {
         db.prepare('INSERT INTO comments (post_id, user_id, body) VALUES (?,?,?)').run(post.id, user.id, body);
         notify(db, { userId: post.user_id, actorUserId: user.id, type: 'comment', postId: post.id, body: `${user.name} comentou no seu post` });
       }
-      return redirect(res, '/feed');
+      return redirect(res, safePath(fields.return_to, ['/feed'], '/feed'));
     }
 
     // ---------- public profile (no login) ----------
@@ -381,7 +446,26 @@ async function handle(req, res) {
       const evolution = computeEvolution(activities);
       const medals = computeMedals(activities);
       const upcomingRaces = db.prepare(`SELECT * FROM races WHERE user_id = ? AND (race_date IS NULL OR race_date >= date('now')) ORDER BY race_date ASC LIMIT 3`).all(profileUser.id);
-      return html(res, 200, views.publicProfilePage(user, profileUser, evolution, upcomingRaces, medals));
+      const followerCount = db.prepare('SELECT COUNT(*) as c FROM follows WHERE followee_id = ?').get(profileUser.id).c;
+      const followingCount = db.prepare('SELECT COUNT(*) as c FROM follows WHERE follower_id = ?').get(profileUser.id).c;
+      const isFollowing = !!user && user.id !== profileUser.id &&
+        !!db.prepare('SELECT 1 FROM follows WHERE follower_id = ? AND followee_id = ?').get(user.id, profileUser.id);
+      return html(res, 200, views.publicProfilePage(user, profileUser, evolution, upcomingRaces, medals, { followerCount, followingCount, isFollowing }));
+    }
+    if (method === 'POST' && (m = /^\/u\/([a-zA-Z0-9-]+)\/follow$/.exec(pathname))) {
+      if (!requireAuth()) return;
+      const profileUser = db.prepare('SELECT * FROM users WHERE public_slug = ?').get(m[1]);
+      if (!profileUser) return notFound(res);
+      if (profileUser.id !== user.id) {
+        const existing = db.prepare('SELECT id FROM follows WHERE follower_id = ? AND followee_id = ?').get(user.id, profileUser.id);
+        if (existing) {
+          db.prepare('DELETE FROM follows WHERE id = ?').run(existing.id);
+        } else {
+          db.prepare('INSERT INTO follows (follower_id, followee_id) VALUES (?,?)').run(user.id, profileUser.id);
+          notify(db, { userId: profileUser.id, actorUserId: user.id, type: 'follow', body: `${user.name} passou a seguir você` });
+        }
+      }
+      return redirect(res, safePath(fields.return_to, ['/u/'], `/u/${m[1]}`));
     }
 
     // ---------- notifications (in-app only) ----------
