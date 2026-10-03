@@ -256,6 +256,29 @@ function professorPage(user) {
 
   var history = []; // {role:'user'|'professor', text} — just for the on-screen log, last few only
 
+  // ---------- screen wake lock ----------
+  // Chrome suspends speechSynthesis (and recognition) on a tab that's gone
+  // hidden — screen locked, phone put in a pocket/armband, another app
+  // brought to front. That shows up as exactly what Felipe described:
+  // replies that are slow to start or never produce any audio at all.
+  // Holding a screen wake lock while the Professor is active keeps the
+  // screen (and tab) from sleeping mid-run. Re-acquire on visibilitychange
+  // since the OS releases the lock whenever the tab does go hidden, and on
+  // a phone the person may unlock the screen again and expect it back.
+  var wakeLock = null;
+  function requestWakeLock(){
+    if (!('wakeLock' in navigator)) return;
+    navigator.wakeLock.request('screen').then(function(lock){
+      wakeLock = lock;
+    }).catch(function(){ /* not fatal — e.g. low battery mode can refuse this */ });
+  }
+  function releaseWakeLock(){
+    if (wakeLock) { wakeLock.release().catch(function(){}); wakeLock = null; }
+  }
+  document.addEventListener('visibilitychange', function(){
+    if (document.visibilityState === 'visible' && STATE !== 'standby') requestWakeLock();
+  });
+
   // Strips the server's STORY_CARD sentinel the same way the text chat does
   // (views.js splitStoryCard): everything from the FIRST "[[STORY_CARD]]"
   // onward is dropped, not just the first replace()'d occurrence — a single
@@ -450,16 +473,17 @@ function professorPage(user) {
     var voices = synth.getVoices() || [];
     var ptVoices = voices.filter(function(v){ return v.lang === 'pt-BR' || /^pt/i.test(v.lang); });
     // A voice with localService:false is one of Chrome's network-synthesized
-    // voices (Google's) — noticeably more natural than whatever flat, local
-    // compact voice the OS falls back to when none is picked. Rank by that
-    // first, Google-by-name second (some setups report it localService even
-    // though it's still the better voice), then just take whatever pt voice
-    // exists rather than leaving this null and letting Chrome pick its own
-    // default, which tends to be the most robotic option installed.
+    // voices (Google's) — it sounds a bit more natural, but it only speaks
+    // after a round trip to Google's TTS servers. During an actual run,
+    // on patchy cellular data, that round trip is exactly what shows up as
+    // "lento" or completely silent — the utterance just never starts, or
+    // takes several seconds to. A local voice (Luciana and friends here)
+    // is synthesized on-device and starts instantly no matter the
+    // connection, so it's ranked first now even though it's a hair more
+    // robotic — reliability during a run matters more than polish.
     ptBrVoice =
-      ptVoices.find(function(v){ return v.localService === false && /google/i.test(v.name); }) ||
-      ptVoices.find(function(v){ return v.localService === false; }) ||
-      ptVoices.find(function(v){ return /google/i.test(v.name); }) ||
+      ptVoices.find(function(v){ return v.localService === true && /luciana/i.test(v.name); }) ||
+      ptVoices.find(function(v){ return v.localService === true; }) ||
       ptVoices.find(function(v){ return /luciana/i.test(v.name); }) ||
       ptVoices.find(function(v){ return v.lang === 'pt-BR'; }) ||
       ptVoices[0] ||
@@ -817,6 +841,7 @@ function professorPage(user) {
     setState('standby');
     setCaption('Toque em "Ativar o Professor" pra começar.', true);
     activateBlock.style.display = 'flex';
+    releaseWakeLock();
   }
 
   // ---------- activation ----------
@@ -831,6 +856,7 @@ function professorPage(user) {
     // a quick re-pick right as the person interacts keeps the voice choice
     // fresh for the very first reply instead of falling back silently.
     pickVoice();
+    requestWakeLock();
     startAmbient();
   });
 
