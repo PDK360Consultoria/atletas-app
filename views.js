@@ -750,8 +750,8 @@ function landingPage() {
 <div class="landing-chapters">
   <section class="landing-chapter landing-chapter-hero" data-chapter="0">
     <div class="chapter-num">${pad2(1)}<span class="total">/ ${pad2(total)}</span></div>
-    <h1 class="landing-h1">Corra com dados.<br>Não com achismo.</h1>
-    <p class="lede landing-lede">O Runiqx junta seus treinos, sua evolução e um coach de corrida com IA num só lugar — e uma comunidade pra te acompanhar no caminho até a sua próxima prova.</p>
+    <h1 class="landing-h1">Nunca mais treine sozinho.<br>Seu professor tá sempre aqui.</h1>
+    <p class="lede landing-lede">O Runiqx é a rede social de quem corre de verdade — com um professor de corrida por IA disponível 24h pra tirar dúvida, montar treino e analisar sua prova a qualquer hora, até de madrugada.</p>
     <div class="landing-cta-row">
       <a class="btn" href="/signup">Criar minha conta</a>
       <a class="btn ghost" href="/login">Já tenho conta</a>
