@@ -117,6 +117,31 @@ function professorPage(user, opts) {
   }
   .caption.muted{color:var(--ink-faint); font-size:14px;}
 
+  /* Quick-start chips — pre-written questions an athlete can tap instead of
+     thinking of what to ask or waiting to say "Hey Professor". Shown
+     whenever there's no live call (standby, or ambient between calls);
+     hidden once connecting/listening/speaking so they don't clutter the
+     screen mid-conversation. Tapping one starts a call with that text as
+     the first turn — the exact same prefill path "Hey Professor, <question>"
+     already uses, see startLiveCall(prefill). */
+  .quickchips{
+    position:relative; z-index:2; display:flex; flex-wrap:wrap; align-items:center; justify-content:center;
+    gap:8px; max-width:640px; margin:0 auto 16px; padding:0 20px;
+  }
+  .quickchips button{
+    font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:11.5px; letter-spacing:0.05em;
+    color:var(--ink-dim); background:rgba(255,255,255,0.04); border:1px solid var(--line);
+    border-radius:999px; padding:9px 16px; cursor:pointer; white-space:nowrap;
+    transition:background .15s ease, color .15s ease, border-color .15s ease, transform .1s ease;
+  }
+  .quickchips button:hover{background:rgba(255,194,78,0.1); border-color:rgba(255,194,78,0.4); color:var(--ink);}
+  .quickchips button:active{transform:scale(.96);}
+
+  @media (max-width:640px){
+    .quickchips{gap:7px;}
+    .quickchips button{font-size:11px; padding:8px 13px;}
+  }
+
   .bottom{
     position:relative; z-index:2; display:flex; align-items:flex-end; justify-content:space-between;
     gap:16px; padding:0 26px 18px;
@@ -192,6 +217,14 @@ function professorPage(user, opts) {
 <p class="caption muted" id="caption">Toque no orbe pra falar com o Professor.</p>
 <p class="permerr" id="permErr" hidden></p>
 
+<div class="quickchips" id="quickChips">
+  <button type="button" data-q="Qual é meu treino de hoje?">Treino de hoje</button>
+  <button type="button" data-q="Analise meu último treino.">Analisar último treino</button>
+  <button type="button" data-q="Estou com dores. Pode me ajudar?">Estou com dores</button>
+  <button type="button" data-q="Como estou evoluindo nos últimos treinos?">Como estou evoluindo</button>
+  <button type="button" data-q="Me dá uma dica pra minha próxima prova.">Dica pra prova</button>
+</div>
+
 <div class="bottom">
   <div class="log" id="log"></div>
   <div class="meter">
@@ -219,6 +252,7 @@ function professorPage(user, opts) {
   var ctx = canvas.getContext('2d');
   var activateBlock = document.getElementById('activateBlock');
   var activateBtn = document.getElementById('activateBtn');
+  var quickChips = document.getElementById('quickChips');
   var captionEl = document.getElementById('caption');
   var permErrEl = document.getElementById('permErr');
   var statusPill = document.getElementById('statusPill');
@@ -782,6 +816,12 @@ function professorPage(user, opts) {
     else if (next === 'listening') setStatus('Ouvindo você', 'listening');
     else if (next === 'speaking') setStatus('Falando', 'speaking');
     else setStatus('Parado', '');
+    // Quick-start chips only make sense when there's no call in progress —
+    // standby (before the first call) and ambient (between calls, waiting
+    // for the next one) are both "ready" moments; hide them the instant a
+    // call starts connecting so they don't sit uselessly under the orb
+    // while the athlete is actually talking.
+    quickChips.style.display = (next === 'standby' || next === 'ambient') ? 'flex' : 'none';
   }
 
   function showPermError(){
@@ -817,7 +857,7 @@ function professorPage(user, opts) {
   // itself. A browser without SpeechRecognition (e.g. some Safari builds)
   // can still have a full voice conversation by tapping; it only loses the
   // hands-free "Hey Professor" shortcut between calls, not the feature.
-  activateBtn.addEventListener('click', function(){
+  function beginCall(prefill){
     permErrEl.hidden = true;
     if (!canCall) {
       setCaption('Esse navegador não suporta chamada de voz (funciona no Chrome ou Safari recentes). Você ainda pode falar com o Professor por texto em /assistant.', true);
@@ -825,7 +865,18 @@ function professorPage(user, opts) {
     }
     activateBlock.style.display = 'none';
     requestWakeLock();
-    startLiveCall('');
+    startLiveCall(prefill || '');
+  }
+  activateBtn.addEventListener('click', function(){ beginCall(''); });
+
+  // Quick-start chips (Treino de hoje / Estou com dores / etc.) — tapping
+  // one is just beginCall() with that question as the prefill, the same
+  // path "Hey Professor, <pergunta>" already sends as the call's first
+  // turn (see sendUserTextTurn/startLiveCall). Works identically whether
+  // this is the very first call (STATE standby) or a follow-up between
+  // calls (STATE ambient).
+  quickChips.querySelectorAll('button[data-q]').forEach(function(btn){
+    btn.addEventListener('click', function(){ beginCall(btn.getAttribute('data-q')); });
   });
 
   // ---------- manual start (space) + hang up / stop (esc) ----------
