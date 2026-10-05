@@ -358,7 +358,7 @@ function professorPage(user, opts) {
   var revealBuffer = '';
   var revealShown = '';
   var revealTimer = null;
-  var REVEAL_MS_PER_CHAR = 54; // ~18.5 chars/sec — matches the voice's speed:1.15 (lib/openai.js)
+  var REVEAL_MS_PER_CHAR = 57; // ~17.5 chars/sec — matches the voice's speed:1.08 (lib/openai.js)
   var inactivityTimer = null; // auto-hangs-up a call nobody's talking in
   var hardCapTimer = null;    // absolute ceiling on one call's length
 
@@ -687,6 +687,22 @@ function professorPage(user, opts) {
     dataChannel.send(JSON.stringify({ type: 'response.create' }));
   }
 
+  // A cold start (tapped the orb or said "Hey Professor" with no question
+  // riding along) used to just sit there listening — Felipe wants the
+  // Professor to open instead. response.create's per-response instructions
+  // override is what keeps the opening line itself ("E aí, atleta!")
+  // exact every time rather than leaving it to whatever the model would
+  // improvise from the session's general instructions.
+  function sendGreeting(){
+    if (!dataChannel || dataChannel.readyState !== 'open') return;
+    dataChannel.send(JSON.stringify({
+      type: 'response.create',
+      response: {
+        instructions: 'Comece sua fala exatamente com "E aí, atleta!" (nessas palavras, em tom natural e animado) e, na sequência, pergunte rapidamente o que o atleta precisa agora.',
+      },
+    }));
+  }
+
   // Server-side events arriving on the data channel — this is what drives
   // the orb between "listening" and "speaking" and fills in the on-screen
   // caption/log, now that OpenAI (not our own silence-timer heuristics)
@@ -861,11 +877,11 @@ function professorPage(user, opts) {
         pc = localPc; micStream = localMicStream; dataChannel = localDataChannel; remoteAudioEl = localAudioEl;
         micAudioCtx = localMicAudioCtx; micAnalyser = localMicAnalyser; micAnalyserBuf = localMicAnalyserBuf;
         setState('listening');
-        setCaption(prefill ? prefill : 'Pode falar, estou ouvindo.', !prefill);
+        setCaption(prefill ? prefill : 'Chamando o professor…', true);
         requestWakeLock();
         armInactivityTimer();
         armHardCap();
-        if (prefill) sendUserTextTurn(prefill);
+        if (prefill) sendUserTextTurn(prefill); else sendGreeting();
       }).catch(function(err){
         cleanupLocal(); // always ours to clean up, whatever went wrong or whoever's current now
         if (myGen !== liveGeneration) return; // superseded — nothing to show, the newer call owns the UI now
