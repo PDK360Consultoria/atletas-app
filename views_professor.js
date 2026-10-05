@@ -183,7 +183,7 @@ function professorPage(user) {
   <canvas id="orbCanvas" width="560" height="560"></canvas>
   <div class="activate" id="activateBlock">
     <button id="activateBtn" type="button">Ativar o Professor</button>
-    <p>Pede acesso ao microfone e começa a ouvir em segundo plano. Depois é só dizer <strong>"Hey Professor"</strong> e perguntar.</p>
+    <p>Pede acesso ao microfone. Diga <strong>"Hey Professor"</strong> pra começar — depois é só continuar a conversa, sem precisar repetir.</p>
   </div>
 </div>
 
@@ -251,10 +251,22 @@ function professorPage(user) {
   var capturePrefill = '';  // text spoken right after the wake word, from the ambient session
   var captureSilenceTimer = null;
   var captureHardStopTimer = null;
+  var quickAbandonTimer = null;
   var pttActive = false;
   var activeXhr = null;
 
   var history = []; // {role:'user'|'professor', text} — just for the on-screen log, last few only
+
+  // Bumped every time a reply is interrupted (barge-in, Escape, push-to-talk
+  // while speaking, orb click, stopAll). synth.cancel() alone only stops the
+  // CURRENT utterance — it does nothing about the rest of that reply's
+  // sentences still sitting in askProfessor()'s own queue, which would
+  // otherwise just keep playing right after the "interrupted" one via
+  // pumpQueue's onDone chain. Each askProfessor() call captures the
+  // generation it was started with and checks it before queuing or playing
+  // anything further, so an interrupted reply actually goes silent instead
+  // of continuing a beat later.
+  var replyGeneration = 0;
 
   // ---------- screen wake lock ----------
   // Chrome suspends speechSynthesis (and recognition) on a tab that's gone
@@ -557,16 +569,90 @@ function professorPage(user) {
   }
 
   // ---------- backend call (same endpoint the text chat uses) ----------
+  // Reads the reply as it streams in and speaks it SENTENCE BY SENTENCE —
+  // the previous version waited for the entire reply to finish streaming
+  // before saying a single word, which is exactly what made this feel slow
+  // and un-real-time (Felipe's complaint). Now the Professor starts talking
+  // the instant the first sentence is complete, and keeps talking while the
+  // rest of the reply is still arriving — like a person, not a loading bar.
   function askProfessor(question){
     setState('thinking');
     setCaption('Pensando…', true);
     pushLog('user', question);
 
-    var full = '';
+    var myGen = ++replyGeneration; // claims this as the current reply
+    var full = '';            // raw accumulated stream text
+    var spoken = 0;            // how much of "full" has already been queued for speech
+    var storyCutIndex = -1;    // index where the [[STORY_CARD]] sentinel starts, once seen
+    var queue = [];            // sentences waiting to be read aloud
+    var queueActive = false;
+    var bargeInStarted = false;
+    var finishedStreaming = false;
+
+    function speakableEnd(){
+      return storyCutIndex >= 0 ? storyCutIndex : full.length;
+    }
+    // The sentinel can arrive split across chunks; once any of it has
+    // landed, nothing from that point on is ever queued for speech (there's
+    // no canvas here to draw the card on anyway — see stripStoryCard above).
+    function detectStoryCut(){
+      if (storyCutIndex >= 0) return;
+      var idx = full.indexOf('[[STORY_CARD]]');
+      if (idx !== -1) storyCutIndex = idx;
+    }
+    function pumpQueue(){
+      if (myGen !== replyGeneration) return; // interrupted — let it go silent
+      if (queueActive) return;
+      var next = queue.shift();
+      if (next === undefined) {
+        if (finishedStreaming && STATE === 'speaking') startFollowUp();
+        return;
+      }
+      queueActive = true;
+      if (STATE !== 'speaking') {
+        setState('speaking');
+        if (!bargeInStarted) { bargeInStarted = true; startBargeIn(); }
+      }
+      setCaption(next, false);
+      speak(next, function(){
+        queueActive = false;
+        pumpQueue();
+      });
+    }
+    // Sentence boundary = ./!/? followed by whitespace/end (not a digit, so
+    // "3.5" never splits mid-number), or a newline. Re-scans from "spoken"
+    // every time new text arrives, since a chunk boundary can land mid-word.
+    function enqueueReadySentences(){
+      if (myGen !== replyGeneration) return;
+      detectStoryCut();
+      var end = speakableEnd();
+      var re = /[.!?]+(?=[\\s\\n]|$)|\\n+/g;
+      re.lastIndex = spoken;
+      var m;
+      while ((m = re.exec(full)) && m.index < end) {
+        var boundary = m.index + m[0].length;
+        if (boundary > end) break;
+        var piece = full.slice(spoken, boundary).trim();
+        spoken = boundary;
+        if (piece) queue.push(piece);
+        re.lastIndex = spoken;
+      }
+      pumpQueue();
+    }
+    function flushRemainder(){
+      if (myGen !== replyGeneration) return;
+      detectStoryCut();
+      var end = speakableEnd();
+      var piece = full.slice(spoken, end).trim();
+      spoken = end;
+      if (piece) queue.push(piece);
+      pumpQueue();
+    }
+
     fetch('/api/coach/send', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ message: question, activity_id: null }),
+      body: JSON.stringify({ message: question, activity_id: null, voice: true }),
     }).then(function(res){
       if (res.status === 412) {
         throw { kind: 'no_key' };
@@ -578,35 +664,25 @@ function professorPage(user) {
       var decoder = new TextDecoder();
       function pump(){
         return reader.read().then(function(chunk){
-          if (chunk.done) return;
+          if (chunk.done) { finishedStreaming = true; flushRemainder(); return; }
           full += decoder.decode(chunk.value, { stream: true });
+          enqueueReadySentences();
           return pump();
         });
       }
       return pump();
     }).then(function(){
-      // Strip the STORY_CARD sentinel (see server.js) — nothing to draw a
-      // card on here, so just speak the human text that precedes it.
       var clean = stripStoryCard(full);
-      if (!clean) clean = 'Não consegui responder agora.';
-      pushLog('professor', clean);
-      setState('speaking');
-      setCaption(clean, false);
-      startBargeIn();
-      speak(clean, function(){
-        if (STATE === 'speaking') startAmbient();
-      });
+      pushLog('professor', clean || '(sem resposta)');
     }).catch(function(err){
+      if (myGen !== replyGeneration) return; // superseded — don't speak over whatever's current now
       var msg = (err && err.kind === 'no_key')
         ? 'Cadastre sua chave da API da Anthropic em Configurações pra eu poder responder.'
         : 'Não consegui responder agora. Tenta de novo?';
       pushLog('professor', msg);
-      setState('speaking');
-      setCaption(msg, false);
-      startBargeIn();
-      speak(msg, function(){
-        if (STATE === 'speaking') startAmbient();
-      });
+      finishedStreaming = true;
+      queue.push(msg);
+      pumpQueue();
     });
   }
 
@@ -624,6 +700,7 @@ function professorPage(user) {
   function stopRecognition(done){
     clearTimeout(captureSilenceTimer);
     clearTimeout(captureHardStopTimer);
+    clearTimeout(quickAbandonTimer);
     if (!recognition) { if (done) done(); return; }
     var r = recognition;
     recognition = null;
@@ -719,6 +796,7 @@ function professorPage(user) {
             // one per tab; that collision is exactly what used to leave the
             // mic dead).
             STATE = 'capturing';
+            replyGeneration++; // silence the rest of the reply's queued sentences, not just the current one
             if (canSpeak) synth.cancel(); // stop the reply being read -- the person is talking now
             beginCapture(after);
             return;
@@ -742,13 +820,20 @@ function professorPage(user) {
   }
 
   // ---------- recognition: capturing the actual question ----------
-  function beginCapture(prefill){
+  // quickAbandonMs is set only for the no-wake-word follow-up window after
+  // the Professor finishes a reply (see startFollowUp below) — if nothing
+  // at all is heard in that window, it's not a stuck mic, it just means the
+  // athlete has nothing more to ask right now, so it quietly drops back to
+  // wake-word-only ambient listening instead of holding the mic hot for the
+  // full 20s hard cap. A capture started FROM the wake word never gets this
+  // timer: saying "Hey Professor" already proved intent to speak.
+  function beginCapture(prefill, quickAbandonMs){
     stopRecognition(function(){
       setState('capturing');
       captureText = '';
       captureInterim = '';
       capturePrefill = prefill || '';
-      setCaption(capturePrefill ? capturePrefill : 'Pode falar…', !capturePrefill);
+      setCaption(capturePrefill ? capturePrefill : (quickAbandonMs ? 'Pode continuar, ou fico quieto.' : 'Pode falar…'), !capturePrefill);
 
       recognition = new SR();
       recognition.lang = 'pt-BR';
@@ -757,6 +842,7 @@ function professorPage(user) {
       recognitionPhase = 'capturing';
 
       recognition.onresult = function(event){
+        clearTimeout(quickAbandonTimer);
         // Recompute from the FULL results list every time (not just the
         // range from event.resultIndex) and keep interim text in its own
         // variable instead of discarding it. Chrome routinely never marks a
@@ -789,10 +875,36 @@ function professorPage(user) {
       };
       try { recognition.start(); } catch (e) { showPermError(); }
 
-      armSilenceTimer();
+      // A capture that starts from the wake word (or push-to-talk) already
+      // has proof of intent, so the normal 2200ms-of-silence timer is armed
+      // immediately — if nothing follows within that beat, there was no
+      // real question. The follow-up window is different: the athlete may
+      // just need a moment to decide whether to say anything at all, so it
+      // gets the longer quickAbandonMs grace period instead, and only starts
+      // the normal (short) silence timer once onresult shows they're
+      // actually talking (see clearTimeout(quickAbandonTimer) there).
+      if (quickAbandonMs) {
+        clearTimeout(quickAbandonTimer);
+        quickAbandonTimer = setTimeout(function(){
+          if (STATE === 'capturing' && !captureText && !captureInterim) finishCapture();
+        }, quickAbandonMs);
+      } else {
+        armSilenceTimer();
+      }
       clearTimeout(captureHardStopTimer);
       captureHardStopTimer = setTimeout(finishCapture, 20000); // hard cap so a stuck mic never listens forever
     });
+  }
+
+  // ---------- after the Professor finishes a reply: keep listening ----------
+  // This is the actual fix for "preciso dizer Hey Professor toda vez" — once
+  // a conversation is going, the mic reopens straight into capture mode, no
+  // wake word required, same as talking to a person who's still looking at
+  // you. If nothing is said within quickAbandonMs, it falls back to
+  // wake-word-only ambient listening on its own (see beginCapture above).
+  function startFollowUp(){
+    if (!canListen) { startAmbient(); return; }
+    beginCapture('', 9000);
   }
 
   function armSilenceTimer(){
@@ -837,6 +949,7 @@ function professorPage(user) {
 
   function stopAll(){
     stopRecognition();
+    replyGeneration++;
     if (canSpeak) synth.cancel();
     setState('standby');
     setCaption('Toque em "Ativar o Professor" pra começar.', true);
@@ -867,7 +980,7 @@ function professorPage(user) {
     if (e.code === 'Space' && !e.repeat && (STATE === 'ambient' || STATE === 'standby' || STATE === 'speaking')) {
       e.preventDefault();
       if (STATE === 'standby') { activateBtn.click(); return; }
-      if (STATE === 'speaking') { STATE = 'capturing'; if (canSpeak) synth.cancel(); }
+      if (STATE === 'speaking') { STATE = 'capturing'; replyGeneration++; if (canSpeak) synth.cancel(); }
       pttActive = true;
       beginCapture('');
     } else if (e.code === 'Escape') {
@@ -887,7 +1000,7 @@ function professorPage(user) {
     if (STATE === 'standby') { activateBtn.click(); return; }
     if (STATE === 'ambient') beginCapture('');
     else if (STATE === 'capturing') finishCapture();
-    else if (STATE === 'speaking') { STATE = 'capturing'; if (canSpeak) synth.cancel(); beginCapture(''); }
+    else if (STATE === 'speaking') { STATE = 'capturing'; replyGeneration++; if (canSpeak) synth.cancel(); beginCapture(''); }
   });
 
   window.addEventListener('beforeunload', function(){ stopAll(); });

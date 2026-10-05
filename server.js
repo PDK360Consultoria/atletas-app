@@ -822,6 +822,15 @@ async function handle(req, res) {
       const text = (body.message || '').trim();
       if (!text) { res.writeHead(400); return res.end('empty'); }
       if (!apiKeyFor(user)) { res.writeHead(412); return res.end('missing_key'); }
+      // The Professor page sends voice:true — it's a live spoken
+      // conversation during a run, not a WhatsApp-style text thread, so the
+      // reply needs to start (and read aloud) differently: no artificial
+      // "humano lendo a mensagem" delay (dead air mid-run reads as the
+      // Professor being broken, not as realism), lower thinking effort for
+      // a faster first word, and a persona note so the model doesn't read
+      // out something only legible on screen (a "·"-separated splits list,
+      // for instance).
+      const isVoice = body.voice === true;
 
       let activity = null;
       if (body.activity_id) {
@@ -849,15 +858,22 @@ async function handle(req, res) {
           const intervals = activity.intervals_json ? JSON.parse(activity.intervals_json) : [];
           context += '\n' + buildActivityFocusContext(activity, laps, intervals);
         }
+        if (isVoice) {
+          context += '\n\nEsta conversa está acontecendo por VOZ, ao vivo, durante a corrida do atleta — ele está te ouvindo por um sintetizador de fala, não lendo texto na tela. Isso muda a forma da resposta: 1 frase, no máximo 2, bem curtas; NUNCA liste splits/paces em sequência separados por "·" ou vírgula (regra 9 não se aplica aqui — isso é ilegível em voz alta), cite no máximo um número, falado como alguém falaria em voz alta; nunca use qualquer formatação visual. Se a pergunta pedir uma análise longa, responda só o ponto mais importante e diga que pode detalhar mais se ele quiser.';
+        }
         const priorRows = db.prepare('SELECT * FROM chat_messages WHERE user_id = ? AND activity_id IS ? ORDER BY created_at ASC, id ASC').all(user.id, activityId);
         const history = priorRows.slice(0, -1).slice(-20).map((m) => ({ role: m.role, content: m.content }));
-        // A human treinador never replies the instant a message lands — hold
-        // briefly (client already shows the "digitando" dots during this
-        // wait) before the reply starts streaming in.
-        await new Promise((resolve) => setTimeout(resolve, computeHumanDelayMs(text.length)));
+        // A human treinador never replies the instant a WhatsApp message
+        // lands — hold briefly before the reply starts streaming in. That
+        // realism is backwards for a live spoken exchange: dead air after
+        // you finish talking just reads as the Professor hanging, so voice
+        // skips straight to streaming.
+        if (!isVoice) {
+          await new Promise((resolve) => setTimeout(resolve, computeHumanDelayMs(text.length)));
+        }
         full = await streamChatWithAssistant(apiKeyFor(user), context, history, text, (delta) => {
           res.write(delta);
-        });
+        }, { effort: isVoice ? 'low' : 'medium' });
 
         // A request for a visual ("manda uma imagem desse treino", "quero em
         // stories"...) gets a second, separate, non-streaming call that
