@@ -344,6 +344,21 @@ function professorPage(user, opts) {
   var micAnalyserBuf = null;
   var micLevel = 0;           // smoothed 0..1, updated once per animation frame
   var assistantTranscriptBuf = ''; // the CURRENT reply's transcript, as it streams in
+  // The caption used to just dump every response.output_audio_transcript.delta
+  // onto the screen the instant it arrived — Felipe's "aparece digitando e
+  // depois fala" complaint is exactly the documented behavior of OpenAI's
+  // Realtime API: transcript text and audio are two independent, untimed
+  // streams, and the text deltas land far faster than the audio actually
+  // plays (confirmed on OpenAI's own community forum — there's no timestamp
+  // tying a delta to a moment in the audio, so the only fix anyone's found is
+  // to trickle the text out client-side at roughly speaking pace instead of
+  // showing it all at once). revealBuffer holds text received but not yet
+  // shown; revealShown is what's currently on screen; revealTimer ticks it
+  // out a couple characters at a time.
+  var revealBuffer = '';
+  var revealShown = '';
+  var revealTimer = null;
+  var REVEAL_MS_PER_CHAR = 62; // ~16 chars/sec — close to natural spoken PT-BR pace
   var inactivityTimer = null; // auto-hangs-up a call nobody's talking in
   var hardCapTimer = null;    // absolute ceiling on one call's length
 
@@ -399,6 +414,28 @@ function professorPage(user, opts) {
   function setCaption(text, muted){
     captionEl.textContent = text;
     captionEl.className = 'caption' + (muted ? ' muted' : '');
+  }
+  // Stops the trickle-out reveal and clears it — called whenever whatever's
+  // being revealed is no longer relevant (a new reply starts, the athlete
+  // interrupts, the call ends) so stale text can never flash back over a
+  // caption that's since moved on to something else.
+  function stopReveal(){
+    if (revealTimer) { clearInterval(revealTimer); revealTimer = null; }
+    revealBuffer = '';
+    revealShown = '';
+  }
+  // Appends newly-arrived transcript text to the reveal queue and, if it's
+  // not already running, starts ticking it out onto the caption a couple
+  // characters at a time instead of dumping it all on screen immediately.
+  function queueReveal(deltaText){
+    revealBuffer += deltaText;
+    if (revealTimer) return;
+    revealTimer = setInterval(function(){
+      if (!revealBuffer) { clearInterval(revealTimer); revealTimer = null; return; }
+      revealShown += revealBuffer.slice(0, 2);
+      revealBuffer = revealBuffer.slice(2);
+      setCaption(revealShown, false);
+    }, REVEAL_MS_PER_CHAR * 2);
   }
   // ---------- shared history (same chat_messages rows as /assistant) ----------
   // The backend already treats /professor and /assistant as one conversation
@@ -623,6 +660,7 @@ function professorPage(user, opts) {
     if (remoteAudioEl) { try { remoteAudioEl.pause(); } catch (e) {} if (remoteAudioEl.parentNode) remoteAudioEl.parentNode.removeChild(remoteAudioEl); remoteAudioEl = null; }
     if (micAudioCtx) { try { micAudioCtx.close(); } catch (e) {} micAudioCtx = null; }
     micAnalyser = null; micAnalyserBuf = null; micLevel = 0;
+    stopReveal();
     clearLiveTimers();
   }
 
@@ -660,6 +698,7 @@ function professorPage(user, opts) {
     switch (evt.type) {
       case 'input_audio_buffer.speech_started':
         clearTimeout(inactivityTimer);
+        stopReveal(); // real barge-in: whatever was still trickling out is now stale
         setState('listening');
         setCaption('Ouvindo…', true);
         break;
@@ -668,15 +707,17 @@ function professorPage(user, opts) {
         break;
       case 'response.created':
         assistantTranscriptBuf = '';
+        stopReveal();
         setState('speaking');
         break;
       case 'response.output_audio_transcript.delta':
-        if (evt.delta) { assistantTranscriptBuf += evt.delta; setCaption(assistantTranscriptBuf, false); }
+        if (evt.delta) { assistantTranscriptBuf += evt.delta; queueReveal(evt.delta); }
         break;
       case 'response.output_audio_transcript.done':
         if (evt.transcript && evt.transcript.trim()) pushLog('professor', evt.transcript.trim());
         break;
       case 'response.done':
+        stopReveal();
         setState('listening');
         setCaption('Pode continuar falando…', true);
         armInactivityTimer();
