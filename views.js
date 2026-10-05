@@ -639,13 +639,13 @@ function layout({ title, user, body, active, extraHead, bodyEnd, hideCoachWidget
           <a class="link ${active === 'activities' ? 'active' : ''}" href="/activities">Treinos</a>
           <a class="link ${active === 'feed' ? 'active' : ''}" href="/feed">Feed</a>
           <a class="link ${active === 'discover' ? 'active' : ''}" href="/discover">Buscar</a>
+          <a class="link ${active === 'assistant' ? 'active' : ''}" href="/assistant">Professor Chat</a>
+          <a class="link ${active === 'professor' ? 'active' : ''}" href="/professor">Professor ao vivo</a>
           <div class="nav-more" id="navMore">
-            <button class="nav-more-btn ${['races', 'coach', 'assistant', 'professor', 'settings', 'admin'].includes(active) ? 'active' : ''}" id="navMoreBtn" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="navMorePanel">Mais<span class="nav-more-caret">▾</span></button>
+            <button class="nav-more-btn ${['races', 'coach', 'settings', 'admin'].includes(active) ? 'active' : ''}" id="navMoreBtn" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="navMorePanel">Mais<span class="nav-more-caret">▾</span></button>
             <div class="nav-more-panel" id="navMorePanel">
               <a class="nav-more-item ${active === 'races' ? 'active' : ''}" href="/races">Provas</a>
-              <a class="nav-more-item ${active === 'coach' ? 'active' : ''}" href="/coach">Coach ao vivo</a>
-              <a class="nav-more-item ${active === 'assistant' ? 'active' : ''}" href="/assistant">Professor Chat</a>
-              <a class="nav-more-item ${active === 'professor' ? 'active' : ''}" href="/professor">Professor ao vivo</a>
+              <a class="nav-more-item ${active === 'coach' ? 'active' : ''}" href="/coach">Treino ao Vivo</a>
               <a class="nav-more-item ${active === 'settings' ? 'active' : ''}" href="/settings">Config</a>
               ${user.is_admin ? `<a class="nav-more-item ${active === 'admin' ? 'active' : ''}" href="/admin">Admin</a>` : ''}
             </div>
