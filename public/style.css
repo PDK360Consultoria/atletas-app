@@ -137,6 +137,12 @@ button.danger{background:linear-gradient(155deg, var(--red), #a02f2f); color:#ff
   background:linear-gradient(150deg, var(--surface2), var(--surface));
   box-shadow:inset 0 1px 0 rgba(255,255,255,0.5), inset 0 -2px 3px rgba(0,0,0,0.14), 0 4px 10px -6px rgba(var(--glow),0.4);}
 
+/* weekly training streak — profile hero chip + dashboard stat tile (see
+   computeWeeklyStreak in lib/stats.js) */
+.streak-pill{background:linear-gradient(150deg, var(--surface2), var(--surface)); color:var(--accent); border-color:rgba(var(--glow),0.4); vertical-align:middle;}
+.streak-pill .icon-svg{width:13px; height:13px;}
+.streak-icon{background:linear-gradient(150deg, rgba(var(--glow),0.22), var(--surface));}
+
 /* ---------- hero badge (spinning shoe token, parallaxes with the cursor) ---------- */
 .hero-badge{position:absolute; top:26px; right:26px; z-index:3; width:76px; height:76px; border-radius:22px;
   display:flex; align-items:center; justify-content:center; padding:18px;
@@ -462,10 +468,10 @@ img.post-avatar{object-fit:cover; background:var(--surface2); box-shadow:0 0 0 1
 .post-activity-title{font-weight:800; font-size:15px; color:var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
 .post-activity-type{font-size:11px; font-family:'IBM Plex Mono',monospace; text-transform:uppercase; letter-spacing:0.05em; color:var(--ink-faint);}
 .post-stats{display:grid; grid-template-columns:repeat(auto-fit,minmax(72px,1fr)); gap:10px; margin-top:12px;}
-.post-stat{text-align:center; padding:10px 6px; border-radius:12px; background:var(--surface2);}
-.post-stat .v{font-family:'Archivo',sans-serif; font-weight:800; font-size:18px; color:var(--ink);}
-.post-stat .v .u{font-size:11px; font-weight:600; color:var(--ink-faint); margin-left:2px;}
-.post-stat .k{font-size:10px; text-transform:uppercase; letter-spacing:0.05em; color:var(--ink-faint); margin-top:3px; font-family:'IBM Plex Mono',monospace;}
+.post-stat{text-align:center; padding:14px 6px 12px; border-radius:12px; background:var(--surface2);}
+.post-stat .v{font-family:'Archivo Black','Archivo',sans-serif; font-weight:900; font-size:26px; letter-spacing:-0.01em; color:var(--ink);}
+.post-stat .v .u{font-size:12px; font-weight:700; color:var(--ink-faint); margin-left:2px; font-family:'Archivo',sans-serif;}
+.post-stat .k{font-size:10px; text-transform:uppercase; letter-spacing:0.06em; color:var(--ink-faint); margin-top:5px; font-family:'IBM Plex Mono',monospace; font-weight:600;}
 
 /* condensed pace-by-km chart on an auto-posted feed card — reuses the same
    .bars/.bar-km markup+hover tooltips as the activity page's "Splits por
@@ -473,6 +479,12 @@ img.post-avatar{object-fit:cover; background:var(--surface2); box-shadow:0 0 0 1
    doesn't dominate the feed. */
 .post-chart{margin-top:12px; padding:14px 14px 28px; border-radius:14px; background:var(--surface2);}
 .post-chart .bars{height:84px; margin-top:0;}
+
+/* GPS route shape — feed card and activity-detail page (see routeMapSvg in
+   views.js). No map tiles, just the path, scaled to fill the box. */
+.post-route{margin-top:12px; padding:10px; border-radius:14px; background:var(--surface2); display:flex; justify-content:center;}
+.route-map{display:block; width:100%; height:auto; max-height:220px;}
+.route-card .route-map{max-height:320px;}
 
 .post-actions{display:flex; align-items:center; gap:18px; margin-top:14px; padding-top:12px; border-top:1px solid var(--line);}
 .kudos-btn{display:inline-flex; align-items:center; gap:7px; background:transparent; color:var(--ink-dim); border:1px solid var(--line); box-shadow:none; padding:7px 14px; font-size:13px; font-weight:700; transition:transform .12s ease, background .12s ease, color .12s ease, border-color .12s ease;}
@@ -514,6 +526,10 @@ img.post-avatar{object-fit:cover; background:var(--surface2); box-shadow:0 0 0 1
    detectPersonalRecord() in lib/stats.js and p.is_pr / prInfo in views.js. */
 .pr-badge{margin-left:auto; background:linear-gradient(155deg, var(--gold), var(--amber)); color:#15171A; border-color:transparent; font-weight:800;}
 .pr-badge .icon-svg{width:12px; height:12px;}
+.pr-label{display:flex; align-items:center; gap:8px; margin:10px 0 0; padding:10px 14px; border-radius:12px;
+  background:linear-gradient(135deg, color-mix(in srgb, var(--gold) 16%, var(--surface)), var(--surface));
+  border:1px solid rgba(var(--glow),0.3); color:var(--ink); font-weight:700; font-size:13px;}
+.pr-label .icon-svg{width:16px; height:16px; color:var(--gold); flex-shrink:0;}
 
 /* delete-post button (feed post header, own posts only) — see POST
    /feed/:id/delete in server.js. */
