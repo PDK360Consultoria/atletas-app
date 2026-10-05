@@ -828,6 +828,29 @@ function professorPage(user, opts) {
           }).then(function(answerSdp){
             if (myGen !== liveGeneration) throw { kind: 'stale' };
             return localPc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+          }).then(function(){
+            // setRemoteDescription resolving only means signaling finished —
+            // the data channel itself (oai-events) opens a beat later, once
+            // ICE/DTLS actually settles. sendUserTextTurn() below silently
+            // no-ops on a channel that isn't open yet, which is exactly what
+            // Felipe hit: he tapped a quick-chip, the prefilled question
+            // never made it to OpenAI, and the call just sat there
+            // "listening" for him to speak instead of asking it. Waiting
+            // for the real 'open' event (not just assuming it's ready)
+            // closes that race for every call, prefilled or not.
+            if (localDataChannel.readyState === 'open') return;
+            return new Promise(function(resolve, reject){
+              var openTimeout = setTimeout(function(){
+                localDataChannel.removeEventListener('open', onOpen);
+                reject({ kind: 'generic' });
+              }, 8000);
+              function onOpen(){
+                clearTimeout(openTimeout);
+                localDataChannel.removeEventListener('open', onOpen);
+                resolve();
+              }
+              localDataChannel.addEventListener('open', onOpen);
+            });
           });
         });
       }).then(function(){
