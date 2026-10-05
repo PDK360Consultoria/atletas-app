@@ -431,7 +431,7 @@ function professorPage(user, opts) {
   }
   function stateTuning(){
     switch (STATE) {
-      case 'listening':  return { amp: 17, speed: 3.8, glow: 40, col1: '#BFE3FF', col2: '#4E9BFF', ringAlpha: 0.92 };
+      case 'listening':  return { amp: 11, speed: 2.7, glow: 36, col1: '#BFE3FF', col2: '#4E9BFF', ringAlpha: 0.92 };
       case 'connecting': return { amp: 6,  speed: 1.6, glow: 26, col1: '#FFD98A', col2: '#FFC24E', ringAlpha: 0.75, sweep: true };
       case 'speaking':   return { amp: 13, speed: 3.4, glow: 38, col1: '#FFE3A8', col2: '#FFC24E', ringAlpha: 0.95 };
       case 'ambient':    return { amp: 4,  speed: 0.7, glow: 20, col1: '#FFD98A', col2: '#FFC24E', ringAlpha: 0.55 };
@@ -453,7 +453,7 @@ function professorPage(user, opts) {
     }
     var rms = Math.sqrt(sum / micAnalyserBuf.length);
     var target = Math.min(1, rms * 5.5);
-    micLevel += (target - micLevel) * 0.35;
+    micLevel += (target - micLevel) * 0.18;
   }
 
   function draw(now){
@@ -470,12 +470,10 @@ function professorPage(user, opts) {
     var tune = stateTuning();
     if (STATE === 'listening') {
       // real voice, not a canned loop: louder into the mic = the SAME
-      // circle gets bigger, wobblier and faster, right as it happens —
-      // nothing new drawn, just more movement on the one ring
-      tune.amp += micLevel * 34;
-      tune.speed += micLevel * 2.6;
-      tune.glow += micLevel * 20;
-      tune.ringAlpha = Math.min(1, tune.ringAlpha + micLevel * 0.08);
+      // circle gets a bit bigger and brighter — speed stays put, only size
+      // reacts, so it never feels jittery, just alive
+      tune.amp += micLevel * 14;
+      tune.glow += micLevel * 10;
     }
     var bgGrad = ctx.createRadialGradient(cx, cy, base * 0.2, cx, cy, size * 0.62);
     bgGrad.addColorStop(0, tune.col2 + '22');
