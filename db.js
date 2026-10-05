@@ -396,4 +396,13 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 `);
 ensureColumn('chat_messages', 'activity_id', 'activity_id INTEGER');
 
+// Rota do treino: polyline codificada (formato padrão do Google Encoded
+// Polyline Algorithm — ver lib/polyline.js) com os pontos lat/lon do
+// percurso. Vem de duas fontes: upload de GPX/TCX (lib/gpx.js downsample +
+// encode) ou do próprio Strava, que já devolve map.summary_polyline na
+// listagem de atividades (lib/strava.js) — sem chamada extra de API por
+// atividade. Usada só para desenhar o traçado (SVG) no feed/detalhe do
+// treino; nunca para recalcular distância/pace.
+ensureColumn('activities', 'route_polyline', 'route_polyline TEXT');
+
 module.exports = db;

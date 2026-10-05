@@ -11,7 +11,7 @@ const { parseClock, secToPace } = require('./lib/format');
 const { parseActivityFile } = require('./lib/gpx');
 const { analyzeActivity } = require('./lib/anthropic');
 const strava = require('./lib/strava');
-const { computeEvolution, computeMedals, detectPersonalRecord } = require('./lib/stats');
+const { computeEvolution, computeMedals, detectPersonalRecord, computeWeeklyStreak } = require('./lib/stats');
 const { buildContext, buildActivityFocusContext, streamChatWithAssistant, computeHumanDelayMs, detectImageRequest, extractWorkoutCard } = require('./lib/assistant');
 const { fetchNearbyRaces } = require('./lib/races');
 const { buildMonthCalendar } = require('./lib/calendar');
@@ -218,6 +218,7 @@ async function handle(req, res) {
       const evolution = computeEvolution(allActivities);
       const weekKm = evolution.weeks[evolution.weeks.length - 1].km;
       const medals = computeMedals(allActivities);
+      const weeklyStreak = computeWeeklyStreak(allActivities);
 
       let calYear = today.getFullYear(), calMonth = today.getMonth() + 1;
       if (parsed.query.month && /^\d{4}-\d{2}$/.test(parsed.query.month)) {
@@ -226,7 +227,7 @@ async function handle(req, res) {
       }
       const calendar = buildMonthCalendar(calYear, calMonth, allActivities, races);
 
-      return html(res, 200, views.dashboardPage({ user, nextRace, daysToRace, recentActivities, weekKm, evolution, medals, calendar }));
+      return html(res, 200, views.dashboardPage({ user, nextRace, daysToRace, recentActivities, weekKm, evolution, medals, calendar, weeklyStreak }));
     }
 
     // ---------- races ----------
@@ -291,8 +292,8 @@ async function handle(req, res) {
       fs.writeFileSync(path.join(UPLOAD_DIR, savedName), file.data);
 
       const info = db.prepare(`INSERT INTO activities
-        (user_id, race_id, title, workout_type, source, raw_filename, distance_km, duration_sec, avg_pace_sec, avg_hr, max_hr, elevation_gain_m, started_at, laps_json)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+        (user_id, race_id, title, workout_type, source, raw_filename, distance_km, duration_sec, avg_pace_sec, avg_hr, max_hr, elevation_gain_m, started_at, laps_json, route_polyline)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
         user.id,
         fields.race_id ? parseInt(fields.race_id, 10) : null,
         fields.title || 'Treino',
@@ -306,7 +307,8 @@ async function handle(req, res) {
         summary.max_hr,
         summary.elevation_gain_m,
         summary.started_at,
-        JSON.stringify(summary.laps)
+        JSON.stringify(summary.laps),
+        summary.route_polyline || null
       );
       return redirect(res, `/activities/${info.lastInsertRowid}`);
     }
@@ -401,6 +403,7 @@ async function handle(req, res) {
           a.distance_km as activity_distance_km, a.duration_sec as activity_duration_sec,
           a.avg_pace_sec as activity_avg_pace_sec, a.elevation_gain_m as activity_elevation_gain_m,
           a.source as activity_source, a.laps_json as activity_laps_json,
+          a.route_polyline as activity_route_polyline,
           u.name as author_name, u.public_slug as author_slug, u.avatar_path as author_avatar_path
         FROM posts p
         JOIN users u ON u.id = p.user_id
@@ -417,6 +420,28 @@ async function handle(req, res) {
         try { p.activity_laps = p.activity_laps_json ? JSON.parse(p.activity_laps_json) : null; }
         catch (e) { p.activity_laps = null; }
       });
+
+      // Specific PR wording ("Pace mais rápido já registrado em ~20km")
+      // instead of a bare "Recorde" badge — recomputed here against the
+      // author's current full history (not stored at post-creation time, so
+      // it stays accurate even if later runs change the picture), batched
+      // per author so a page with several posts from the same athlete only
+      // loads their activities once.
+      const prPosts = posts.filter((p) => p.is_pr && p.activity_id);
+      if (prPosts.length) {
+        const activitiesByAuthor = new Map();
+        for (const p of prPosts) {
+          if (!activitiesByAuthor.has(p.user_id)) {
+            activitiesByAuthor.set(p.user_id, db.prepare('SELECT * FROM activities WHERE user_id = ?').all(p.user_id));
+          }
+          const authorActivities = activitiesByAuthor.get(p.user_id);
+          const activity = authorActivities.find((a) => a.id === p.activity_id);
+          if (activity) {
+            const pr = detectPersonalRecord(activity, authorActivities);
+            if (pr.isPR) p.pr_label = pr.label;
+          }
+        }
+      }
 
       if (posts.length) {
         const placeholders = posts.map(() => '?').join(',');
@@ -547,12 +572,13 @@ async function handle(req, res) {
       const activities = db.prepare('SELECT * FROM activities WHERE user_id = ?').all(profileUser.id);
       const evolution = computeEvolution(activities);
       const medals = computeMedals(activities);
+      const weeklyStreak = computeWeeklyStreak(activities);
       const upcomingRaces = db.prepare(`SELECT * FROM races WHERE user_id = ? AND (race_date IS NULL OR race_date >= date('now')) ORDER BY race_date ASC LIMIT 3`).all(profileUser.id);
       const followerCount = db.prepare('SELECT COUNT(*) as c FROM follows WHERE followee_id = ?').get(profileUser.id).c;
       const followingCount = db.prepare('SELECT COUNT(*) as c FROM follows WHERE follower_id = ?').get(profileUser.id).c;
       const isFollowing = !!user && user.id !== profileUser.id &&
         !!db.prepare('SELECT 1 FROM follows WHERE follower_id = ? AND followee_id = ?').get(user.id, profileUser.id);
-      return html(res, 200, views.publicProfilePage(user, profileUser, evolution, upcomingRaces, medals, { followerCount, followingCount, isFollowing }));
+      return html(res, 200, views.publicProfilePage(user, profileUser, evolution, upcomingRaces, medals, { followerCount, followingCount, isFollowing, weeklyStreak }));
     }
     if (method === 'POST' && (m = /^\/u\/([a-zA-Z0-9-]+)\/follow$/.exec(pathname))) {
       if (!requireAuth()) return;

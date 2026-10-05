@@ -1,6 +1,7 @@
 const { secToPace, fmtClock, fmtDate, timeAgo, esc, renderMarkdownLite, icon } = require('./lib/format');
 const { summarizeIntervals } = require('./lib/intervals');
 const { estimateVO2max } = require('./lib/stats');
+const { decode: decodePolyline } = require('./lib/polyline');
 const { REGION_LABELS, autoRegionLabel } = require('./lib/races');
 const { REACTION_TYPES, memberNumber, buildDiagnosis } = require('./lib/social');
 
@@ -1634,7 +1635,7 @@ function calendarHtml(calendar) {
 </script>`;
 }
 
-function dashboardPage({ user, nextRace, daysToRace, recentActivities, weekKm, evolution, medals, calendar }) {
+function dashboardPage({ user, nextRace, daysToRace, recentActivities, weekKm, evolution, medals, calendar, weeklyStreak }) {
   const evoHtml = evolution && evolution.totalCount ? `
 <div class="card">
   <h2><span class="h-icon">${icon('mountain', 'evo')}</span>Evolução</h2>
@@ -1671,6 +1672,7 @@ function dashboardPage({ user, nextRace, daysToRace, recentActivities, weekKm, e
   <div class="card stat"><div class="icon-badge">${icon('stopwatch')}</div><div class="k">Meta de tempo</div><div class="v">${user.goal_time_sec ? fmtClock(user.goal_time_sec) : '—'}</div></div>
   <div class="card stat"><div class="icon-badge">${icon('flame')}</div><div class="k">Km na semana</div><div class="v">${weekKm.toFixed(1)}<span class="u">km</span></div></div>
   <div class="card stat"><div class="icon-badge">${icon('trophy')}</div><div class="k">Treinos registrados</div><div class="v">${recentActivities.length ? recentActivities.length + '+' : '0'}</div></div>
+  ${weeklyStreak ? `<div class="card stat streak-stat"><div class="icon-badge streak-icon">${icon('flame', 'streak')}</div><div class="k">Sequência</div><div class="v">${weeklyStreak}<span class="u">${weeklyStreak === 1 ? 'semana' : 'semanas'}</span></div></div>` : ''}
 </div>
 
 ${medals ? `<div class="card">
@@ -2033,6 +2035,11 @@ function activityDetailPage({ user, activity, laps, intervals, evolution, prInfo
   <div class="card stat"><div class="icon-badge">${icon('trophy', 'ad8')}</div><div class="k">VO2 máx (estimado)</div><div class="v">${vo2max ?? '—'}${vo2max != null ? '<span class="u">ml/kg/min</span>' : ''}</div></div>
 </div>
 
+${activity.route_polyline ? `<div class="card route-card">
+  <h2><span class="h-icon">${icon('mountain', 'rt')}</span>Rota</h2>
+  ${routeMapSvg(activity.route_polyline, { width: 800, height: 320, pad: 20 })}
+</div>` : ''}
+
 ${prInfo && prInfo.isPR ? `<div class="card pr-banner">
   <div class="pr-banner-icon">${icon('trophy', 'prb')}</div>
   <div class="pr-banner-text">
@@ -2144,6 +2151,57 @@ function workoutTypeIcon(workoutType) {
   return 'shoe';
 }
 
+// Draws the training's GPS route as a small inline SVG line — no map tiles
+// (no paid map API is configured for this app), just the shape of the path
+// itself, which is what actually reads at feed-card size anyway. Longitude
+// is scaled by cos(latitude) so the shape isn't stretched, and the drawing
+// is centered/scaled to fill the given box with a bit of padding. Returns
+// '' when there's no polyline (manual entries, GPX files without real GPS,
+// or activities synced before this feature existed).
+function routeMapSvg(polylineStr, opts) {
+  if (!polylineStr) return '';
+  const points = decodePolyline(polylineStr);
+  if (points.length < 2) return '';
+  opts = opts || {};
+  const w = opts.width || 320;
+  const h = opts.height || 180;
+  const pad = opts.pad != null ? opts.pad : 14;
+
+  let minLat = Infinity, maxLat = -Infinity, minLon = Infinity, maxLon = -Infinity;
+  for (const [lat, lon] of points) {
+    if (lat < minLat) minLat = lat;
+    if (lat > maxLat) maxLat = lat;
+    if (lon < minLon) minLon = lon;
+    if (lon > maxLon) maxLon = lon;
+  }
+  const midLatRad = ((minLat + maxLat) / 2) * Math.PI / 180;
+  const lonScale = Math.cos(midLatRad) || 1;
+  const spanX = Math.max((maxLon - minLon) * lonScale, 0.00001);
+  const spanY = Math.max(maxLat - minLat, 0.00001);
+  const availW = w - pad * 2, availH = h - pad * 2;
+  const scale = Math.min(availW / spanX, availH / spanY);
+  const drawW = spanX * scale, drawH = spanY * scale;
+  const offX = pad + (availW - drawW) / 2;
+  const offY = pad + (availH - drawH) / 2;
+  const toXY = ([lat, lon]) => [
+    offX + (lon - minLon) * lonScale * scale,
+    offY + (maxLat - lat) * scale,
+  ];
+
+  const d = points.map((pt, i) => {
+    const [x, y] = toXY(pt);
+    return `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(' ');
+  const [sx, sy] = toXY(points[0]);
+  const [ex, ey] = toXY(points[points.length - 1]);
+
+  return `<svg class="route-map" viewBox="0 0 ${w} ${h}" width="${w}" height="${h}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Traçado da rota">
+    <path d="${d}" fill="none" stroke="var(--accent)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="${sx.toFixed(1)}" cy="${sy.toFixed(1)}" r="4" fill="var(--green)"/>
+    <circle cx="${ex.toFixed(1)}" cy="${ey.toFixed(1)}" r="4" fill="var(--red)"/>
+  </svg>`;
+}
+
 // When a post is linked to an activity the athlete explicitly chose to
 // publish (p.is_auto, set only via "Compartilhar no feed"), the card shows
 // the run's own stats instead of a typed caption, closer to how Strava's
@@ -2163,6 +2221,7 @@ function activityStatBlock(p) {
     </span>
   </a>
   ${stats.length ? `<div class="post-stats">${stats.map(([v, u, k]) => `<div class="post-stat"><div class="v">${esc(String(v))}${u ? `<span class="u">${esc(u)}</span>` : ''}</div><div class="k">${esc(k)}</div></div>`).join('')}</div>` : ''}
+  ${p.activity_route_polyline ? `<div class="post-route">${routeMapSvg(p.activity_route_polyline, { width: 600, height: 220 })}</div>` : ''}
   ${p.activity_laps && p.activity_laps.length > 1 ? `<div class="post-chart">${paceBarsHtml({ avg_pace_sec: p.activity_avg_pace_sec }, p.activity_laps, 12)}</div>` : ''}`;
 }
 
@@ -2204,13 +2263,14 @@ function postCard(user, p, returnTo) {
       <div class="post-name">${p.author_slug ? `<a href="/u/${esc(p.author_slug)}">${esc(p.author_name)}</a>` : esc(p.author_name)}${mine ? ' <span class="pill">você</span>' : ''}<span class="post-verb muted">${p.is_auto ? 'completou um treino' : 'compartilhou'}</span></div>
       <div class="post-time" title="${esc(fmtDate(p.created_at))}">${timeAgo(p.created_at)}</div>
     </div>
-    ${p.is_pr ? `<span class="pill pr-badge">${icon('trophy', 'pr' + p.id)}Recorde</span>` : ''}
+    ${p.is_pr ? `<span class="pill pr-badge" title="${p.pr_label ? esc(p.pr_label) : ''}">${icon('trophy', 'pr' + p.id)}Recorde</span>` : ''}
     ${mine ? `<form method="POST" action="/feed/${p.id}/delete" class="post-delete-form" onsubmit="return confirm('Excluir este post? Essa ação não pode ser desfeita.')">
       <input type="hidden" name="return_to" value="${esc(returnTo)}">
       <button class="post-delete-btn" type="submit" title="Excluir post" aria-label="Excluir post">${icon('trash', 'del' + p.id)}</button>
     </form>` : ''}
   </div>
   ${p.body ? `<div class="post-body">${esc(p.body).replace(/\n/g, '<br>')}</div>` : ''}
+  ${p.is_pr && p.pr_label ? `<p class="pr-label">${icon('trophy', 'prl' + p.id)}${esc(p.pr_label)}</p>` : ''}
   ${p.photo_path ? `<div class="post-photo"><img src="/uploads/${esc(p.photo_path)}" alt="" loading="lazy"></div>` : ''}
   ${p.activity_id ? activityStatBlock(p) : ''}
   <div class="post-actions">
@@ -2339,7 +2399,7 @@ function publicProfilePage(viewer, profileUser, evolution, races, medals, social
 <div class="card profile-hero">
   ${avatarHtml(profileUser.name, profileUser.id, profileUser.avatar_path, 'profile-avatar')}
   <div>
-    <h1 style="margin:0 0 4px;">${esc(profileUser.name)}</h1>
+    <h1 style="margin:0 0 4px;">${esc(profileUser.name)}${social.weeklyStreak ? ` <span class="pill streak-pill">${icon('flame', 'ppstreak')}${social.weeklyStreak} ${social.weeklyStreak === 1 ? 'semana' : 'semanas'}</span>` : ''}</h1>
     ${profileUser.city ? `<p class="muted" style="margin:0 0 6px;">${esc(profileUser.city)}</p>` : ''}
     ${profileUser.bio ? `<p style="margin:0;">${esc(profileUser.bio)}</p>` : ''}
     ${profileUser.goal_race_name ? `<div class="pill" style="margin-top:10px;"><span class="dot"></span>Meta: ${esc(profileUser.goal_race_name)}${profileUser.goal_time_sec ? ` em ${fmtClock(profileUser.goal_time_sec)}` : ''}</div>` : ''}
