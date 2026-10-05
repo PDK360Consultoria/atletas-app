@@ -86,18 +86,32 @@ function professorPage(user, opts) {
   @keyframes dotpulse{0%,100%{opacity:1} 50%{opacity:.35}}
   @media (prefers-reduced-motion:reduce){.statuspill .dot{animation:none !important;}}
 
+  /* Felipe: this part was ugly because the button and its paragraph sat
+     position:absolute with NO offsets, which falls back to dead center on
+     top of the orb canvas — the ring's curve and its center dot cut
+     straight through the text. Two things had to be true at once to fix it
+     for good: the text can never sit on top of the ring (so it has to live
+     below the canvas, in normal flow, not centered over it), and the orb
+     can never be so tall that stacking it with the text, the caption, the
+     quick-start chips and the log overflows a short screen (that overflow
+     was the regression from the first attempt at this fix). The second
+     part is why #orbCanvas's size is capped by vh here, not just vmin —
+     vmin alone only reacts to the viewport's SHORTER side, so on a wide
+     short window (or just a browser with a shrunk window) it stayed large
+     enough to push everything below it off-screen regardless. Capping it
+     against the vertical space actually left in .stage (roughly: viewport
+     height minus topbar, caption, chips, log and footer) means the orb
+     itself shrinks first, before anything below it ever has to overlap. */
   .stage{
-    position:relative; z-index:1; flex:1; display:flex; align-items:center; justify-content:center;
-    min-height:0; padding:20px;
+    position:relative; z-index:1; flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    gap:12px; min-height:0; padding:12px;
   }
-  #orbCanvas{display:block; width:min(78vmin, 560px); height:min(78vmin, 560px); max-width:92vw; max-height:92vw;}
+  #orbCanvas{display:block; width:min(78vmin, 560px, 32vh); height:min(78vmin, 560px, 32vh); max-width:88vw; max-height:88vw;}
 
   .activate{
-    position:absolute; z-index:3; display:flex; flex-direction:column; align-items:center; gap:14px;
-    pointer-events:none;
+    position:relative; z-index:3; display:flex; flex-direction:column; align-items:center; gap:10px; flex:none;
   }
   .activate button{
-    pointer-events:auto;
     font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:13px; letter-spacing:0.14em;
     text-transform:uppercase; color:var(--ink); background:rgba(255,194,78,0.1);
     border:1px solid rgba(255,194,78,0.45); border-radius:999px; padding:16px 30px; cursor:pointer;
@@ -108,6 +122,27 @@ function professorPage(user, opts) {
   .activate p{
     font-family:'Archivo',sans-serif; font-size:13px; color:var(--ink-faint); max-width:280px; text-align:center;
     line-height:1.5;
+  }
+  /* A phone turned sideways (or any window under ~480px tall) is the one
+     case the vh-capped orb above can't fully solve on its own — there just
+     isn't 480px+ of room for topbar + orb + button + this paragraph +
+     caption + quick-start chips + footer at once. Rather than let any of
+     that wrap into its neighbor again, free up room in two ways: drop the
+     paragraph (the button label and the short caption line below it
+     already say the same thing) and hide the quick-start chips (a
+     convenience — tapping a pre-written question — not the only way in;
+     the button and "Hey Professor" both still work). The #orbCanvas.js
+     sizing logic (search fitCanvas) backstops whatever's still too tight
+     after this by measuring the real leftover space and shrinking the
+     orb itself, down to a floor that keeps it recognizable as a ring. */
+  @media (max-height:480px){
+    .activate p{display:none;}
+    #orbCanvas{width:min(78vmin, 560px, 22vh); height:min(78vmin, 560px, 22vh);}
+    .stage{gap:6px;}
+    .caption{min-height:0; margin:4px auto;}
+    .quickchips{display:none !important;}
+    .footer{padding:0 20px 8px;}
+    .bottom{padding:0 26px 8px;}
   }
 
   .caption{
@@ -250,7 +285,7 @@ function professorPage(user, opts) {
   </div>
 </div>
 
-<div class="stage">
+<div class="stage" id="stage">
   <canvas id="orbCanvas" width="560" height="560"></canvas>
   <div class="activate" id="activateBlock">
     <button id="activateBtn" type="button">Falar com o Professor</button>
@@ -298,6 +333,7 @@ function professorPage(user, opts) {
 
   var canvas = document.getElementById('orbCanvas');
   var ctx = canvas.getContext('2d');
+  var stageEl = document.getElementById('stage');
   var activateBlock = document.getElementById('activateBlock');
   var activateBtn = document.getElementById('activateBtn');
   var quickChips = document.getElementById('quickChips');
@@ -313,9 +349,45 @@ function professorPage(user, opts) {
   // ---------- canvas sizing (devicePixelRatio aware) ----------
   var dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
   var cssSize = 560;
+  // The CSS min(78vmin, 560px, ...vh) rule on #orbCanvas is a coarse,
+  // viewport-only guess at how tall the orb can be — it has no idea how
+  // much vertical room the "Falar com o Professor" button+text below it
+  // actually need, so on a short-but-not-extreme window (a phone turned
+  // sideways, a half-height browser window) it could still guess too big
+  // and leave the activate block's text touching the caption underneath.
+  // This measures the REAL remaining space in .stage once the activate
+  // block's own height is known, and only then, if the CSS size would
+  // still be too tall for that, shrinks the canvas with an inline style.
+  // activateBlock's height is cached on first read (while it's visible,
+  // which it always is on first load) so the reservation stays the same
+  // size even while it's later hidden mid-call — the orb shouldn't jump
+  // to a different size as the call connects.
+  var activateReserveH = null;
+  function getActivateReserveH(){
+    if (activateReserveH != null) return activateReserveH;
+    var wasHidden = activateBlock.style.display === 'none';
+    if (wasHidden) activateBlock.style.display = 'flex';
+    activateReserveH = activateBlock.getBoundingClientRect().height;
+    if (wasHidden) activateBlock.style.display = 'none';
+    return activateReserveH;
+  }
   function fitCanvas(){
+    canvas.style.width = '';
+    canvas.style.height = '';
     var rect = canvas.getBoundingClientRect();
-    cssSize = rect.width || 560;
+    var natural = rect.width || 560;
+    var stageCs = window.getComputedStyle(stageEl);
+    var padV = parseFloat(stageCs.paddingTop) + parseFloat(stageCs.paddingBottom);
+    var gapV = parseFloat(stageCs.rowGap || stageCs.gap) || 0;
+    var innerH = stageEl.getBoundingClientRect().height - padV;
+    var availForCanvas = innerH - gapV - getActivateReserveH();
+    var finalSize = Math.max(96, Math.min(natural, availForCanvas));
+    if (finalSize < natural - 1) {
+      canvas.style.width = finalSize + 'px';
+      canvas.style.height = finalSize + 'px';
+      rect = canvas.getBoundingClientRect();
+    }
+    cssSize = rect.width || natural;
     canvas.width = Math.round(cssSize * dpr);
     canvas.height = Math.round(cssSize * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -347,14 +419,28 @@ function professorPage(user, opts) {
   var micStream = null;       // local mic MediaStream, torn down when the call ends
   var dataChannel = null;     // 'oai-events' — session/transcript events, text in
   var remoteAudioEl = null;   // plays the Professor's actual voice (the WebRTC audio track)
-  // Feeds the orb's "listening" animation with the athlete's REAL mic
-  // volume (via Web Audio's AnalyserNode) instead of a canned loop, so the
-  // blue state actually moves with his voice — Felipe asked for it to look
-  // "mais tecnológica, mexe-se mais... como se fosse um robô".
+  // Feeds the orb's bars with the athlete's REAL mic signal (via Web
+  // Audio's AnalyserNode) instead of a canned loop — Felipe asked for it to
+  // look "mais tecnológica, mexe-se mais... como se fosse um robô", and
+  // later, for the bars specifically, "conforme ele fala as linhas se
+  // mexem, na mesma velocidade da fala e não aleatorio". Two buffers off
+  // the same analyser: micAnalyserBuf (time-domain) for an overall loudness
+  // scalar, micFreqBuf (frequency-domain) for the 64 individual bar
+  // heights — a real per-frequency-bin spectrum, not noise.
   var micAudioCtx = null;
   var micAnalyser = null;
   var micAnalyserBuf = null;
+  var micFreqBuf = null;
   var micLevel = 0;           // smoothed 0..1, updated once per animation frame
+  // Same idea, mirrored onto the PROFESSOR's own voice (the remote WebRTC
+  // audio track) — this is what drives the bars while he's the one
+  // talking, so "speaking" is synced to his actual speech the same way
+  // "listening" is synced to the athlete's.
+  var voiceAudioCtx = null;
+  var voiceAnalyser = null;
+  var voiceAnalyserBuf = null;
+  var voiceFreqBuf = null;
+  var voiceLevel = 0;
   var assistantTranscriptBuf = ''; // the CURRENT reply's transcript, as it streams in
   // The caption used to just dump every response.output_audio_transcript.delta
   // onto the screen the instant it arrived — Felipe's "aparece digitando e
@@ -530,37 +616,82 @@ function professorPage(user, opts) {
   }
 
   // ---------- the orb ----------
+  // Felipe picked this over 4 other concepts (sent as PNGs for him to
+  // choose from) and asked for it blue-only: a radial equalizer — a ring
+  // of bars around a core dot, each bar's length read straight off a real
+  // Web Audio spectrum (see micFreqBuf/voiceFreqBuf above), never off a
+  // random generator. "Conforme ele fala as linhas se mexem, na mesma
+  // velocidade da fala e não aleatorio" — while the Professor is talking,
+  // the bars are driven frame-by-frame by voiceAnalyser (HIS actual voice,
+  // the remote WebRTC track); while the athlete is talking, by micAnalyser
+  // (his mic) — same mechanism, just pointed at whichever side is making
+  // the sound right now. Nothing else (connecting/ambient/standby, where
+  // there's no live audio to read) uses a synthetic idle pattern instead —
+  // that's the only place anything here is "made up".
   var t0 = performance.now();
-  function noiseAt(angle, t, seed){
-    return Math.sin(angle * 7 + t * 1.0 + seed) * 0.5
-         + Math.sin(angle * 13 - t * 1.6 + seed * 1.7) * 0.28
-         + Math.sin(angle * 3 + t * 0.6) * 0.22;
-  }
+  var N_BARS = 64; // matches fftSize:128 -> frequencyBinCount:64, one bin per bar, no resampling
+  var BLUE_DIM = '#4E9BFF', BLUE_BRIGHT = '#BFE3FF';
+
   function stateTuning(){
     switch (STATE) {
-      case 'listening':  return { amp: 11, speed: 2.7, glow: 36, col1: '#BFE3FF', col2: '#4E9BFF', ringAlpha: 0.92 };
-      case 'connecting': return { amp: 6,  speed: 1.6, glow: 26, col1: '#FFD98A', col2: '#FFC24E', ringAlpha: 0.75, sweep: true };
-      case 'speaking':   return { amp: 13, speed: 3.4, glow: 38, col1: '#FFE3A8', col2: '#FFC24E', ringAlpha: 0.95 };
-      case 'ambient':    return { amp: 4,  speed: 0.7, glow: 20, col1: '#FFD98A', col2: '#FFC24E', ringAlpha: 0.55 };
-      default:           return { amp: 2,  speed: 0.35,glow: 12, col1: '#6A7078', col2: '#9BA1A8', ringAlpha: 0.3 };
+      case 'listening':  return { glow: 34, idle: 0.16 };
+      case 'connecting': return { glow: 24, idle: 0.12 };
+      case 'speaking':   return { glow: 36, idle: 0.16 };
+      case 'ambient':    return { glow: 18, idle: 0.10 };
+      default:           return { glow: 10, idle: 0.055 };
     }
   }
 
-  // Reads the athlete's actual mic volume off the live AnalyserNode (RMS of
-  // the raw waveform) and smooths it into micLevel (0..1). No analyser yet
-  // (not in a call, or browser without AudioContext) just relaxes micLevel
-  // back to 0 instead of leaving it stuck.
-  function sampleMicLevel(){
-    if (!micAnalyser || !micAnalyserBuf) { micLevel += (0 - micLevel) * 0.2; return; }
-    micAnalyser.getByteTimeDomainData(micAnalyserBuf);
+  // RMS of an analyser's time-domain buffer, smoothed into a level value
+  // (0..1) — a coarse "how loud right now" scalar used for the background
+  // glow and the bars' overall size. Falls back to relaxing toward 0 with
+  // no analyser (not in a call, or no AudioContext support) instead of
+  // leaving it stuck wherever it last was.
+  function sampleLevel(analyser, buf, level){
+    if (!analyser || !buf) return level + (0 - level) * 0.2;
+    analyser.getByteTimeDomainData(buf);
     var sum = 0;
-    for (var i = 0; i < micAnalyserBuf.length; i++) {
-      var v = (micAnalyserBuf[i] - 128) / 128;
+    for (var i = 0; i < buf.length; i++) {
+      var v = (buf[i] - 128) / 128;
       sum += v * v;
     }
-    var rms = Math.sqrt(sum / micAnalyserBuf.length);
+    var rms = Math.sqrt(sum / buf.length);
     var target = Math.min(1, rms * 5.5);
-    micLevel += (target - micLevel) * 0.18;
+    return level + (target - level) * 0.18;
+  }
+
+  // The real per-bar spectrum: one FFT bin per bar, folded left/right off
+  // the top so the pattern is symmetric (bin 0 at top, bin 32 at bottom,
+  // the two sides mirrors of each other) rather than all the energy
+  // bunched on one side — voice/speech energy concentrates in the lower
+  // bins, so an unfolded mapping would leave half the ring looking dead.
+  function freqBars(analyser, buf){
+    if (!analyser || !buf) return null;
+    analyser.getByteFrequencyData(buf);
+    var half = N_BARS / 2;
+    var out = new Array(N_BARS);
+    for (var i = 0; i < N_BARS; i++) {
+      var folded = i <= half ? i : N_BARS - i;
+      out[i] = buf[Math.min(buf.length - 1, folded)] / 255;
+    }
+    return out;
+  }
+
+  // Synthetic patterns — ONLY for states with no real audio to read yet.
+  function idleBars(t, amount){
+    var out = new Array(N_BARS);
+    for (var i = 0; i < N_BARS; i++) out[i] = amount * (0.4 + 0.6 * Math.abs(Math.sin(t * 0.6 + i * 0.35)));
+    return out;
+  }
+  function connectingBars(t){
+    var out = new Array(N_BARS);
+    var head = (t * 0.35) % 1;
+    for (var i = 0; i < N_BARS; i++) {
+      var pos = i / N_BARS;
+      var d = Math.abs(pos - head); d = Math.min(d, 1 - d);
+      out[i] = 0.12 + Math.max(0, 1 - d * 7) * 0.75;
+    }
+    return out;
   }
 
   function draw(now){
@@ -571,78 +702,82 @@ function professorPage(user, opts) {
 
     ctx.clearRect(0, 0, size, size);
 
-    sampleMicLevel();
-
-    // soft background glow
     var tune = stateTuning();
+    var amps, level;
     if (STATE === 'listening') {
-      // real voice, not a canned loop: louder into the mic = the SAME
-      // circle gets a bit bigger and brighter — speed stays put, only size
-      // reacts, so it never feels jittery, just alive
-      tune.amp += micLevel * 14;
-      tune.glow += micLevel * 10;
+      micLevel = sampleLevel(micAnalyser, micAnalyserBuf, micLevel);
+      amps = freqBars(micAnalyser, micFreqBuf) || idleBars(t, tune.idle);
+      level = micLevel;
+    } else if (STATE === 'speaking') {
+      voiceLevel = sampleLevel(voiceAnalyser, voiceAnalyserBuf, voiceLevel);
+      amps = freqBars(voiceAnalyser, voiceFreqBuf) || idleBars(t, tune.idle);
+      level = voiceLevel;
+    } else if (STATE === 'connecting') {
+      amps = connectingBars(t);
+      level = 0.3;
+    } else {
+      amps = idleBars(t, tune.idle);
+      level = 0;
     }
+
+    // soft background glow — brighter/bigger the louder it currently is
+    var glow = tune.glow + level * 18;
     var bgGrad = ctx.createRadialGradient(cx, cy, base * 0.2, cx, cy, size * 0.62);
-    bgGrad.addColorStop(0, tune.col2 + '22');
+    bgGrad.addColorStop(0, BLUE_DIM + '22');
     bgGrad.addColorStop(1, 'transparent');
     ctx.fillStyle = bgGrad;
     ctx.fillRect(0, 0, size, size);
 
-    // faint concentric rings (static-ish, slow rotation)
-    for (var r = 1; r <= 4; r++) {
+    // faint reference ring the bars sit on
+    ctx.beginPath();
+    ctx.arc(cx, cy, base, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255,255,255,0.09)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    // faint tick marks just outside the bars — instrument-panel detail,
+    // not reactive to anything
+    for (var i = 0; i < 48; i++) {
+      var tk = (i / 48) * Math.PI * 2;
+      var r1 = base * 1.62, r2 = (i % 4 === 0) ? base * 1.72 : base * 1.68;
       ctx.beginPath();
-      ctx.arc(cx, cy, base * (0.5 + r * 0.17), t * 0.04 * r, t * 0.04 * r + Math.PI * 2);
-      ctx.strokeStyle = 'rgba(255,255,255,' + (0.05 + 0.015 * r) + ')';
+      ctx.moveTo(cx + Math.cos(tk) * r1, cy + Math.sin(tk) * r1);
+      ctx.lineTo(cx + Math.cos(tk) * r2, cy + Math.sin(tk) * r2);
+      ctx.strokeStyle = 'rgba(255,255,255,0.07)';
       ctx.lineWidth = 1;
       ctx.stroke();
     }
 
-    // thinking sweep — a brighter arc chasing around the ring
-    if (tune.sweep) {
+    // the bars themselves
+    var maxExtra = base * 0.62;
+    for (var b = 0; b < N_BARS; b++) {
+      var ang = (b / N_BARS) * Math.PI * 2 - Math.PI / 2; // 0 at the top, clockwise
+      var a = Math.min(1, amps[b] + level * 0.12);
+      var len = base * 0.1 + a * maxExtra;
+      var x1 = cx + Math.cos(ang) * base, y1 = cy + Math.sin(ang) * base;
+      var x2 = cx + Math.cos(ang) * (base + len), y2 = cy + Math.sin(ang) * (base + len);
+      var col = a > 0.55 ? BLUE_BRIGHT : BLUE_DIM;
+      ctx.strokeStyle = col;
+      ctx.globalAlpha = 0.55 + a * 0.45;
+      ctx.lineWidth = Math.max(2, size * 0.009);
+      ctx.lineCap = 'round';
+      ctx.shadowColor = col;
+      ctx.shadowBlur = 6 + a * glow * 0.5;
       ctx.beginPath();
-      var sweepA = t * 2.2;
-      ctx.arc(cx, cy, base, sweepA, sweepA + 0.9);
-      ctx.strokeStyle = tune.col1;
-      ctx.lineWidth = 3;
-      ctx.shadowColor = tune.col1;
-      ctx.shadowBlur = tune.glow;
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
       ctx.stroke();
-      ctx.shadowBlur = 0;
     }
-
-    // main irregular glowing ring
-    var pulse = 1 + 0.025 * Math.sin(t * (tune.speed * 0.8));
-    var pts = 72;
-    ctx.beginPath();
-    for (var i = 0; i <= pts; i++) {
-      var ang = (i / pts) * Math.PI * 2;
-      var n = noiseAt(ang, t * tune.speed, 0);
-      var rad = (base + n * tune.amp) * pulse;
-      var x = cx + Math.cos(ang) * rad;
-      var y = cy + Math.sin(ang) * rad;
-      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-    }
-    ctx.closePath();
-    var strokeGrad = ctx.createLinearGradient(cx - base, cy - base, cx + base, cy + base);
-    strokeGrad.addColorStop(0, tune.col2);
-    strokeGrad.addColorStop(0.55, tune.col1);
-    strokeGrad.addColorStop(1, tune.col2);
-    ctx.strokeStyle = strokeGrad;
-    ctx.globalAlpha = tune.ringAlpha;
-    ctx.lineWidth = 3.5;
-    ctx.shadowColor = tune.col2;
-    ctx.shadowBlur = tune.glow;
-    ctx.stroke();
     ctx.shadowBlur = 0;
     ctx.globalAlpha = 1;
 
     // inner core dot
     ctx.beginPath();
-    ctx.arc(cx, cy, base * 0.12, 0, Math.PI * 2);
-    ctx.fillStyle = tune.col1;
+    ctx.arc(cx, cy, base * 0.12 * (1 + level * 0.3), 0, Math.PI * 2);
+    ctx.fillStyle = BLUE_BRIGHT;
     ctx.globalAlpha = 0.85;
-    ctx.shadowColor = tune.col1;
-    ctx.shadowBlur = tune.glow * 0.6;
+    ctx.shadowColor = BLUE_BRIGHT;
+    ctx.shadowBlur = glow * 0.6;
     ctx.fill();
     ctx.shadowBlur = 0;
     ctx.globalAlpha = 1;
@@ -691,7 +826,9 @@ function professorPage(user, opts) {
     if (micStream) { micStream.getTracks().forEach(function(t){ try { t.stop(); } catch (e) {} }); micStream = null; }
     if (remoteAudioEl) { try { remoteAudioEl.pause(); } catch (e) {} if (remoteAudioEl.parentNode) remoteAudioEl.parentNode.removeChild(remoteAudioEl); remoteAudioEl = null; }
     if (micAudioCtx) { try { micAudioCtx.close(); } catch (e) {} micAudioCtx = null; }
-    micAnalyser = null; micAnalyserBuf = null; micLevel = 0;
+    micAnalyser = null; micAnalyserBuf = null; micFreqBuf = null; micLevel = 0;
+    if (voiceAudioCtx) { try { voiceAudioCtx.close(); } catch (e) {} voiceAudioCtx = null; }
+    voiceAnalyser = null; voiceAnalyserBuf = null; voiceFreqBuf = null; voiceLevel = 0;
     stopReveal();
     clearLiveTimers();
   }
@@ -821,13 +958,15 @@ function professorPage(user, opts) {
       permErrEl.hidden = true;
 
       var localMicStream = null, localPc = null, localDataChannel = null, localAudioEl = null;
-      var localMicAudioCtx = null, localMicAnalyser = null, localMicAnalyserBuf = null;
+      var localMicAudioCtx = null, localMicAnalyser = null, localMicAnalyserBuf = null, localMicFreqBuf = null;
+      var localVoiceAudioCtx = null, localVoiceAnalyser = null, localVoiceAnalyserBuf = null, localVoiceFreqBuf = null;
       function cleanupLocal(){
         if (localDataChannel) { try { localDataChannel.close(); } catch (e) {} }
         if (localPc) { try { localPc.close(); } catch (e) {} }
         if (localMicStream) { localMicStream.getTracks().forEach(function(t){ try { t.stop(); } catch (e) {} }); }
         if (localAudioEl) { try { localAudioEl.pause(); } catch (e) {} if (localAudioEl.parentNode) localAudioEl.parentNode.removeChild(localAudioEl); }
         if (localMicAudioCtx) { try { localMicAudioCtx.close(); } catch (e) {} }
+        if (localVoiceAudioCtx) { try { localVoiceAudioCtx.close(); } catch (e) {} }
       }
 
       fetch('/api/professor/realtime-session', { method: 'POST' }).then(function(res){
@@ -844,30 +983,67 @@ function professorPage(user, opts) {
           localMicStream = stream;
 
           // Taps the raw mic signal with a Web Audio AnalyserNode so the
-          // orb can react to the athlete's ACTUAL voice level while he's
-          // talking, instead of a canned animation. Purely local/visual —
-          // never sent anywhere; if AudioContext isn't available the orb
-          // just falls back to its normal animation (sampleMicLevel()
-          // relaxes micLevel to 0 when there's no analyser).
+          // orb's bars react to the athlete's ACTUAL voice — both an overall
+          // loudness scalar (time-domain, localMicAnalyserBuf) and a real
+          // 64-bin spectrum (frequency-domain, localMicFreqBuf) for the bars
+          // themselves. fftSize:128 -> frequencyBinCount:64, one bin per
+          // bar, no resampling needed. Purely local/visual — never sent
+          // anywhere; if AudioContext isn't available the orb just falls
+          // back to its idle animation (freqBars() returns null with no
+          // analyser, draw() picks idleBars() instead).
           try {
             var AC = window.AudioContext || window.webkitAudioContext;
             if (AC) {
               localMicAudioCtx = new AC();
               var micSrc = localMicAudioCtx.createMediaStreamSource(localMicStream);
               localMicAnalyser = localMicAudioCtx.createAnalyser();
-              localMicAnalyser.fftSize = 256;
+              localMicAnalyser.fftSize = 128;
               localMicAnalyser.smoothingTimeConstant = 0.55;
               micSrc.connect(localMicAnalyser);
               localMicAnalyserBuf = new Uint8Array(localMicAnalyser.frequencyBinCount);
+              localMicFreqBuf = new Uint8Array(localMicAnalyser.frequencyBinCount);
             }
-          } catch (e) { localMicAudioCtx = null; localMicAnalyser = null; localMicAnalyserBuf = null; }
+          } catch (e) { localMicAudioCtx = null; localMicAnalyser = null; localMicAnalyserBuf = null; localMicFreqBuf = null; }
 
           localPc = new RTCPeerConnection();
           localAudioEl = document.createElement('audio');
           localAudioEl.autoplay = true;
           localAudioEl.style.display = 'none';
           document.body.appendChild(localAudioEl);
-          localPc.ontrack = function(e){ localAudioEl.srcObject = e.streams[0]; localAudioEl.play().catch(function(){}); };
+          localPc.ontrack = function(e){
+            localAudioEl.srcObject = e.streams[0];
+            localAudioEl.play().catch(function(){});
+            // Mirrors the mic analyser above, but on the PROFESSOR's own
+            // voice track (the remote stream) — this is what lets the bars
+            // move with his ACTUAL speech while he's talking, same way they
+            // move with the athlete's mic while listening. Tapping the
+            // stream with Web Audio here is analysis-only and doesn't
+            // affect playback — localAudioEl keeps playing it normally
+            // either way, independent of this.
+            try {
+              var AC2 = window.AudioContext || window.webkitAudioContext;
+              if (AC2 && !localVoiceAudioCtx) {
+                localVoiceAudioCtx = new AC2();
+                var voiceSrc = localVoiceAudioCtx.createMediaStreamSource(e.streams[0]);
+                localVoiceAnalyser = localVoiceAudioCtx.createAnalyser();
+                localVoiceAnalyser.fftSize = 128;
+                localVoiceAnalyser.smoothingTimeConstant = 0.55;
+                voiceSrc.connect(localVoiceAnalyser);
+                localVoiceAnalyserBuf = new Uint8Array(localVoiceAnalyser.frequencyBinCount);
+                localVoiceFreqBuf = new Uint8Array(localVoiceAnalyser.frequencyBinCount);
+              }
+            } catch (err) { localVoiceAudioCtx = null; localVoiceAnalyser = null; localVoiceAnalyserBuf = null; localVoiceFreqBuf = null; }
+            // ontrack can fire before OR after the publish step below runs
+            // (it depends on exactly when the remote media starts flowing
+            // relative to the data-channel-open wait) — publish here too,
+            // guarded by myGen, so the orb picks up the voice analyser
+            // whichever order they land in, instead of only when ontrack
+            // happens to win the race.
+            if (myGen === liveGeneration) {
+              voiceAudioCtx = localVoiceAudioCtx; voiceAnalyser = localVoiceAnalyser;
+              voiceAnalyserBuf = localVoiceAnalyserBuf; voiceFreqBuf = localVoiceFreqBuf;
+            }
+          };
           localMicStream.getTracks().forEach(function(track){ localPc.addTrack(track, localMicStream); });
           localDataChannel = localPc.createDataChannel('oai-events');
           localDataChannel.addEventListener('message', function(e){ handleRealtimeEvent(myGen, e.data); });
@@ -917,7 +1093,11 @@ function professorPage(user, opts) {
         // resources to the shared globals so teardownConnection()/
         // endLiveCall() know what to close later.
         pc = localPc; micStream = localMicStream; dataChannel = localDataChannel; remoteAudioEl = localAudioEl;
-        micAudioCtx = localMicAudioCtx; micAnalyser = localMicAnalyser; micAnalyserBuf = localMicAnalyserBuf;
+        micAudioCtx = localMicAudioCtx; micAnalyser = localMicAnalyser; micAnalyserBuf = localMicAnalyserBuf; micFreqBuf = localMicFreqBuf;
+        // Voice analyser is also published from inside ontrack (see above) in
+        // case that fires later than this block — redundant, not conflicting.
+        voiceAudioCtx = localVoiceAudioCtx; voiceAnalyser = localVoiceAnalyser;
+        voiceAnalyserBuf = localVoiceAnalyserBuf; voiceFreqBuf = localVoiceFreqBuf;
         setState('listening');
         setCaption(prefill ? prefill : 'Chamando o professor…', true);
         requestWakeLock();
