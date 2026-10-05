@@ -507,32 +507,58 @@ ready(function(){
 // into a dense multi-line block covering the whole top of the screen on a
 // phone (Felipe sent a screenshot of exactly this). On narrow screens
 // style.css hides .links by default and this toggles it into a dropdown.
+//
+// On top of that, the secondary links (Provas, Coach ao vivo, Professor
+// Chat, Professor ao vivo, Config, Admin) are now tucked behind a "Mais"
+// dropdown — the full flat list made even the desktop bar feel cramped and
+// noisy (Felipe flagged this with a screenshot too). This script wires up
+// both toggles; the "Mais" panel nests inside the mobile dropdown and floats
+// next to the button on desktop (see the .nav-more rules in style.css).
 const MOBILE_NAV_SCRIPT = `<script defer>
 (function(){
 function ready(fn){ if (document.readyState !== 'loading') fn(); else document.addEventListener('DOMContentLoaded', fn); }
 ready(function(){
   var toggle = document.getElementById('navToggle');
   var links = document.getElementById('navLinks');
-  if (!toggle || !links) return;
+  var moreBtn = document.getElementById('navMoreBtn');
+  var morePanel = document.getElementById('navMorePanel');
 
   function setOpen(open){
+    if (!toggle || !links) return;
     links.classList.toggle('open', open);
     toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
   }
+  function setMoreOpen(open){
+    if (!moreBtn || !morePanel) return;
+    morePanel.classList.toggle('open', open);
+    moreBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
 
-  toggle.addEventListener('click', function(){
-    setOpen(!links.classList.contains('open'));
-  });
-  // Tapping a nav link navigates away anyway, but close first so a user who
-  // hits back doesn't land on the page with the menu still stuck open.
-  links.addEventListener('click', function(e){
-    if (e.target.closest && e.target.closest('a.link')) setOpen(false);
-  });
+  if (toggle && links) {
+    toggle.addEventListener('click', function(){
+      setOpen(!links.classList.contains('open'));
+    });
+    // Tapping a nav link navigates away anyway, but close first so a user
+    // who hits back doesn't land on the page with the menu still stuck open.
+    links.addEventListener('click', function(e){
+      if (e.target.closest && e.target.closest('a.link, a.nav-more-item')) setOpen(false);
+    });
+  }
+
+  if (moreBtn && morePanel) {
+    moreBtn.addEventListener('click', function(e){
+      e.stopPropagation();
+      setMoreOpen(!morePanel.classList.contains('open'));
+    });
+  }
+
   document.addEventListener('click', function(e){
-    if (!links.contains(e.target) && !toggle.contains(e.target)) setOpen(false);
+    if (moreBtn && morePanel && !morePanel.contains(e.target) && !moreBtn.contains(e.target)) setMoreOpen(false);
+    if (toggle && links && !links.contains(e.target) && !toggle.contains(e.target)) setOpen(false);
   });
   window.addEventListener('resize', function(){
     if (window.innerWidth > 760) setOpen(false);
+    setMoreOpen(false);
   });
 });
 })();
@@ -610,15 +636,20 @@ function layout({ title, user, body, active, extraHead, bodyEnd, hideCoachWidget
         </button>
         <div class="links" id="navLinks">
           <a class="link ${active === 'home' ? 'active' : ''}" href="/">Perfil</a>
-          <a class="link ${active === 'races' ? 'active' : ''}" href="/races">Provas</a>
           <a class="link ${active === 'activities' ? 'active' : ''}" href="/activities">Treinos</a>
           <a class="link ${active === 'feed' ? 'active' : ''}" href="/feed">Feed</a>
           <a class="link ${active === 'discover' ? 'active' : ''}" href="/discover">Buscar</a>
-          <a class="link ${active === 'coach' ? 'active' : ''}" href="/coach">Coach ao vivo</a>
-          <a class="link ${active === 'assistant' ? 'active' : ''}" href="/assistant">Professor Chat</a>
-          <a class="link ${active === 'professor' ? 'active' : ''}" href="/professor">Professor ao vivo</a>
-          <a class="link ${active === 'settings' ? 'active' : ''}" href="/settings">Config</a>
-          ${user.is_admin ? `<a class="link ${active === 'admin' ? 'active' : ''}" href="/admin">Admin</a>` : ''}
+          <div class="nav-more" id="navMore">
+            <button class="nav-more-btn ${['races', 'coach', 'assistant', 'professor', 'settings', 'admin'].includes(active) ? 'active' : ''}" id="navMoreBtn" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="navMorePanel">Mais<span class="nav-more-caret">▾</span></button>
+            <div class="nav-more-panel" id="navMorePanel">
+              <a class="nav-more-item ${active === 'races' ? 'active' : ''}" href="/races">Provas</a>
+              <a class="nav-more-item ${active === 'coach' ? 'active' : ''}" href="/coach">Coach ao vivo</a>
+              <a class="nav-more-item ${active === 'assistant' ? 'active' : ''}" href="/assistant">Professor Chat</a>
+              <a class="nav-more-item ${active === 'professor' ? 'active' : ''}" href="/professor">Professor ao vivo</a>
+              <a class="nav-more-item ${active === 'settings' ? 'active' : ''}" href="/settings">Config</a>
+              ${user.is_admin ? `<a class="nav-more-item ${active === 'admin' ? 'active' : ''}" href="/admin">Admin</a>` : ''}
+            </div>
+          </div>
           <div class="notif-wrap" id="notifWrap">
             <button class="notif-bell" id="notifBell" type="button" aria-label="Notificações">
               ${icon('bell', 'nb')}
