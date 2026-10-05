@@ -2623,6 +2623,19 @@ ${flags.publicUrl ? `<div class="card">
     <div style="margin-top:12px;"><button class="ghost" type="submit">Salvar chave</button></div>
   </form>
 </div>
+
+<div class="card">
+  <h2><span class="h-icon">${icon('flame', 'ai3')}</span>Chave da API da OpenAI (Professor em voz)</h2>
+  <p class="muted">${flags.aiVoiceSharedAvailable
+    ? 'A conversa de voz do Professor já funciona por padrão pra todo mundo. Se preferir, você pode colar sua própria chave da OpenAI aqui embaixo pra usar a sua conta em vez da conta compartilhada do app.'
+    : 'O Professor agora conversa por voz de verdade, em tempo real (não é mais a voz sintética do navegador) — isso usa a API de voz da OpenAI, separada da chave da Anthropic acima. Cole sua própria chave aqui pra habilitar. A chave fica salva só na sua conta e o uso é cobrado na sua própria conta OpenAI (é uma chamada de voz contínua, então custa mais por minuto do que o chat de texto).'
+  } Não tem uma chave ainda? <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">Crie uma em platform.openai.com</a>.</p>
+  <form method="POST" action="/settings/openai-api-key">
+    <label>Chave da API (sk-...)</label>
+    <input name="openai_api_key" value="${user.openai_api_key ? '••••••••••••' + esc(user.openai_api_key.slice(-4)) : ''}" placeholder="sk-...">
+    <div style="margin-top:12px;"><button class="ghost" type="submit">Salvar chave</button></div>
+  </form>
+</div>
 `;
   return layout({ title: 'Config', user, body, active: 'settings' });
 }

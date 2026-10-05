@@ -405,4 +405,11 @@ ensureColumn('chat_messages', 'activity_id', 'activity_id INTEGER');
 // treino; nunca para recalcular distância/pace.
 ensureColumn('activities', 'route_polyline', 'route_polyline TEXT');
 
+// Chave própria da API Realtime da OpenAI — separada da chave da Anthropic
+// (anthropic_api_key, usada pelo Coach por texto/análise). O Professor em
+// voz agora fala de verdade (voz-pra-voz em tempo real via WebRTC, ver
+// lib/openai.js), e isso exige um provedor diferente da Anthropic; mesmo
+// modelo bring-your-own-key, cadastrada em Configurações.
+ensureColumn('users', 'openai_api_key', 'openai_api_key TEXT');
+
 module.exports = db;

@@ -15,7 +15,9 @@ const { esc } = require('./lib/format');
 // tokens used across the landing hero and the Stories workout cards), not
 // the cyan/teal of the reference screenshot Felipe sent — same "glowing
 // ring HUD" structure, reskinned to the brand.
-function professorPage(user) {
+function professorPage(user, opts) {
+  opts = opts || {};
+  const voiceEnabled = opts.voiceEnabled !== false; // default true so an unexpected missing flag never blocks the page
   const firstName = (user.name || '').split(' ')[0] || 'atleta';
   return `<!DOCTYPE html>
 <html lang="pt-BR">
@@ -183,7 +185,7 @@ function professorPage(user) {
   <canvas id="orbCanvas" width="560" height="560"></canvas>
   <div class="activate" id="activateBlock">
     <button id="activateBtn" type="button">Ativar o Professor</button>
-    <p>Pede acesso ao microfone. Diga <strong>"Hey Professor"</strong> pra começar — depois é só continuar a conversa, sem precisar repetir.</p>
+    <p>Pede acesso ao microfone. Diga <strong>"Hey Professor"</strong> pra começar uma chamada de voz ao vivo — depois é só continuar falando, sem precisar repetir.${voiceEnabled ? '' : ' Cadastre sua chave da API da OpenAI em <a href="/settings" style="color:var(--gold);">Configurações</a> antes de ativar.'}</p>
   </div>
 </div>
 
@@ -201,7 +203,7 @@ function professorPage(user) {
 </div>
 
 <div class="footer">
-  DIGA <kbd>"HEY PROFESSOR"</kbd><span class="sep">·</span><kbd>ESPAÇO</kbd> PRA FALAR AGORA<span class="sep">·</span><kbd>ESC</kbd> PARAR
+  DIGA <kbd>"HEY PROFESSOR"</kbd><span class="sep">·</span><kbd>ESPAÇO</kbd> PRA COMEÇAR AGORA<span class="sep">·</span><kbd>ESC</kbd> ENCERRAR
 </div>
 
 <script>
@@ -209,9 +211,9 @@ function professorPage(user) {
   'use strict';
 
   var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  var synth = window.speechSynthesis;
-  var canSpeak = !!synth;
   var canListen = !!SR;
+  var canCall = !!(window.RTCPeerConnection && navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+  var VOICE_ENABLED = ${voiceEnabled ? 'true' : 'false'};
 
   var canvas = document.getElementById('orbCanvas');
   var ctx = canvas.getContext('2d');
@@ -238,35 +240,32 @@ function professorPage(user) {
   window.addEventListener('resize', fitCanvas);
 
   // ---------- state machine ----------
-  // standby -> ambient (listening for "hey professor") -> capturing (taking
-  // the question) -> thinking (waiting on the coach's reply) -> speaking
-  // (reading the reply aloud) -> back to ambient. "capturing" can also be
-  // entered directly from ambient via push-to-talk (holding space), skipping
-  // the wake word.
+  // standby -> ambient (free, local wake-word listening for "hey professor",
+  // via the Web Speech API) -> connecting (minting an OpenAI Realtime
+  // session + opening the WebRTC call) -> listening/speaking (the live
+  // call itself — OpenAI's own server-side turn detection flips between
+  // these two, no wake word needed once the call is open) -> back to
+  // ambient when the call ends. "Hey Professor" (or Space) is only needed
+  // to START a call from idle, per Felipe's original spec — once live, the
+  // conversation flows like a real phone call, including real barge-in.
   var STATE = 'standby';
   var recognition = null;
-  var recognitionPhase = null; // 'ambient' | 'capturing' — what the current recognition instance is for
-  var captureText = '';     // finalized transcript for the CURRENT capture session
-  var captureInterim = '';  // not-yet-finalized transcript for the CURRENT capture session
-  var capturePrefill = '';  // text spoken right after the wake word, from the ambient session
-  var captureSilenceTimer = null;
-  var captureHardStopTimer = null;
-  var quickAbandonTimer = null;
-  var pttActive = false;
-  var activeXhr = null;
+  var recognitionPhase = null; // 'ambient' — what the current recognition instance is for (only ambient uses it now)
 
   var history = []; // {role:'user'|'professor', text} — just for the on-screen log, last few only
 
-  // Bumped every time a reply is interrupted (barge-in, Escape, push-to-talk
-  // while speaking, orb click, stopAll). synth.cancel() alone only stops the
-  // CURRENT utterance — it does nothing about the rest of that reply's
-  // sentences still sitting in askProfessor()'s own queue, which would
-  // otherwise just keep playing right after the "interrupted" one via
-  // pumpQueue's onDone chain. Each askProfessor() call captures the
-  // generation it was started with and checks it before queuing or playing
-  // anything further, so an interrupted reply actually goes silent instead
-  // of continuing a beat later.
-  var replyGeneration = 0;
+  // ---------- the live call (OpenAI Realtime API over WebRTC) ----------
+  // Bumped on every teardown/start so a stray async step from a call the
+  // athlete already hung up (or that got superseded by a new one) can't
+  // resurrect state or speak over whatever's happening now.
+  var liveGeneration = 0;
+  var pc = null;              // RTCPeerConnection to OpenAI
+  var micStream = null;       // local mic MediaStream, torn down when the call ends
+  var dataChannel = null;     // 'oai-events' — session/transcript events, text in
+  var remoteAudioEl = null;   // plays the Professor's actual voice (the WebRTC audio track)
+  var assistantTranscriptBuf = ''; // the CURRENT reply's transcript, as it streams in
+  var inactivityTimer = null; // auto-hangs-up a call nobody's talking in
+  var hardCapTimer = null;    // absolute ceiling on one call's length
 
   // ---------- screen wake lock ----------
   // Chrome suspends speechSynthesis (and recognition) on a tab that's gone
@@ -373,7 +372,7 @@ function professorPage(user) {
   var meterPhase = 0;
   function tickMeter(){
     meterPhase += 0.18;
-    var active = (STATE === 'capturing' || STATE === 'speaking');
+    var active = (STATE === 'listening' || STATE === 'speaking');
     meterBars.forEach(function(bar, i){
       var base = active ? (0.35 + 0.55 * Math.abs(Math.sin(meterPhase * (1.3 + i * 0.37) + i))) : (0.08 + 0.05 * Math.abs(Math.sin(meterPhase * 0.4 + i)));
       bar.style.height = Math.round(4 + base * 22) + 'px';
@@ -390,11 +389,11 @@ function professorPage(user) {
   }
   function stateTuning(){
     switch (STATE) {
-      case 'capturing': return { amp: 10, speed: 2.6, glow: 34, col1: '#BFE3FF', col2: '#4E9BFF', ringAlpha: 0.9 };
-      case 'thinking':  return { amp: 6,  speed: 1.6, glow: 26, col1: '#FFD98A', col2: '#FFC24E', ringAlpha: 0.75, sweep: true };
-      case 'speaking':  return { amp: 13, speed: 3.4, glow: 38, col1: '#FFE3A8', col2: '#FFC24E', ringAlpha: 0.95 };
-      case 'ambient':   return { amp: 4,  speed: 0.7, glow: 20, col1: '#FFD98A', col2: '#FFC24E', ringAlpha: 0.55 };
-      default:          return { amp: 2,  speed: 0.35,glow: 12, col1: '#6A7078', col2: '#9BA1A8', ringAlpha: 0.3 };
+      case 'listening':  return { amp: 10, speed: 2.6, glow: 34, col1: '#BFE3FF', col2: '#4E9BFF', ringAlpha: 0.9 };
+      case 'connecting': return { amp: 6,  speed: 1.6, glow: 26, col1: '#FFD98A', col2: '#FFC24E', ringAlpha: 0.75, sweep: true };
+      case 'speaking':   return { amp: 13, speed: 3.4, glow: 38, col1: '#FFE3A8', col2: '#FFC24E', ringAlpha: 0.95 };
+      case 'ambient':    return { amp: 4,  speed: 0.7, glow: 20, col1: '#FFD98A', col2: '#FFC24E', ringAlpha: 0.55 };
+      default:           return { amp: 2,  speed: 0.35,glow: 12, col1: '#6A7078', col2: '#9BA1A8', ringAlpha: 0.3 };
     }
   }
 
@@ -478,211 +477,218 @@ function professorPage(user) {
   }
   requestAnimationFrame(draw);
 
-  // ---------- speech synthesis ----------
-  var ptBrVoice = null;
-  function pickVoice(){
-    if (!canSpeak) return;
-    var voices = synth.getVoices() || [];
-    var ptVoices = voices.filter(function(v){ return v.lang === 'pt-BR' || /^pt/i.test(v.lang); });
-    // A voice with localService:false is one of Chrome's network-synthesized
-    // voices (Google's) — it sounds a bit more natural, but it only speaks
-    // after a round trip to Google's TTS servers. During an actual run,
-    // on patchy cellular data, that round trip is exactly what shows up as
-    // "lento" or completely silent — the utterance just never starts, or
-    // takes several seconds to. A local voice (Luciana and friends here)
-    // is synthesized on-device and starts instantly no matter the
-    // connection, so it's ranked first now even though it's a hair more
-    // robotic — reliability during a run matters more than polish.
-    ptBrVoice =
-      ptVoices.find(function(v){ return v.localService === true && /luciana/i.test(v.name); }) ||
-      ptVoices.find(function(v){ return v.localService === true; }) ||
-      ptVoices.find(function(v){ return /luciana/i.test(v.name); }) ||
-      ptVoices.find(function(v){ return v.lang === 'pt-BR'; }) ||
-      ptVoices[0] ||
-      null;
+  // ---------- the live call itself (OpenAI Realtime API, WebRTC) ----------
+  // No more Anthropic text stream + browser TTS pipeline for the live
+  // conversation — this opens a direct audio connection to OpenAI, so the
+  // Professor's voice and ears are the SAME connection: what Felipe hears
+  // is the model's own real-time voice, not a transcript read aloud by the
+  // browser a beat later. Our server's only part in a live call is minting
+  // the short-lived session token (/api/professor/realtime-session); the
+  // actual audio never touches our server.
+
+  function clearLiveTimers(){
+    clearTimeout(inactivityTimer);
+    clearTimeout(hardCapTimer);
+    inactivityTimer = null;
+    hardCapTimer = null;
   }
-  if (canSpeak) {
-    pickVoice();
-    synth.addEventListener('voiceschanged', pickVoice);
+  // If nobody's said anything (either direction) for a while, hang up
+  // rather than silently holding a live, billed call open — easy to forget
+  // the Professor is still "on the line" mid-run.
+  function armInactivityTimer(){
+    clearTimeout(inactivityTimer);
+    inactivityTimer = setTimeout(function(){
+      endLiveCall('Chamada encerrada por inatividade. Diga "Hey Professor" pra continuar.');
+    }, 55000);
   }
-
-  function speak(text, onDone){
-    if (!canSpeak || !text) { if (onDone) onDone(); return; }
-
-    var finished = false;
-    var watchdog = null;
-
-    function finish(){
-      if (finished) return;
-      finished = true;
-      clearTimeout(watchdog);
-      if (onDone) onDone();
-    }
-
-    // Resets every time we get real evidence speech is progressing
-    // (onstart, each word boundary) so a genuinely long reply never gets
-    // cut short — it only fires if NOTHING happens for 6s straight, which
-    // only occurs when the utterance is dead. NOTE: an earlier version of
-    // this also poked the engine every few seconds with pause()/resume() as
-    // a belt-and-suspenders anti-stall measure — that turned out to be the
-    // cause of the choppy, stuttering, "robotic" playback Felipe reported
-    // right after: pausing and resuming a REAL utterance every 4s chops it
-    // into audible fragments. Removed; the watchdog alone already recovers
-    // from a genuinely dead utterance without touching a healthy one.
-    function armWatchdog(){
-      clearTimeout(watchdog);
-      watchdog = setTimeout(finish, 6000);
-    }
-
-    function go(){
-      // Re-resolve the voice right before speaking rather than trusting
-      // whatever pickVoice() found at page load — getVoices() can come back
-      // empty on the very first call and only populate a beat later, which
-      // silently left ptBrVoice null and handed the utterance to Chrome's
-      // own default (usually the flattest-sounding voice installed).
-      pickVoice();
-      var utter = new SpeechSynthesisUtterance(text);
-      utter.lang = 'pt-BR';
-      if (ptBrVoice) utter.voice = ptBrVoice;
-      // 0.96 read as sluggish paired with a non-Google fallback voice —
-      // 1.05 is a brisker, more conversational pace.
-      utter.rate = 1.05;
-      utter.pitch = 1.0;
-      utter.onstart = armWatchdog;
-      utter.onboundary = armWatchdog;
-      utter.onend = finish;
-      utter.onerror = finish;
-      synth.speak(utter);
-      armWatchdog();
-    }
-
-    // Calling speak() in the same tick right after cancel() is a second,
-    // separate trigger for that same Chrome bug — it can leave the new
-    // utterance stuck "pending" forever instead of actually starting. Give
-    // the cancel a beat to actually land before queuing the next utterance.
-    if (synth.speaking || synth.pending) {
-      synth.cancel();
-      setTimeout(go, 150);
-    } else {
-      go();
-    }
+  // A hard ceiling so a stuck connection (or a genuinely very long
+  // conversation) can't run away indefinitely.
+  function armHardCap(){
+    clearTimeout(hardCapTimer);
+    hardCapTimer = setTimeout(function(){
+      endLiveCall('Já faz um tempo — vou encerrar por aqui. Diga "Hey Professor" pra continuar.');
+    }, 15 * 60 * 1000);
   }
 
-  // ---------- backend call (same endpoint the text chat uses) ----------
-  // Reads the reply as it streams in and speaks it SENTENCE BY SENTENCE —
-  // the previous version waited for the entire reply to finish streaming
-  // before saying a single word, which is exactly what made this feel slow
-  // and un-real-time (Felipe's complaint). Now the Professor starts talking
-  // the instant the first sentence is complete, and keeps talking while the
-  // rest of the reply is still arriving — like a person, not a loading bar.
-  function askProfessor(question){
-    setState('thinking');
-    setCaption('Pensando…', true);
-    pushLog('user', question);
+  function teardownConnection(){
+    if (dataChannel) { try { dataChannel.close(); } catch (e) {} dataChannel = null; }
+    if (pc) { try { pc.close(); } catch (e) {} pc = null; }
+    if (micStream) { micStream.getTracks().forEach(function(t){ try { t.stop(); } catch (e) {} }); micStream = null; }
+    if (remoteAudioEl) { try { remoteAudioEl.pause(); } catch (e) {} if (remoteAudioEl.parentNode) remoteAudioEl.parentNode.removeChild(remoteAudioEl); remoteAudioEl = null; }
+    clearLiveTimers();
+  }
 
-    var myGen = ++replyGeneration; // claims this as the current reply
-    var full = '';            // raw accumulated stream text
-    var spoken = 0;            // how much of "full" has already been queued for speech
-    var storyCutIndex = -1;    // index where the [[STORY_CARD]] sentinel starts, once seen
-    var queue = [];            // sentences waiting to be read aloud
-    var queueActive = false;
-    var bargeInStarted = false;
-    var finishedStreaming = false;
+  // Ends whatever's happening (connecting OR a live call) and drops back to
+  // free wake-word listening — never all the way to standby, so saying "Hey
+  // Professor" again immediately works, the same as it would mid-run.
+  function endLiveCall(message){
+    liveGeneration++; // invalidate any in-flight connect/event handling
+    teardownConnection();
+    if (message) { pushLog('professor', message); setCaption(message, true); }
+    startAmbient();
+  }
 
-    function speakableEnd(){
-      return storyCutIndex >= 0 ? storyCutIndex : full.length;
-    }
-    // The sentinel can arrive split across chunks; once any of it has
-    // landed, nothing from that point on is ever queued for speech (there's
-    // no canvas here to draw the card on anyway — see stripStoryCard above).
-    function detectStoryCut(){
-      if (storyCutIndex >= 0) return;
-      var idx = full.indexOf('[[STORY_CARD]]');
-      if (idx !== -1) storyCutIndex = idx;
-    }
-    function pumpQueue(){
-      if (myGen !== replyGeneration) return; // interrupted — let it go silent
-      if (queueActive) return;
-      var next = queue.shift();
-      if (next === undefined) {
-        if (finishedStreaming && STATE === 'speaking') startFollowUp();
-        return;
-      }
-      queueActive = true;
-      if (STATE !== 'speaking') {
+  // Sends whatever the athlete said in the same breath as the wake word
+  // ("Hey Professor, qual é meu treino de hoje") as the call's first turn,
+  // instead of silently discarding it and making them repeat themselves.
+  function sendUserTextTurn(text){
+    if (!dataChannel || dataChannel.readyState !== 'open') return;
+    pushLog('user', text);
+    dataChannel.send(JSON.stringify({
+      type: 'conversation.item.create',
+      item: { type: 'message', role: 'user', content: [{ type: 'input_text', text: text }] },
+    }));
+    dataChannel.send(JSON.stringify({ type: 'response.create' }));
+  }
+
+  // Server-side events arriving on the data channel — this is what drives
+  // the orb between "listening" and "speaking" and fills in the on-screen
+  // caption/log, now that OpenAI (not our own silence-timer heuristics)
+  // owns turn-taking.
+  function handleRealtimeEvent(myGen, raw){
+    if (myGen !== liveGeneration) return; // a superseded call's events — ignore
+    var evt;
+    try { evt = JSON.parse(raw); } catch (e) { return; }
+    switch (evt.type) {
+      case 'input_audio_buffer.speech_started':
+        clearTimeout(inactivityTimer);
+        setState('listening');
+        setCaption('Ouvindo…', true);
+        break;
+      case 'conversation.item.input_audio_transcription.completed':
+        if (evt.transcript && evt.transcript.trim()) pushLog('user', evt.transcript.trim());
+        break;
+      case 'response.created':
+        assistantTranscriptBuf = '';
         setState('speaking');
-        if (!bargeInStarted) { bargeInStarted = true; startBargeIn(); }
-      }
-      setCaption(next, false);
-      speak(next, function(){
-        queueActive = false;
-        pumpQueue();
-      });
+        break;
+      case 'response.output_audio_transcript.delta':
+        if (evt.delta) { assistantTranscriptBuf += evt.delta; setCaption(assistantTranscriptBuf, false); }
+        break;
+      case 'response.output_audio_transcript.done':
+        if (evt.transcript && evt.transcript.trim()) pushLog('professor', evt.transcript.trim());
+        break;
+      case 'response.done':
+        setState('listening');
+        setCaption('Pode continuar falando…', true);
+        armInactivityTimer();
+        break;
+      case 'error':
+        console.error('Professor (realtime):', evt);
+        break;
+      default:
+        break; // lots of other housekeeping events we don't need for the UI
     }
-    // Sentence boundary = ./!/? followed by whitespace/end (not a digit, so
-    // "3.5" never splits mid-number), or a newline. Re-scans from "spoken"
-    // every time new text arrives, since a chunk boundary can land mid-word.
-    function enqueueReadySentences(){
-      if (myGen !== replyGeneration) return;
-      detectStoryCut();
-      var end = speakableEnd();
-      var re = /[.!?]+(?=[\\s\\n]|$)|\\n+/g;
-      re.lastIndex = spoken;
-      var m;
-      while ((m = re.exec(full)) && m.index < end) {
-        var boundary = m.index + m[0].length;
-        if (boundary > end) break;
-        var piece = full.slice(spoken, boundary).trim();
-        spoken = boundary;
-        if (piece) queue.push(piece);
-        re.lastIndex = spoken;
-      }
-      pumpQueue();
-    }
-    function flushRemainder(){
-      if (myGen !== replyGeneration) return;
-      detectStoryCut();
-      var end = speakableEnd();
-      var piece = full.slice(spoken, end).trim();
-      spoken = end;
-      if (piece) queue.push(piece);
-      pumpQueue();
-    }
+  }
 
-    fetch('/api/coach/send', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ message: question, activity_id: null, voice: true }),
-    }).then(function(res){
-      if (res.status === 412) {
-        throw { kind: 'no_key' };
-      }
-      if (!res.ok || !res.body) {
-        throw { kind: 'generic' };
-      }
-      var reader = res.body.getReader();
-      var decoder = new TextDecoder();
-      function pump(){
-        return reader.read().then(function(chunk){
-          if (chunk.done) { finishedStreaming = true; flushRemainder(); return; }
-          full += decoder.decode(chunk.value, { stream: true });
-          enqueueReadySentences();
-          return pump();
-        });
-      }
-      return pump();
-    }).then(function(){
-      var clean = stripStoryCard(full);
-      pushLog('professor', clean || '(sem resposta)');
-    }).catch(function(err){
-      if (myGen !== replyGeneration) return; // superseded — don't speak over whatever's current now
-      var msg = (err && err.kind === 'no_key')
-        ? 'Cadastre sua chave da API da Anthropic em Configurações pra eu poder responder.'
-        : 'Não consegui responder agora. Tenta de novo?';
+  // Starts a live call: mint a session token from our own server, grab the
+  // mic, open a WebRTC connection straight to OpenAI (offer/answer, same
+  // five-step dance from their own docs — no SDK, this codebase avoids npm
+  // dependencies entirely and WebRTC is a browser built-in), and (if the
+  // athlete said something right after the wake word) feed that in as the
+  // call's first turn.
+  //
+  // Every resource this creates (mic stream, RTCPeerConnection, data
+  // channel, audio element) lives in a LOCAL variable until the call is
+  // fully connected — only then does it get published to the module-level
+  // pc/micStream/dataChannel/remoteAudioEl that teardownConnection() and the
+  // rest of the UI use. That's deliberate: if the athlete hits Escape (or a
+  // newer call supersedes this one) WHILE this is still connecting, cleaning
+  // up must only ever touch THIS attempt's own resources — touching the
+  // shared globals here could otherwise tear down (or orphan) a different,
+  // newer call that's already live.
+  function startLiveCall(prefill){
+    // Known upfront (server-rendered flag) — skip the round trip and the
+    // mic prompt entirely rather than connecting just to fail on the key
+    // check a moment later.
+    if (!VOICE_ENABLED) {
+      var msg = 'Cadastre sua chave da API da OpenAI em Configurações pra eu poder conversar por voz.';
       pushLog('professor', msg);
-      finishedStreaming = true;
-      queue.push(msg);
-      pumpQueue();
+      setCaption(msg, true);
+      return;
+    }
+    stopRecognition(function(){
+      var myGen = ++liveGeneration;
+      setState('connecting');
+      setCaption('Conectando…', true);
+      permErrEl.hidden = true;
+
+      var localMicStream = null, localPc = null, localDataChannel = null, localAudioEl = null;
+      function cleanupLocal(){
+        if (localDataChannel) { try { localDataChannel.close(); } catch (e) {} }
+        if (localPc) { try { localPc.close(); } catch (e) {} }
+        if (localMicStream) { localMicStream.getTracks().forEach(function(t){ try { t.stop(); } catch (e) {} }); }
+        if (localAudioEl) { try { localAudioEl.pause(); } catch (e) {} if (localAudioEl.parentNode) localAudioEl.parentNode.removeChild(localAudioEl); }
+      }
+
+      fetch('/api/professor/realtime-session', { method: 'POST' }).then(function(res){
+        if (myGen !== liveGeneration) throw { kind: 'stale' };
+        if (res.status === 412) throw { kind: 'no_key' };
+        if (!res.ok) throw { kind: 'generic' };
+        return res.json();
+      }).then(function(session){
+        if (myGen !== liveGeneration) throw { kind: 'stale' };
+        var ephemeralKey = session && session.value;
+        if (!ephemeralKey) throw { kind: 'generic' };
+        return navigator.mediaDevices.getUserMedia({ audio: true }).then(function(stream){
+          if (myGen !== liveGeneration) { stream.getTracks().forEach(function(t){ t.stop(); }); throw { kind: 'stale' }; }
+          localMicStream = stream;
+
+          localPc = new RTCPeerConnection();
+          localAudioEl = document.createElement('audio');
+          localAudioEl.autoplay = true;
+          localAudioEl.style.display = 'none';
+          document.body.appendChild(localAudioEl);
+          localPc.ontrack = function(e){ localAudioEl.srcObject = e.streams[0]; localAudioEl.play().catch(function(){}); };
+          localMicStream.getTracks().forEach(function(track){ localPc.addTrack(track, localMicStream); });
+          localDataChannel = localPc.createDataChannel('oai-events');
+          localDataChannel.addEventListener('message', function(e){ handleRealtimeEvent(myGen, e.data); });
+
+          return localPc.createOffer().then(function(offer){
+            return localPc.setLocalDescription(offer);
+          }).then(function(){
+            return fetch('https://api.openai.com/v1/realtime/calls', {
+              method: 'POST',
+              body: localPc.localDescription.sdp,
+              headers: { authorization: 'Bearer ' + ephemeralKey, 'content-type': 'application/sdp' },
+            });
+          }).then(function(res){
+            if (!res.ok) throw { kind: 'generic' };
+            return res.text();
+          }).then(function(answerSdp){
+            if (myGen !== liveGeneration) throw { kind: 'stale' };
+            return localPc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+          });
+        });
+      }).then(function(){
+        if (myGen !== liveGeneration) { cleanupLocal(); return; }
+        // Connected — this attempt is now THE live call; publish its
+        // resources to the shared globals so teardownConnection()/
+        // endLiveCall() know what to close later.
+        pc = localPc; micStream = localMicStream; dataChannel = localDataChannel; remoteAudioEl = localAudioEl;
+        setState('listening');
+        setCaption(prefill ? prefill : 'Pode falar, estou ouvindo.', !prefill);
+        requestWakeLock();
+        armInactivityTimer();
+        armHardCap();
+        if (prefill) sendUserTextTurn(prefill);
+      }).catch(function(err){
+        cleanupLocal(); // always ours to clean up, whatever went wrong or whoever's current now
+        if (myGen !== liveGeneration) return; // superseded — nothing to show, the newer call owns the UI now
+        if (err && err.kind === 'stale') return;
+        var msg;
+        if (err && err.kind === 'no_key') {
+          msg = 'Cadastre sua chave da API da OpenAI em Configurações pra eu poder conversar por voz.';
+        } else if (err && err.name === 'NotAllowedError') {
+          showPermError();
+          return;
+        } else {
+          msg = 'Não consegui conectar agora. Tenta de novo?';
+        }
+        pushLog('professor', msg);
+        setCaption(msg, true);
+        startAmbient();
+      });
     });
   }
 
@@ -698,9 +704,6 @@ function professorPage(user) {
   // a short timeout as a safety net for the rare case it never fires)
   // before starting the next one.
   function stopRecognition(done){
-    clearTimeout(captureSilenceTimer);
-    clearTimeout(captureHardStopTimer);
-    clearTimeout(quickAbandonTimer);
     if (!recognition) { if (done) done(); return; }
     var r = recognition;
     recognition = null;
@@ -736,7 +739,7 @@ function professorPage(user) {
           var transcript = normalize(event.results[i][0].transcript);
           if (WAKE_RE.test(transcript)) {
             var after = transcript.replace(WAKE_RE, '').trim();
-            beginCapture(after);
+            startLiveCall(after);
             return;
           }
         }
@@ -763,178 +766,11 @@ function professorPage(user) {
     });
   }
 
-  // ---------- recognition: listening for "Hey Professor" WHILE speaking ----------
-  // Felipe's report: saying "Hey Professor" while the reply was still being
-  // read out loud did nothing. That's because the mic was simply off during
-  // 'speaking' — recognition only restarted once speak() finished. This
-  // starts a second wake-word-only listener for the duration of the spoken
-  // reply, the same way you'd interrupt a person mid-sentence: hearing the
-  // wake word cuts the speech and jumps straight into capturing, instead of
-  // waiting for it to finish first.
-  function startBargeIn(){
-    if (!canListen) return;
-    stopRecognition(function(){
-      if (STATE !== 'speaking') return; // reply already finished/changed by the time stopRecognition settled
-
-      recognition = new SR();
-      recognition.lang = 'pt-BR';
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognitionPhase = 'bargein';
-
-      recognition.onresult = function(event){
-        for (var i = event.resultIndex; i < event.results.length; i++) {
-          var transcript = normalize(event.results[i][0].transcript);
-          if (WAKE_RE.test(transcript)) {
-            var after = transcript.replace(WAKE_RE, '').trim();
-            recognitionPhase = null;
-            // Set synchronously, before cancel(): speak()'s onDone fires
-            // asynchronously off synth.cancel() and checks STATE === 'speaking'
-            // to decide whether to call startAmbient() -- winning that race
-            // here stops it from starting a SECOND recognition instance
-            // moments after beginCapture() starts its own (Chrome allows only
-            // one per tab; that collision is exactly what used to leave the
-            // mic dead).
-            STATE = 'capturing';
-            replyGeneration++; // silence the rest of the reply's queued sentences, not just the current one
-            if (canSpeak) synth.cancel(); // stop the reply being read -- the person is talking now
-            beginCapture(after);
-            return;
-          }
-        }
-      };
-      recognition.onerror = function(){
-        // Ignore — routine for a continuously-listening recognizer, same as
-        // ambient. Permission errors will also surface the next time
-        // startAmbient() runs, no need to duplicate showPermError() here.
-      };
-      recognition.onend = function(){
-        if (recognitionPhase === 'bargein' && STATE === 'speaking') {
-          recognition = null;
-          recognitionPhase = null;
-          startBargeIn();
-        }
-      };
-      try { recognition.start(); } catch (e) { /* no barge-in for this reply, not fatal */ }
-    });
-  }
-
-  // ---------- recognition: capturing the actual question ----------
-  // quickAbandonMs is set only for the no-wake-word follow-up window after
-  // the Professor finishes a reply (see startFollowUp below) — if nothing
-  // at all is heard in that window, it's not a stuck mic, it just means the
-  // athlete has nothing more to ask right now, so it quietly drops back to
-  // wake-word-only ambient listening instead of holding the mic hot for the
-  // full 20s hard cap. A capture started FROM the wake word never gets this
-  // timer: saying "Hey Professor" already proved intent to speak.
-  function beginCapture(prefill, quickAbandonMs){
-    stopRecognition(function(){
-      setState('capturing');
-      captureText = '';
-      captureInterim = '';
-      capturePrefill = prefill || '';
-      setCaption(capturePrefill ? capturePrefill : (quickAbandonMs ? 'Pode continuar, ou fico quieto.' : 'Pode falar…'), !capturePrefill);
-
-      recognition = new SR();
-      recognition.lang = 'pt-BR';
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognitionPhase = 'capturing';
-
-      recognition.onresult = function(event){
-        clearTimeout(quickAbandonTimer);
-        // Recompute from the FULL results list every time (not just the
-        // range from event.resultIndex) and keep interim text in its own
-        // variable instead of discarding it. Chrome routinely never marks a
-        // result isFinal while continuous=true keeps the session open -- if
-        // we only ever stored the finals, a whole short question could live
-        // entirely in the interim text and vanish the moment the silence
-        // timer below fired, which is what was producing "não responde
-        // nada" and read as the Professor cutting the person off mid-sentence.
-        var interim = '', finals = '';
-        for (var i = 0; i < event.results.length; i++) {
-          var piece = event.results[i][0].transcript;
-          if (event.results[i].isFinal) finals += piece + ' '; else interim += piece + ' ';
-        }
-        captureText = finals.trim();
-        captureInterim = interim.trim();
-        var shown = [capturePrefill, captureText, captureInterim].filter(Boolean).join(' ').trim();
-        setCaption(shown || 'Pode falar…', !shown);
-        armSilenceTimer();
-      };
-      recognition.onerror = function(event){
-        if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
-          showPermError();
-        }
-      };
-      recognition.onend = function(){
-        if (recognitionPhase === 'capturing' && STATE === 'capturing') {
-          recognitionPhase = null;
-          finishCapture();
-        }
-      };
-      try { recognition.start(); } catch (e) { showPermError(); }
-
-      // A capture that starts from the wake word (or push-to-talk) already
-      // has proof of intent, so the normal 2200ms-of-silence timer is armed
-      // immediately — if nothing follows within that beat, there was no
-      // real question. The follow-up window is different: the athlete may
-      // just need a moment to decide whether to say anything at all, so it
-      // gets the longer quickAbandonMs grace period instead, and only starts
-      // the normal (short) silence timer once onresult shows they're
-      // actually talking (see clearTimeout(quickAbandonTimer) there).
-      if (quickAbandonMs) {
-        clearTimeout(quickAbandonTimer);
-        quickAbandonTimer = setTimeout(function(){
-          if (STATE === 'capturing' && !captureText && !captureInterim) finishCapture();
-        }, quickAbandonMs);
-      } else {
-        armSilenceTimer();
-      }
-      clearTimeout(captureHardStopTimer);
-      captureHardStopTimer = setTimeout(finishCapture, 20000); // hard cap so a stuck mic never listens forever
-    });
-  }
-
-  // ---------- after the Professor finishes a reply: keep listening ----------
-  // This is the actual fix for "preciso dizer Hey Professor toda vez" — once
-  // a conversation is going, the mic reopens straight into capture mode, no
-  // wake word required, same as talking to a person who's still looking at
-  // you. If nothing is said within quickAbandonMs, it falls back to
-  // wake-word-only ambient listening on its own (see beginCapture above).
-  function startFollowUp(){
-    if (!canListen) { startAmbient(); return; }
-    beginCapture('', 9000);
-  }
-
-  function armSilenceTimer(){
-    clearTimeout(captureSilenceTimer);
-    // 1500ms was cutting people off mid-thought on an ordinary conversational
-    // pause (a breath, "deixa eu ver…"); 2200ms gives a more natural beat
-    // before treating silence as "done talking" without making the Professor
-    // feel laggy.
-    captureSilenceTimer = setTimeout(finishCapture, 2200);
-  }
-
-  function finishCapture(){
-    if (STATE !== 'capturing') return;
-    clearTimeout(captureSilenceTimer);
-    clearTimeout(captureHardStopTimer);
-    var q = [capturePrefill, captureText, captureInterim].filter(Boolean).join(' ').trim();
-    capturePrefill = '';
-    captureText = '';
-    captureInterim = '';
-    stopRecognition(function(){
-      if (!q) { startAmbient(); return; }
-      askProfessor(q);
-    });
-  }
-
   function setState(next){
     STATE = next;
     if (next === 'ambient') setStatus('Ouvindo em segundo plano', 'on');
-    else if (next === 'capturing') setStatus('Ouvindo você', 'listening');
-    else if (next === 'thinking') setStatus('Pensando', 'on');
+    else if (next === 'connecting') setStatus('Conectando', 'on');
+    else if (next === 'listening') setStatus('Ouvindo você', 'listening');
     else if (next === 'speaking') setStatus('Falando', 'speaking');
     else setStatus('Parado', '');
   }
@@ -949,8 +785,8 @@ function professorPage(user) {
 
   function stopAll(){
     stopRecognition();
-    replyGeneration++;
-    if (canSpeak) synth.cancel();
+    liveGeneration++;
+    teardownConnection();
     setState('standby');
     setCaption('Toque em "Ativar o Professor" pra começar.', true);
     activateBlock.style.display = 'flex';
@@ -964,43 +800,40 @@ function professorPage(user) {
       setCaption('Esse navegador não tem reconhecimento de voz (funciona no Chrome). Você ainda pode falar com o Professor por texto em /assistant.', true);
       return;
     }
+    if (!canCall) {
+      setCaption('Esse navegador não suporta chamada de voz (funciona no Chrome). Você ainda pode falar com o Professor por texto em /assistant.', true);
+      return;
+    }
     activateBlock.style.display = 'none';
-    // speechSynthesis.getVoices() can come back empty until this event —
-    // a quick re-pick right as the person interacts keeps the voice choice
-    // fresh for the very first reply instead of falling back silently.
-    pickVoice();
     requestWakeLock();
     startAmbient();
   });
 
-  // ---------- push-to-talk fallback (space) + stop (esc) ----------
-  // Space also interrupts a reply in progress (STATE === 'speaking'), same
-  // as saying "Hey Professor" mid-sentence via startBargeIn() above.
+  // ---------- manual start (space) + hang up / stop (esc) ----------
+  // Space is a manual alternative to saying "Hey Professor" (useful if the
+  // wake word isn't being heard well, e.g. headphones), not a push-to-talk
+  // button anymore — once a call is live, OpenAI's own turn detection
+  // handles the back-and-forth (including real barge-in) on its own.
   window.addEventListener('keydown', function(e){
-    if (e.code === 'Space' && !e.repeat && (STATE === 'ambient' || STATE === 'standby' || STATE === 'speaking')) {
+    if (e.code === 'Space' && !e.repeat && (STATE === 'ambient' || STATE === 'standby')) {
       e.preventDefault();
       if (STATE === 'standby') { activateBtn.click(); return; }
-      if (STATE === 'speaking') { STATE = 'capturing'; replyGeneration++; if (canSpeak) synth.cancel(); }
-      pttActive = true;
-      beginCapture('');
+      startLiveCall('');
     } else if (e.code === 'Escape') {
-      stopAll();
-    }
-  });
-  window.addEventListener('keyup', function(e){
-    if (e.code === 'Space' && pttActive) {
-      pttActive = false;
-      if (STATE === 'capturing') finishCapture();
+      if (STATE === 'listening' || STATE === 'speaking' || STATE === 'connecting') {
+        endLiveCall('Chamada encerrada.');
+      } else {
+        stopAll();
+      }
     }
   });
 
-  // Clicking the orb itself is the same push-to-talk trigger, for touch
-  // devices without a spacebar.
+  // Clicking the orb starts a call from ambient (same as Space), or hangs
+  // up a live one — the one gesture that works on touch devices either way.
   canvas.addEventListener('click', function(){
     if (STATE === 'standby') { activateBtn.click(); return; }
-    if (STATE === 'ambient') beginCapture('');
-    else if (STATE === 'capturing') finishCapture();
-    else if (STATE === 'speaking') { STATE = 'capturing'; replyGeneration++; if (canSpeak) synth.cancel(); beginCapture(''); }
+    if (STATE === 'ambient') startLiveCall('');
+    else if (STATE === 'listening' || STATE === 'speaking' || STATE === 'connecting') endLiveCall('Chamada encerrada.');
   });
 
   window.addEventListener('beforeunload', function(){ stopAll(); });

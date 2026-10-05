@@ -12,7 +12,8 @@ const { parseActivityFile } = require('./lib/gpx');
 const { analyzeActivity } = require('./lib/anthropic');
 const strava = require('./lib/strava');
 const { computeEvolution, computeMedals, detectPersonalRecord, computeWeeklyStreak } = require('./lib/stats');
-const { buildContext, buildActivityFocusContext, streamChatWithAssistant, computeHumanDelayMs, detectImageRequest, extractWorkoutCard } = require('./lib/assistant');
+const { buildContext, buildActivityFocusContext, buildVoiceInstructions, streamChatWithAssistant, computeHumanDelayMs, detectImageRequest, extractWorkoutCard } = require('./lib/assistant');
+const { mintRealtimeSession } = require('./lib/openai');
 const { fetchNearbyRaces } = require('./lib/races');
 const { buildMonthCalendar } = require('./lib/calendar');
 const { ensurePublicSlug, buildShareDraft, buildPRShareDraft, REACTION_KEYS, notify, safePath, memberNumber, buildDiagnosis } = require('./lib/social');
@@ -52,6 +53,18 @@ function baseUrl(req) {
 const SHARED_ANTHROPIC_KEY = (process.env.ANTHROPIC_SHARED_API_KEY || '').trim();
 function apiKeyFor(user) {
   return (user && user.anthropic_api_key) || SHARED_ANTHROPIC_KEY || '';
+}
+
+// Same bring-your-own-key pattern as the Anthropic key above, but for the
+// Professor's live voice (OpenAI Realtime API) — a different provider, so a
+// separate key. No SHARED_OPENAI_API_KEY is set by default (voice-to-voice
+// audio is billed quite a bit higher per minute than a text reply, so this
+// is left as an opt-in cost Felipe can choose to cover later by setting the
+// env var in Render, exactly like he did for ANTHROPIC_SHARED_API_KEY —
+// until then, each athlete pastes their own OpenAI key in Configurações).
+const SHARED_OPENAI_KEY = (process.env.OPENAI_SHARED_API_KEY || '').trim();
+function openaiApiKeyFor(user) {
+  return (user && user.openai_api_key) || SHARED_OPENAI_KEY || '';
 }
 
 async function handle(req, res) {
@@ -625,6 +638,7 @@ async function handle(req, res) {
         stravaConfigured: strava.isConfigured(),
         publicUrl: `${baseUrl(req)}/u/${slug}`,
         aiSharedAvailable: !!SHARED_ANTHROPIC_KEY,
+        aiVoiceSharedAvailable: !!SHARED_OPENAI_KEY,
       }));
     }
     if (method === 'POST' && pathname === '/settings') {
@@ -649,11 +663,19 @@ async function handle(req, res) {
       }
       return redirect(res, '/settings?saved=1');
     }
+    if (method === 'POST' && pathname === '/settings/openai-api-key') {
+      if (!requireAuth()) return;
+      const key = (fields.openai_api_key || '').trim();
+      if (key && !key.includes('••')) {
+        db.prepare('UPDATE users SET openai_api_key=? WHERE id=?').run(key, user.id);
+      }
+      return redirect(res, '/settings?saved=1');
+    }
 
     // ---------- strava ----------
     if (method === 'GET' && pathname === '/strava/connect') {
       if (!requireAuth()) return;
-      if (!strava.isConfigured()) return html(res, 200, views.settingsPage(user, { stravaConfigured: false, aiSharedAvailable: !!SHARED_ANTHROPIC_KEY }));
+      if (!strava.isConfigured()) return html(res, 200, views.settingsPage(user, { stravaConfigured: false, aiSharedAvailable: !!SHARED_ANTHROPIC_KEY, aiVoiceSharedAvailable: !!SHARED_OPENAI_KEY }));
       const state = crypto.randomBytes(16).toString('hex');
       const redirectUri = `${baseUrl(req)}/strava/callback`;
       const authUrl = strava.getAuthorizeUrl(redirectUri, state);
@@ -908,11 +930,43 @@ async function handle(req, res) {
       return html(res, 200, coachPage(user));
     }
 
-    // ---------- professor (voice/JARVIS-style front end onto the same
-    // coach persona + /api/coach/send used by /assistant) ----------
+    // ---------- professor (voice/JARVIS-style front end) ----------
+    // The page itself still shares the coach's persona/training data with
+    // /assistant (see buildVoiceInstructions, which starts from the exact
+    // same buildContext as the text chat) — but the live conversation now
+    // runs over a direct WebRTC connection to OpenAI's Realtime API
+    // (voice-to-voice, see /api/professor/realtime-session below and
+    // lib/openai.js), not through /api/coach/send + the Anthropic text
+    // stream + browser TTS like the text chat still does.
     if (method === 'GET' && pathname === '/professor') {
       if (!requireAuth()) return;
-      return html(res, 200, professorPage(user));
+      return html(res, 200, professorPage(user, { voiceEnabled: !!openaiApiKeyFor(user) }));
+    }
+
+    // Mints a short-lived OpenAI Realtime API session for the Professor's
+    // live voice call — called by the browser right when "Hey Professor"
+    // (or the manual start) is heard, never on page load, so the athlete
+    // only spends Realtime API minutes while an actual call is open. The
+    // ephemeral client secret this returns expires in minutes and can only
+    // open a Realtime session, so it's safe to hand to the browser (unlike
+    // the athlete's real OpenAI key, which never leaves this server).
+    if (method === 'POST' && pathname === '/api/professor/realtime-session') {
+      if (!user) { res.writeHead(401); return res.end(JSON.stringify({ error: 'auth' })); }
+      const key = openaiApiKeyFor(user);
+      if (!key) { res.writeHead(412, { 'content-type': 'application/json; charset=utf-8' }); return res.end(JSON.stringify({ error: 'missing_key' })); }
+      try {
+        const races = db.prepare('SELECT * FROM races WHERE user_id = ? ORDER BY race_date ASC').all(user.id);
+        const activities = db.prepare('SELECT * FROM activities WHERE user_id = ? ORDER BY COALESCE(started_at, created_at) DESC').all(user.id);
+        const evolution = computeEvolution(activities);
+        const instructions = buildVoiceInstructions(user, races, activities, evolution);
+        const session = await mintRealtimeSession(key, instructions);
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+        return res.end(JSON.stringify(session));
+      } catch (e) {
+        console.error('realtime-session error', e);
+        res.writeHead(502, { 'content-type': 'application/json; charset=utf-8' });
+        return res.end(JSON.stringify({ error: 'realtime_failed', message: e.message }));
+      }
     }
 
     // ---------- admin (Felipe-only — gated by users.is_admin) ----------
