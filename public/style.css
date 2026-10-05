@@ -25,12 +25,29 @@ html,body{margin:0; padding:0; background:var(--ground); color:var(--ink); font-
 a{color:inherit;}
 .mono{font-family:'IBM Plex Mono',monospace;}
 .wrap{max-width:920px; margin:0 auto; padding:0 20px 80px;}
-.nav{display:flex; align-items:center; justify-content:space-between; padding:18px 20px; border-bottom:1px solid var(--line); background:var(--surface); position:sticky; top:0; z-index:10;}
-.nav .brand{font-family:'Archivo Black',sans-serif; font-size:20px; letter-spacing:-0.01em; text-decoration:none;}
-.nav .links{display:flex; gap:4px; align-items:center; flex-wrap:wrap;}
-.nav a.link{font-family:'IBM Plex Mono',monospace; font-size:13px; text-transform:uppercase; letter-spacing:0.04em; color:var(--ink-dim); text-decoration:none; padding:8px 12px; border-radius:10px;}
+.nav{display:flex; align-items:center; justify-content:space-between; padding:18px 24px; border-bottom:1px solid var(--line); background:var(--surface); position:sticky; top:0; z-index:10;}
+.nav .brand{font-family:'Archivo Black',sans-serif; font-size:20px; letter-spacing:-0.01em; text-decoration:none; margin-right:8px;}
+.nav .links{display:flex; gap:6px; align-items:center; flex-wrap:wrap;}
+.nav a.link{font-family:'IBM Plex Mono',monospace; font-size:13px; text-transform:uppercase; letter-spacing:0.04em; color:var(--ink-dim); text-decoration:none; padding:9px 14px; border-radius:10px;}
 .nav a.link:hover{background:var(--surface2); color:var(--ink);}
 .nav a.link.active{color:var(--ink); background:var(--surface2);}
+
+/* "Mais" dropdown — groups the secondary links (Provas, Coach ao vivo,
+   Professor Chat/ao vivo, Config, Admin) so the bar reads as 4-5 clear
+   choices instead of 9 crammed labels. Floats below the button on desktop;
+   nests as a plain indented sublist inside the mobile dropdown (see the
+   max-width:760px block below). */
+.nav-more{position:relative;}
+.nav-more-btn{font-family:'IBM Plex Mono',monospace; font-size:13px; text-transform:uppercase; letter-spacing:0.04em; color:var(--ink-dim); background:transparent; border:none; padding:9px 14px; border-radius:10px; cursor:pointer; display:inline-flex; align-items:center; gap:5px;}
+.nav-more-btn:hover{background:var(--surface2); color:var(--ink);}
+.nav-more-btn.active{color:var(--ink); background:var(--surface2);}
+.nav-more-caret{font-size:10px; transition:transform .15s ease;}
+.nav-more-btn[aria-expanded="true"] .nav-more-caret{transform:rotate(180deg);}
+.nav-more-panel{position:absolute; right:0; top:calc(100% + 8px); min-width:220px; display:flex; flex-direction:column; gap:2px; background:var(--surface); border:1px solid var(--line); border-radius:14px; padding:6px; box-shadow:0 24px 50px -18px rgba(0,0,0,0.35); opacity:0; transform:translateY(8px); pointer-events:none; transition:opacity .16s ease, transform .16s ease; z-index:50;}
+.nav-more-panel.open{opacity:1; transform:translateY(0); pointer-events:auto;}
+.nav-more-item{font-family:'IBM Plex Mono',monospace; font-size:13px; text-transform:uppercase; letter-spacing:0.04em; color:var(--ink-dim); text-decoration:none; padding:10px 12px; border-radius:10px; display:block; white-space:nowrap;}
+.nav-more-item:hover{background:var(--surface2); color:var(--ink);}
+.nav-more-item.active{color:var(--ink); background:var(--surface2);}
 
 /* Mobile menu toggle — hidden on desktop, where .links renders inline as
    before; on narrow screens .links collapses into a dropdown and this
@@ -55,6 +72,13 @@ a{color:inherit;}
   .nav .links.open{display:flex;}
   .nav a.link{padding:13px 14px; width:100%;}
   .nav .notif-wrap{order:-1; align-self:flex-end;}
+
+  /* Inside the mobile dropdown the "Mais" panel is just an indented
+     sublist, not a floating card — there's no room to float it. */
+  .nav-more-btn{width:100%; padding:13px 14px; justify-content:space-between;}
+  .nav-more-panel{position:static; display:none; opacity:1; transform:none; pointer-events:auto; box-shadow:none; border:none; background:transparent; padding:0 0 0 10px; min-width:0;}
+  .nav-more-panel.open{display:flex;}
+  .nav-more-item{padding:12px 14px;}
 }
 h1{font-family:'Archivo Black',sans-serif; font-size:34px; letter-spacing:-0.01em; margin:28px 0 6px;}
 h2{font-family:'Archivo',sans-serif; font-weight:800; font-size:20px; margin:0 0 12px; display:flex; align-items:center; gap:10px;}
