@@ -297,6 +297,14 @@ function professorPage(user, opts) {
   var micStream = null;       // local mic MediaStream, torn down when the call ends
   var dataChannel = null;     // 'oai-events' — session/transcript events, text in
   var remoteAudioEl = null;   // plays the Professor's actual voice (the WebRTC audio track)
+  // Feeds the orb's "listening" animation with the athlete's REAL mic
+  // volume (via Web Audio's AnalyserNode) instead of a canned loop, so the
+  // blue state actually moves with his voice — Felipe asked for it to look
+  // "mais tecnológica, mexe-se mais... como se fosse um robô".
+  var micAudioCtx = null;
+  var micAnalyser = null;
+  var micAnalyserBuf = null;
+  var micLevel = 0;           // smoothed 0..1, updated once per animation frame
   var assistantTranscriptBuf = ''; // the CURRENT reply's transcript, as it streams in
   var inactivityTimer = null; // auto-hangs-up a call nobody's talking in
   var hardCapTimer = null;    // absolute ceiling on one call's length
@@ -423,12 +431,93 @@ function professorPage(user, opts) {
   }
   function stateTuning(){
     switch (STATE) {
-      case 'listening':  return { amp: 10, speed: 2.6, glow: 34, col1: '#BFE3FF', col2: '#4E9BFF', ringAlpha: 0.9 };
+      case 'listening':  return { amp: 13, speed: 3.1, glow: 38, col1: '#BFE3FF', col2: '#4E9BFF', ringAlpha: 0.92 };
       case 'connecting': return { amp: 6,  speed: 1.6, glow: 26, col1: '#FFD98A', col2: '#FFC24E', ringAlpha: 0.75, sweep: true };
       case 'speaking':   return { amp: 13, speed: 3.4, glow: 38, col1: '#FFE3A8', col2: '#FFC24E', ringAlpha: 0.95 };
       case 'ambient':    return { amp: 4,  speed: 0.7, glow: 20, col1: '#FFD98A', col2: '#FFC24E', ringAlpha: 0.55 };
       default:           return { amp: 2,  speed: 0.35,glow: 12, col1: '#6A7078', col2: '#9BA1A8', ringAlpha: 0.3 };
     }
+  }
+
+  // Reads the athlete's actual mic volume off the live AnalyserNode (RMS of
+  // the raw waveform) and smooths it into micLevel (0..1). No analyser yet
+  // (not in a call, or browser without AudioContext) just relaxes micLevel
+  // back to 0 instead of leaving it stuck.
+  function sampleMicLevel(){
+    if (!micAnalyser || !micAnalyserBuf) { micLevel += (0 - micLevel) * 0.2; return; }
+    micAnalyser.getByteTimeDomainData(micAnalyserBuf);
+    var sum = 0;
+    for (var i = 0; i < micAnalyserBuf.length; i++) {
+      var v = (micAnalyserBuf[i] - 128) / 128;
+      sum += v * v;
+    }
+    var rms = Math.sqrt(sum / micAnalyserBuf.length);
+    var target = Math.min(1, rms * 5.5);
+    micLevel += (target - micLevel) * 0.35;
+  }
+
+  // The "robotic HUD" layer — two counter-rotating dashed rings (a
+  // radar/lock-on read), a ring of tick marks that spike with the athlete's
+  // real voice level (an equalizer, not just decoration), and a small
+  // orbiting satellite dot for a constant sense of motion. Only drawn while
+  // actively listening to the athlete, so it reads as "the robot is paying
+  // attention to YOUR voice" rather than generic background animation.
+  function drawTechHud(cx, cy, base, t, level){
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(t * 0.35);
+    ctx.beginPath();
+    ctx.setLineDash([10, 14]);
+    ctx.arc(0, 0, base * 1.32, 0, Math.PI * 2);
+    ctx.strokeStyle = '#4E9BFF';
+    ctx.globalAlpha = 0.32 + level * 0.28;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(-t * 0.55);
+    ctx.beginPath();
+    ctx.setLineDash([3, 10]);
+    ctx.arc(0, 0, base * 1.16, 0, Math.PI * 2);
+    ctx.strokeStyle = '#BFE3FF';
+    ctx.globalAlpha = 0.26 + level * 0.32;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.restore();
+    ctx.setLineDash([]);
+
+    var ticks = 40;
+    for (var i = 0; i < ticks; i++) {
+      var ang = (i / ticks) * Math.PI * 2 + t * 0.12;
+      var jitter = Math.sin(t * 9 + i * 1.7) * 0.5 + 0.5;
+      var len = base * 0.05 + level * base * 0.2 * jitter;
+      var r0 = base * 1.02;
+      var x0 = cx + Math.cos(ang) * r0, y0 = cy + Math.sin(ang) * r0;
+      var x1 = cx + Math.cos(ang) * (r0 + len), y1 = cy + Math.sin(ang) * (r0 + len);
+      ctx.beginPath();
+      ctx.moveTo(x0, y0);
+      ctx.lineTo(x1, y1);
+      ctx.strokeStyle = '#4E9BFF';
+      ctx.globalAlpha = 0.12 + jitter * 0.3 + level * 0.35;
+      ctx.lineWidth = 1.6;
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+
+    var orbitR = base * 1.42;
+    var orbitAng = t * 1.1;
+    var ox = cx + Math.cos(orbitAng) * orbitR, oy = cy + Math.sin(orbitAng) * orbitR;
+    ctx.beginPath();
+    ctx.arc(ox, oy, 2.4, 0, Math.PI * 2);
+    ctx.fillStyle = '#BFE3FF';
+    ctx.shadowColor = '#4E9BFF';
+    ctx.shadowBlur = 12;
+    ctx.globalAlpha = 0.9;
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = 1;
   }
 
   function draw(now){
@@ -439,8 +528,17 @@ function professorPage(user, opts) {
 
     ctx.clearRect(0, 0, size, size);
 
+    sampleMicLevel();
+
     // soft background glow
     var tune = stateTuning();
+    if (STATE === 'listening') {
+      // real voice, not a canned loop: louder into the mic = a bigger,
+      // brighter, more agitated ring, right as it happens
+      tune.amp += micLevel * 22;
+      tune.glow += micLevel * 18;
+      tune.ringAlpha = Math.min(1, tune.ringAlpha + micLevel * 0.08);
+    }
     var bgGrad = ctx.createRadialGradient(cx, cy, base * 0.2, cx, cy, size * 0.62);
     bgGrad.addColorStop(0, tune.col2 + '22');
     bgGrad.addColorStop(1, 'transparent');
@@ -494,6 +592,10 @@ function professorPage(user, opts) {
     ctx.stroke();
     ctx.shadowBlur = 0;
     ctx.globalAlpha = 1;
+
+    // robotic HUD layer — rotating dashed rings, a mic-reactive tick ring,
+    // and an orbiting dot. Only while actually listening to the athlete.
+    if (STATE === 'listening') drawTechHud(cx, cy, base, t, micLevel);
 
     // inner core dot
     ctx.beginPath();
@@ -549,6 +651,8 @@ function professorPage(user, opts) {
     if (pc) { try { pc.close(); } catch (e) {} pc = null; }
     if (micStream) { micStream.getTracks().forEach(function(t){ try { t.stop(); } catch (e) {} }); micStream = null; }
     if (remoteAudioEl) { try { remoteAudioEl.pause(); } catch (e) {} if (remoteAudioEl.parentNode) remoteAudioEl.parentNode.removeChild(remoteAudioEl); remoteAudioEl = null; }
+    if (micAudioCtx) { try { micAudioCtx.close(); } catch (e) {} micAudioCtx = null; }
+    micAnalyser = null; micAnalyserBuf = null; micLevel = 0;
     clearLiveTimers();
   }
 
@@ -648,11 +752,13 @@ function professorPage(user, opts) {
       permErrEl.hidden = true;
 
       var localMicStream = null, localPc = null, localDataChannel = null, localAudioEl = null;
+      var localMicAudioCtx = null, localMicAnalyser = null, localMicAnalyserBuf = null;
       function cleanupLocal(){
         if (localDataChannel) { try { localDataChannel.close(); } catch (e) {} }
         if (localPc) { try { localPc.close(); } catch (e) {} }
         if (localMicStream) { localMicStream.getTracks().forEach(function(t){ try { t.stop(); } catch (e) {} }); }
         if (localAudioEl) { try { localAudioEl.pause(); } catch (e) {} if (localAudioEl.parentNode) localAudioEl.parentNode.removeChild(localAudioEl); }
+        if (localMicAudioCtx) { try { localMicAudioCtx.close(); } catch (e) {} }
       }
 
       fetch('/api/professor/realtime-session', { method: 'POST' }).then(function(res){
@@ -667,6 +773,25 @@ function professorPage(user, opts) {
         return navigator.mediaDevices.getUserMedia({ audio: true }).then(function(stream){
           if (myGen !== liveGeneration) { stream.getTracks().forEach(function(t){ t.stop(); }); throw { kind: 'stale' }; }
           localMicStream = stream;
+
+          // Taps the raw mic signal with a Web Audio AnalyserNode so the
+          // orb can react to the athlete's ACTUAL voice level while he's
+          // talking, instead of a canned animation. Purely local/visual —
+          // never sent anywhere; if AudioContext isn't available the orb
+          // just falls back to its normal animation (sampleMicLevel()
+          // relaxes micLevel to 0 when there's no analyser).
+          try {
+            var AC = window.AudioContext || window.webkitAudioContext;
+            if (AC) {
+              localMicAudioCtx = new AC();
+              var micSrc = localMicAudioCtx.createMediaStreamSource(localMicStream);
+              localMicAnalyser = localMicAudioCtx.createAnalyser();
+              localMicAnalyser.fftSize = 256;
+              localMicAnalyser.smoothingTimeConstant = 0.55;
+              micSrc.connect(localMicAnalyser);
+              localMicAnalyserBuf = new Uint8Array(localMicAnalyser.frequencyBinCount);
+            }
+          } catch (e) { localMicAudioCtx = null; localMicAnalyser = null; localMicAnalyserBuf = null; }
 
           localPc = new RTCPeerConnection();
           localAudioEl = document.createElement('audio');
@@ -700,6 +825,7 @@ function professorPage(user, opts) {
         // resources to the shared globals so teardownConnection()/
         // endLiveCall() know what to close later.
         pc = localPc; micStream = localMicStream; dataChannel = localDataChannel; remoteAudioEl = localAudioEl;
+        micAudioCtx = localMicAudioCtx; micAnalyser = localMicAnalyser; micAnalyserBuf = localMicAnalyserBuf;
         setState('listening');
         setCaption(prefill ? prefill : 'Pode falar, estou ouvindo.', !prefill);
         requestWakeLock();
