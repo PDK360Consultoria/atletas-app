@@ -142,6 +142,35 @@ function professorPage(user, opts) {
     .quickchips button{font-size:11px; padding:8px 13px;}
   }
 
+  /* Explicit "Encerrar" button — the orb itself always hangs up a live call
+     on tap (see canvas click handler), but that's the same gesture as
+     STARTING one and easy to miss, especially mid-run on a phone where
+     there's no Esc key. This is a second, unambiguous way to hang up,
+     shown only while there's actually a call to end. */
+  .hangupWrap{
+    position:relative; z-index:2; display:none; justify-content:center;
+    margin:0 auto 16px; padding:0 20px;
+  }
+  .hangupWrap button{
+    font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:12.5px; letter-spacing:0.12em;
+    text-transform:uppercase; color:var(--red); background:rgba(255,107,107,0.08);
+    border:1px solid rgba(255,107,107,0.4); border-radius:999px; padding:11px 28px; cursor:pointer;
+    transition:background .15s ease, transform .1s ease;
+  }
+  .hangupWrap button:hover{background:rgba(255,107,107,0.18);}
+  .hangupWrap button:active{transform:scale(.96);}
+
+  /* Back-to-menu button — a plain text link in the topnav (Perfil) already
+     gets there, but Felipe asked for an explicit, unambiguous way back, so
+     this sits up front at top-left where a "back" control is expected. */
+  .topleft{display:flex; align-items:center; gap:14px;}
+  .backbtn{
+    display:flex; align-items:center; justify-content:center; width:34px; height:34px;
+    border:1px solid var(--line); border-radius:999px; color:var(--ink-dim); text-decoration:none;
+    font-size:17px; line-height:1; flex:none; transition:background .15s ease, color .15s ease;
+  }
+  .backbtn:hover{background:rgba(255,255,255,0.06); color:var(--ink);}
+
   .bottom{
     position:relative; z-index:2; display:flex; align-items:flex-end; justify-content:space-between;
     gap:16px; padding:0 26px 18px;
@@ -190,9 +219,12 @@ function professorPage(user, opts) {
 <div class="scan"></div>
 
 <div class="topbar">
-  <div class="brandblock">
-    <div class="brand">PROFESSOR</div>
-    <div class="tag">coach de corrida com IA · ${esc(firstName)}</div>
+  <div class="topleft">
+    <a class="backbtn" href="/" title="Voltar ao menu" aria-label="Voltar ao menu">←</a>
+    <div class="brandblock">
+      <div class="brand">PROFESSOR</div>
+      <div class="tag">coach de corrida com IA · ${esc(firstName)}</div>
+    </div>
   </div>
   <div class="topright">
     <div class="topnav">
@@ -216,6 +248,10 @@ function professorPage(user, opts) {
 
 <p class="caption muted" id="caption">Toque no orbe pra falar com o Professor.</p>
 <p class="permerr" id="permErr" hidden></p>
+
+<div class="hangupWrap" id="hangupWrap">
+  <button type="button" id="hangupBtn">Encerrar</button>
+</div>
 
 <div class="quickchips" id="quickChips">
   <button type="button" data-q="Qual é meu treino de hoje?">Treino de hoje</button>
@@ -253,6 +289,8 @@ function professorPage(user, opts) {
   var activateBlock = document.getElementById('activateBlock');
   var activateBtn = document.getElementById('activateBtn');
   var quickChips = document.getElementById('quickChips');
+  var hangupWrap = document.getElementById('hangupWrap');
+  var hangupBtn = document.getElementById('hangupBtn');
   var captionEl = document.getElementById('caption');
   var permErrEl = document.getElementById('permErr');
   var statusPill = document.getElementById('statusPill');
@@ -880,6 +918,9 @@ function professorPage(user, opts) {
     // call starts connecting so they don't sit uselessly under the orb
     // while the athlete is actually talking.
     quickChips.style.display = (next === 'standby' || next === 'ambient') ? 'flex' : 'none';
+    // The explicit hang-up button is the mirror image of the chips: only
+    // useful once there's actually a call (or a call being set up) to end.
+    hangupWrap.style.display = (next === 'connecting' || next === 'listening' || next === 'speaking') ? 'flex' : 'none';
   }
 
   function showPermError(){
@@ -935,6 +976,12 @@ function professorPage(user, opts) {
   // calls (STATE ambient).
   quickChips.querySelectorAll('button[data-q]').forEach(function(btn){
     btn.addEventListener('click', function(){ beginCall(btn.getAttribute('data-q')); });
+  });
+
+  // Explicit "Encerrar" — same hang-up path as tapping the orb or pressing
+  // Esc, just a second, unmistakable way to do it.
+  hangupBtn.addEventListener('click', function(){
+    if (STATE === 'listening' || STATE === 'speaking' || STATE === 'connecting') endLiveCall('Chamada encerrada.');
   });
 
   // ---------- manual start (space) + hang up / stop (esc) ----------
