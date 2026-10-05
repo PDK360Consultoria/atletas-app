@@ -126,7 +126,7 @@ function professorPage(user, opts) {
      already uses, see startLiveCall(prefill). */
   .quickchips{
     position:relative; z-index:2; display:flex; flex-wrap:wrap; align-items:center; justify-content:center;
-    gap:8px; max-width:640px; margin:0 auto 16px; padding:0 20px;
+    gap:8px; max-width:640px; margin:0 auto 16px; padding:0 20px; order:1;
   }
   .quickchips button{
     font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:11.5px; letter-spacing:0.05em;
@@ -149,7 +149,7 @@ function professorPage(user, opts) {
      shown only while there's actually a call to end. */
   .hangupWrap{
     position:relative; z-index:2; display:none; justify-content:center;
-    margin:0 auto 16px; padding:0 20px;
+    margin:0 auto 16px; padding:0 20px; order:1;
   }
   .hangupWrap button{
     font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:12.5px; letter-spacing:0.12em;
@@ -171,9 +171,19 @@ function professorPage(user, opts) {
   }
   .backbtn:hover{background:rgba(255,255,255,0.06); color:var(--ink);}
 
+  /* Felipe didn't want the conversation text to "live" in two different
+     places on screen (the caption flashes it as it's said, then the
+     finished line would separately show up down here) — now this IS the
+     one place it lives, so it needs to sit right under the caption, always
+     in view, not wherever it happened to fall in document order. body is a
+     column flexbox, so the order property moves it there without touching
+     the HTML: by default every section below is order 0 (kept in document
+     order relative to each other) — bumping the sections that come BETWEEN
+     caption and here up to order 1 (and the footer to order 2) is what
+     pulls .bottom forward to right after .caption. */
   .bottom{
     position:relative; z-index:2; display:flex; align-items:flex-end; justify-content:space-between;
-    gap:16px; padding:0 26px 18px;
+    gap:16px; padding:0 26px 18px; order:0;
   }
   .log{
     display:flex; flex-direction:column; gap:7px; max-width:min(46vw, 420px); min-width:0;
@@ -194,6 +204,7 @@ function professorPage(user, opts) {
   .footer{
     position:relative; z-index:2; text-align:center; padding:0 20px 20px;
     font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:0.05em; color:var(--ink-faint);
+    order:2;
   }
   .footer kbd{
     display:inline-block; border:1px solid var(--line); border-radius:5px; padding:1.5px 6px;
@@ -204,6 +215,7 @@ function professorPage(user, opts) {
   .permerr{
     position:relative; z-index:2; max-width:460px; margin:0 auto 18px; text-align:center;
     font-family:'Archivo',sans-serif; font-size:13.5px; color:var(--red); padding:0 20px; line-height:1.5;
+    order:1;
   }
   .permerr a{color:var(--gold);}
 
@@ -418,15 +430,20 @@ function professorPage(user, opts) {
   // Stops the trickle-out reveal and clears it — called whenever whatever's
   // being revealed is no longer relevant (a new reply starts, the athlete
   // interrupts, the call ends) so stale text can never flash back over a
-  // caption that's since moved on to something else.
+  // log row that's since moved on to something else.
   function stopReveal(){
     if (revealTimer) { clearInterval(revealTimer); revealTimer = null; }
     revealBuffer = '';
     revealShown = '';
   }
-  // Appends newly-arrived transcript text to the reveal queue and, if it's
-  // not already running, starts ticking it out onto the caption a couple
-  // characters at a time instead of dumping it all on screen immediately.
+  // Felipe: the reply used to type itself out in the caption under the orb,
+  // then the FINISHED transcript would separately land down in the log —
+  // on his phone those are two different screens (the log sits below the
+  // fold), so it looked like the text "cut" and jumped screens mid-sentence.
+  // Fix: the trickle-out reveal writes straight into the log's own last row
+  // (see beginLiveReply/setLiveReplyText below) — one on-screen place for a
+  // reply, from its first word to its last. The caption goes back to just
+  // short transient status ("Ouvindo…", "Pode continuar falando…").
   function queueReveal(deltaText){
     revealBuffer += deltaText;
     if (revealTimer) return;
@@ -434,7 +451,7 @@ function professorPage(user, opts) {
       if (!revealBuffer) { clearInterval(revealTimer); revealTimer = null; return; }
       revealShown += revealBuffer.slice(0, 2);
       revealBuffer = revealBuffer.slice(2);
-      setCaption(revealShown, false);
+      setLiveReplyText(revealShown);
     }, REVEAL_MS_PER_CHAR * 2);
   }
   // ---------- shared history (same chat_messages rows as /assistant) ----------
@@ -465,6 +482,21 @@ function professorPage(user, opts) {
   function pushLog(role, text){
     history.push({ role: role, text: text });
     if (history.length > 6) history.shift();
+    renderLog();
+  }
+  // Opens a new (empty) row for the Professor's reply the moment OpenAI
+  // starts generating one (response.created) — queueReveal then fills it in
+  // live, a couple characters at a time, straight in place, and
+  // output_audio_transcript.done overwrites it with the authoritative final
+  // text. Same row the whole time, never a second one appended after.
+  function beginLiveReply(){
+    history.push({ role: 'professor', text: '' });
+    if (history.length > 6) history.shift();
+    renderLog();
+  }
+  function setLiveReplyText(text){
+    if (!history.length) return;
+    history[history.length - 1].text = text;
     renderLog();
   }
   function renderLog(){
@@ -715,6 +747,13 @@ function professorPage(user, opts) {
       case 'input_audio_buffer.speech_started':
         clearTimeout(inactivityTimer);
         stopReveal(); // real barge-in: whatever was still trickling out is now stale
+        // If the athlete interrupted before a single character of the reply
+        // had actually appeared, beginLiveReply()'s row is still empty —
+        // drop it rather than leave a blank "PROFESSOR" line in the log.
+        if (history.length && history[history.length - 1].role === 'professor' && !history[history.length - 1].text) {
+          history.pop();
+          renderLog();
+        }
         setState('listening');
         setCaption('Ouvindo…', true);
         break;
@@ -725,12 +764,15 @@ function professorPage(user, opts) {
         assistantTranscriptBuf = '';
         stopReveal();
         setState('speaking');
+        beginLiveReply(); // opens the one row this reply will live in, start to finish
         break;
       case 'response.output_audio_transcript.delta':
         if (evt.delta) { assistantTranscriptBuf += evt.delta; queueReveal(evt.delta); }
         break;
       case 'response.output_audio_transcript.done':
-        if (evt.transcript && evt.transcript.trim()) pushLog('professor', evt.transcript.trim());
+        // Overwrites the same row queueReveal has been filling in — the
+        // authoritative final text, not a second entry appended after it.
+        if (evt.transcript && evt.transcript.trim()) setLiveReplyText(evt.transcript.trim());
         break;
       case 'response.done':
         stopReveal();
