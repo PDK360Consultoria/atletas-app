@@ -431,7 +431,7 @@ function professorPage(user, opts) {
   }
   function stateTuning(){
     switch (STATE) {
-      case 'listening':  return { amp: 13, speed: 3.1, glow: 38, col1: '#BFE3FF', col2: '#4E9BFF', ringAlpha: 0.92 };
+      case 'listening':  return { amp: 17, speed: 3.8, glow: 40, col1: '#BFE3FF', col2: '#4E9BFF', ringAlpha: 0.92 };
       case 'connecting': return { amp: 6,  speed: 1.6, glow: 26, col1: '#FFD98A', col2: '#FFC24E', ringAlpha: 0.75, sweep: true };
       case 'speaking':   return { amp: 13, speed: 3.4, glow: 38, col1: '#FFE3A8', col2: '#FFC24E', ringAlpha: 0.95 };
       case 'ambient':    return { amp: 4,  speed: 0.7, glow: 20, col1: '#FFD98A', col2: '#FFC24E', ringAlpha: 0.55 };
@@ -456,70 +456,6 @@ function professorPage(user, opts) {
     micLevel += (target - micLevel) * 0.35;
   }
 
-  // The "robotic HUD" layer — two counter-rotating dashed rings (a
-  // radar/lock-on read), a ring of tick marks that spike with the athlete's
-  // real voice level (an equalizer, not just decoration), and a small
-  // orbiting satellite dot for a constant sense of motion. Only drawn while
-  // actively listening to the athlete, so it reads as "the robot is paying
-  // attention to YOUR voice" rather than generic background animation.
-  function drawTechHud(cx, cy, base, t, level){
-    ctx.save();
-    ctx.translate(cx, cy);
-    ctx.rotate(t * 0.35);
-    ctx.beginPath();
-    ctx.setLineDash([10, 14]);
-    ctx.arc(0, 0, base * 1.32, 0, Math.PI * 2);
-    ctx.strokeStyle = '#4E9BFF';
-    ctx.globalAlpha = 0.32 + level * 0.28;
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-    ctx.restore();
-
-    ctx.save();
-    ctx.translate(cx, cy);
-    ctx.rotate(-t * 0.55);
-    ctx.beginPath();
-    ctx.setLineDash([3, 10]);
-    ctx.arc(0, 0, base * 1.16, 0, Math.PI * 2);
-    ctx.strokeStyle = '#BFE3FF';
-    ctx.globalAlpha = 0.26 + level * 0.32;
-    ctx.lineWidth = 1;
-    ctx.stroke();
-    ctx.restore();
-    ctx.setLineDash([]);
-
-    var ticks = 40;
-    for (var i = 0; i < ticks; i++) {
-      var ang = (i / ticks) * Math.PI * 2 + t * 0.12;
-      var jitter = Math.sin(t * 9 + i * 1.7) * 0.5 + 0.5;
-      var len = base * 0.05 + level * base * 0.2 * jitter;
-      var r0 = base * 1.02;
-      var x0 = cx + Math.cos(ang) * r0, y0 = cy + Math.sin(ang) * r0;
-      var x1 = cx + Math.cos(ang) * (r0 + len), y1 = cy + Math.sin(ang) * (r0 + len);
-      ctx.beginPath();
-      ctx.moveTo(x0, y0);
-      ctx.lineTo(x1, y1);
-      ctx.strokeStyle = '#4E9BFF';
-      ctx.globalAlpha = 0.12 + jitter * 0.3 + level * 0.35;
-      ctx.lineWidth = 1.6;
-      ctx.stroke();
-    }
-    ctx.globalAlpha = 1;
-
-    var orbitR = base * 1.42;
-    var orbitAng = t * 1.1;
-    var ox = cx + Math.cos(orbitAng) * orbitR, oy = cy + Math.sin(orbitAng) * orbitR;
-    ctx.beginPath();
-    ctx.arc(ox, oy, 2.4, 0, Math.PI * 2);
-    ctx.fillStyle = '#BFE3FF';
-    ctx.shadowColor = '#4E9BFF';
-    ctx.shadowBlur = 12;
-    ctx.globalAlpha = 0.9;
-    ctx.fill();
-    ctx.shadowBlur = 0;
-    ctx.globalAlpha = 1;
-  }
-
   function draw(now){
     var t = (now - t0) / 1000;
     var size = cssSize;
@@ -533,10 +469,12 @@ function professorPage(user, opts) {
     // soft background glow
     var tune = stateTuning();
     if (STATE === 'listening') {
-      // real voice, not a canned loop: louder into the mic = a bigger,
-      // brighter, more agitated ring, right as it happens
-      tune.amp += micLevel * 22;
-      tune.glow += micLevel * 18;
+      // real voice, not a canned loop: louder into the mic = the SAME
+      // circle gets bigger, wobblier and faster, right as it happens —
+      // nothing new drawn, just more movement on the one ring
+      tune.amp += micLevel * 34;
+      tune.speed += micLevel * 2.6;
+      tune.glow += micLevel * 20;
       tune.ringAlpha = Math.min(1, tune.ringAlpha + micLevel * 0.08);
     }
     var bgGrad = ctx.createRadialGradient(cx, cy, base * 0.2, cx, cy, size * 0.62);
@@ -592,10 +530,6 @@ function professorPage(user, opts) {
     ctx.stroke();
     ctx.shadowBlur = 0;
     ctx.globalAlpha = 1;
-
-    // robotic HUD layer — rotating dashed rings, a mic-reactive tick ring,
-    // and an orbiting dot. Only while actually listening to the athlete.
-    if (STATE === 'listening') drawTechHud(cx, cy, base, t, micLevel);
 
     // inner core dot
     ctx.beginPath();
