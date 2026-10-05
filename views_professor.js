@@ -184,12 +184,12 @@ function professorPage(user, opts) {
 <div class="stage">
   <canvas id="orbCanvas" width="560" height="560"></canvas>
   <div class="activate" id="activateBlock">
-    <button id="activateBtn" type="button">Ativar o Professor</button>
-    <p>Pede acesso ao microfone. Diga <strong>"Hey Professor"</strong> pra começar uma chamada de voz ao vivo — depois é só continuar falando, sem precisar repetir.${voiceEnabled ? '' : ' Cadastre sua chave da API da OpenAI em <a href="/settings" style="color:var(--gold);">Configurações</a> antes de ativar.'}</p>
+    <button id="activateBtn" type="button">Falar com o Professor</button>
+    <p>Toque pra começar a conversa na hora — pede acesso ao microfone e já liga a chamada. Depois, é só continuar falando, ou diga <strong>"Hey Professor"</strong> a qualquer momento pra começar de novo sem tocar na tela.${voiceEnabled ? '' : ' Cadastre sua chave da API da OpenAI em <a href="/settings" style="color:var(--gold);">Configurações</a> antes de ativar.'}</p>
   </div>
 </div>
 
-<p class="caption muted" id="caption">Toque em "Ativar o Professor" pra começar.</p>
+<p class="caption muted" id="caption">Toque no orbe pra falar com o Professor.</p>
 <p class="permerr" id="permErr" hidden></p>
 
 <div class="bottom">
@@ -203,7 +203,7 @@ function professorPage(user, opts) {
 </div>
 
 <div class="footer">
-  DIGA <kbd>"HEY PROFESSOR"</kbd><span class="sep">·</span><kbd>ESPAÇO</kbd> PRA COMEÇAR AGORA<span class="sep">·</span><kbd>ESC</kbd> ENCERRAR
+  TOQUE NO ORBE PRA FALAR<span class="sep">·</span>DIGA <kbd>"HEY PROFESSOR"</kbd> TAMBÉM FUNCIONA<span class="sep">·</span><kbd>ESC</kbd> ENCERRA
 </div>
 
 <script>
@@ -722,11 +722,20 @@ function professorPage(user, opts) {
   }
 
   // ---------- recognition: ambient (wake word) ----------
+  // This is the "ready, tap the orb or say the wake word" resting state
+  // between calls. It always sets STATE to 'ambient' — even when canListen
+  // is false — so the orb stays tappable to start the next call; only the
+  // actual background SpeechRecognition (the hands-free part) is skipped
+  // when unsupported. Without this, a browser lacking SpeechRecognition
+  // would leave STATE stuck on whatever the live call left it at
+  // ('listening'/'speaking') after endLiveCall(), and tapping the orb would
+  // just keep trying to hang up a call that's already over instead of
+  // starting a new one.
   function startAmbient(){
-    if (!canListen) return;
     stopRecognition(function(){
       setState('ambient');
-      setCaption('Diga "Hey Professor" quando quiser perguntar algo.', true);
+      setCaption(canListen ? 'Diga "Hey Professor" quando quiser perguntar algo — ou toque no orbe.' : 'Toque no orbe quando quiser falar com o Professor.', true);
+      if (!canListen) return;
 
       recognition = new SR();
       recognition.lang = 'pt-BR';
@@ -768,7 +777,7 @@ function professorPage(user, opts) {
 
   function setState(next){
     STATE = next;
-    if (next === 'ambient') setStatus('Ouvindo em segundo plano', 'on');
+    if (next === 'ambient') setStatus(canListen ? 'Ouvindo em segundo plano' : 'Pronto', 'on');
     else if (next === 'connecting') setStatus('Conectando', 'on');
     else if (next === 'listening') setStatus('Ouvindo você', 'listening');
     else if (next === 'speaking') setStatus('Falando', 'speaking');
@@ -778,7 +787,7 @@ function professorPage(user, opts) {
   function showPermError(){
     stopAll();
     permErrEl.hidden = false;
-    permErrEl.textContent = 'Preciso de acesso ao microfone pra te ouvir. Libere o microfone pra este site nas permissões do navegador e toque em "Ativar o Professor" de novo.';
+    permErrEl.textContent = 'Preciso de acesso ao microfone pra te ouvir. Libere o microfone pra este site nas permissões do navegador e toque em "Falar com o Professor" de novo.';
     activateBlock.style.display = 'flex';
     setCaption('Microfone bloqueado.', true);
   }
@@ -788,25 +797,35 @@ function professorPage(user, opts) {
     liveGeneration++;
     teardownConnection();
     setState('standby');
-    setCaption('Toque em "Ativar o Professor" pra começar.', true);
+    setCaption('Toque no orbe pra falar com o Professor.', true);
     activateBlock.style.display = 'flex';
     releaseWakeLock();
   }
 
   // ---------- activation ----------
+  // One tap = talking, immediately — the old flow needed a tap to arm
+  // background wake-word listening, then EITHER a second tap on the orb or
+  // saying "Hey Professor" to actually open a call. Felipe flagged that as
+  // not practical for an athlete who just wants to ask something: now the
+  // button itself opens the call directly (same mic-permission prompt,
+  // same startLiveCall() used everywhere else). "Hey Professor" still works
+  // as a hands-free way to start the NEXT call once this one ends (see
+  // startAmbient below) — it's just no longer the only way in.
+  //
+  // canListen (SpeechRecognition, for the wake word) is NOT required here —
+  // only canCall (WebRTC + mic) is a hard requirement for the live call
+  // itself. A browser without SpeechRecognition (e.g. some Safari builds)
+  // can still have a full voice conversation by tapping; it only loses the
+  // hands-free "Hey Professor" shortcut between calls, not the feature.
   activateBtn.addEventListener('click', function(){
     permErrEl.hidden = true;
-    if (!canListen) {
-      setCaption('Esse navegador não tem reconhecimento de voz (funciona no Chrome). Você ainda pode falar com o Professor por texto em /assistant.', true);
-      return;
-    }
     if (!canCall) {
-      setCaption('Esse navegador não suporta chamada de voz (funciona no Chrome). Você ainda pode falar com o Professor por texto em /assistant.', true);
+      setCaption('Esse navegador não suporta chamada de voz (funciona no Chrome ou Safari recentes). Você ainda pode falar com o Professor por texto em /assistant.', true);
       return;
     }
     activateBlock.style.display = 'none';
     requestWakeLock();
-    startAmbient();
+    startLiveCall('');
   });
 
   // ---------- manual start (space) + hang up / stop (esc) ----------
