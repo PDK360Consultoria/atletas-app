@@ -358,7 +358,7 @@ function professorPage(user, opts) {
   var revealBuffer = '';
   var revealShown = '';
   var revealTimer = null;
-  var REVEAL_MS_PER_CHAR = 62; // ~16 chars/sec — close to natural spoken PT-BR pace
+  var REVEAL_MS_PER_CHAR = 54; // ~18.5 chars/sec — matches the voice's speed:1.15 (lib/openai.js)
   var inactivityTimer = null; // auto-hangs-up a call nobody's talking in
   var hardCapTimer = null;    // absolute ceiling on one call's length
 
