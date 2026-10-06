@@ -890,3 +890,6 @@ body.landing-dark{
 .post-foto .car-track{max-height:560px;}
 .story-nav, .story-nav:hover, .story-nav:focus{background:transparent !important; border:none !important; border-radius:0 !important; box-shadow:none !important; transform:none !important; filter:none !important;}
 .story-close, .story-close:hover{background:transparent !important; box-shadow:none !important; border:none !important;}
+.composer-title{font-size:13px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-dim); margin-bottom:12px;}
+button.composer-recent-chip{font:inherit; font-size:12.5px; color:var(--ink); background:var(--surface2); border:1px solid var(--line); box-shadow:none; cursor:pointer; text-align:left;}
+button.composer-recent-chip.on{border-color:#FC5200; background:rgba(252,82,0,.12); color:var(--ink); font-weight:700;}
