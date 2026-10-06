@@ -411,10 +411,14 @@ async function handle(req, res) {
       const scope = parsed.query.scope === 'following' ? 'following' : 'all';
       const beforeId = parsed.query.before_id ? parseInt(parsed.query.before_id, 10) : null;
 
+      const view = parsed.query.view === 'meu' ? 'meu' : 'pub';
       const where = [];
       const params = [];
       if (beforeId) { where.push('p.id < ?'); params.push(beforeId); }
-      if (scope === 'following') {
+      if (view === 'meu') {
+        where.push('p.user_id = ?');
+        params.push(user.id);
+      } else if (scope === 'following') {
         where.push('(p.user_id = ? OR p.user_id IN (SELECT followee_id FROM follows WHERE follower_id = ?))');
         params.push(user.id, user.id);
       }
@@ -531,7 +535,15 @@ async function handle(req, res) {
       if (shareActivity && !recentUnshared.some((a) => a.id === shareActivity.id)) recentUnshared.unshift(shareActivity);
 
       let week = null, stories = [];
-      if (!beforeId && !tag) {
+      let profile = null;
+      if (view === 'meu') {
+        profile = {
+          posts: db.prepare('SELECT COUNT(*) AS c FROM posts WHERE user_id = ?').get(user.id).c,
+          followers: db.prepare('SELECT COUNT(*) AS c FROM follows WHERE followee_id = ?').get(user.id).c,
+          following: db.prepare('SELECT COUNT(*) AS c FROM follows WHERE follower_id = ?').get(user.id).c,
+        };
+      }
+      if (!beforeId && !tag && view === 'pub') {
         try { week = weekSummary(db, user, computeWeeklyStreak); } catch (e) { console.error('[feed week]', e.message); }
         try { stories = recentStories(db, user); } catch (e) { console.error('[feed stories]', e.message); }
       }
@@ -539,7 +551,7 @@ async function handle(req, res) {
       try { mentionMap = mentionMapFor(db, posts); } catch (e) { /* menções são opcionais */ }
 
       return html(res, 200, views.feedPage(user, posts, {
-        shareDraft, shareActivity, isPrShare, recentUnshared, scope, nextBeforeId, beforeId, week, stories, mentionMap, tag,
+        shareDraft, shareActivity, isPrShare, recentUnshared, scope, nextBeforeId, beforeId, week, stories, mentionMap, tag, view, profile, editBio: parsed.query.edit === '1',
       }));
     }
     if (method === 'POST' && pathname === '/feed') {
@@ -580,6 +592,12 @@ async function handle(req, res) {
       const dest = '/feed';
       if (wantsJson) { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ ok: true, redirect: dest })); }
       return redirect(res, dest);
+    }
+    if (method === 'POST' && pathname === '/feed/bio') {
+      if (!requireAuth()) return;
+      const bio = (fields.bio || '').trim().slice(0, 300);
+      db.prepare('UPDATE users SET bio = ? WHERE id = ?').run(bio || null, user.id);
+      return redirect(res, '/feed?view=meu');
     }
     if (method === 'POST' && (m = /^\/feed\/(\d+)\/react$/.exec(pathname))) {
       if (!requireAuth()) return;

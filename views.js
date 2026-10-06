@@ -2480,9 +2480,15 @@ function postCard(user, p, returnTo, mentionMap) {
 
 function feedPage(user, posts, opts) {
   opts = opts || {};
+  const view = opts.view === 'meu' ? 'meu' : 'pub';
   const scope = opts.scope === 'following' ? 'following' : 'all';
-  const returnQs = [scope === 'following' ? 'scope=following' : null, opts.beforeId ? `before_id=${opts.beforeId}` : null].filter(Boolean).join('&');
+  const returnQs = [view === 'meu' ? 'view=meu' : null, scope === 'following' && view === 'pub' ? 'scope=following' : null, opts.beforeId ? `before_id=${opts.beforeId}` : null].filter(Boolean).join('&');
   const returnTo = '/feed' + (returnQs ? `?${returnQs}` : '');
+
+  const mainTabs = `<div class="feed-main-tabs" role="tablist">
+    <a class="fmt${view === 'pub' ? ' active' : ''}" href="/feed" role="tab">Publicações</a>
+    <a class="fmt${view === 'meu' ? ' active' : ''}" href="/feed?view=meu" role="tab">Meu feed</a>
+  </div>`;
 
   const scopeTabs = `<div class="feed-tabs">
     <a class="feed-tab${scope === 'all' ? ' active' : ''}" href="/feed">Todos</a>
@@ -2490,22 +2496,56 @@ function feedPage(user, posts, opts) {
   </div>`;
 
   const pagination = opts.nextBeforeId ? `<div class="feed-pagination">
-    <a class="ghost btn" href="/feed?before_id=${opts.nextBeforeId}${scope === 'following' ? '&scope=following' : ''}">Ver mais treinos antigos →</a>
+    <a class="ghost btn" href="/feed?before_id=${opts.nextBeforeId}${view === 'meu' ? '&view=meu' : (scope === 'following' ? '&scope=following' : '')}">Ver mais posts antigos →</a>
   </div>` : '';
 
-  const body = `
+  const pr = opts.profile || { posts: 0, followers: 0, following: 0 };
+  const profileHead = `<div class="card ig-head">
+  <div class="ig-top">
+    ${avatarHtml(user.name, user.id, user.avatar_path, 'ig-avatar')}
+    <div class="ig-counts">
+      <div><b>${pr.posts}</b><span>publicações</span></div>
+      <div><b>${pr.followers}</b><span>seguidores</span></div>
+      <div><b>${pr.following}</b><span>seguindo</span></div>
+    </div>
+  </div>
+  <div class="ig-name">${esc(user.name)}${user.public_slug ? ` <a class="ig-slug" href="/u/${esc(user.public_slug)}">@${esc(user.public_slug)}</a>` : ''}</div>
+  ${user.city ? `<div class="ig-city muted">${esc(user.city)}</div>` : ''}
+  <div class="ig-bio">${user.bio ? esc(user.bio).replace(/\n/g, '<br>') : '<span class="muted">Sem bio ainda. Conte quem você é como corredor(a).</span>'}</div>
+  <details class="ig-edit"${opts.editBio ? ' open' : ''}>
+    <summary class="ghost btn">Editar bio</summary>
+    <form method="POST" action="/feed/bio" class="ig-bio-form">
+      <textarea name="bio" rows="4" maxlength="300" placeholder="Escreva sua bio (até 300 caracteres)">${esc(user.bio || '')}</textarea>
+      <div class="ig-bio-actions"><span class="muted" style="font-size:12px;">Aparece também no seu perfil público.</span><button type="submit">Salvar</button></div>
+    </form>
+  </details>
+  <div class="ig-links"><a class="ghost btn" href="/feed">+ Novo post</a>${user.public_slug ? `<a class="ghost btn" href="/u/${esc(user.public_slug)}">Ver perfil público</a>` : ''}</div>
+</div>`;
+
+  const emptyHtml = (title, sub) => `<div class="card feed-empty">
+  <div class="feed-empty-icon">${icon('flame', 'fe1')}</div>
+  <p style="margin:0; font-weight:800;">${title}</p>
+  <p class="muted" style="margin:4px 0 0;">${sub}</p>
+</div>`;
+  const list = (empty) => (posts.length ? `<div class="feed-list">${posts.map((p) => postCard(user, p, returnTo, opts.mentionMap)).join('')}</div>` : empty);
+
+  const body = view === 'meu' ? `
 <h1>Feed</h1>
-<p class="lede">O que a galera está treinando.</p>
+${mainTabs}
+${profileHead}
+${list(emptyHtml('Você ainda não publicou nada', 'Compartilhe um treino com legenda na aba Publicações e ele aparece aqui.'))}
+${pagination}
+${LIVE_MAP_SCRIPT}
+${fx.FEED_SCRIPT}
+` : `
+<h1>Feed</h1>
+${mainTabs}
 ${scopeTabs}
 ${opts.tag ? `<div class="tag-filter"><span class="pill"><span class="dot"></span>#${esc(opts.tag)}</span> <a href="/feed">limpar filtro</a></div>` : ''}
 ${!opts.tag ? fx.storiesBar(opts.stories, user, avatarHtml) : ''}
 ${!opts.tag ? fx.weekCard(opts.week, user, avatarHtml) : ''}
 ${fx.composer(user, opts, avatarHtml)}
-${posts.length ? `<div class="feed-list">${posts.map((p) => postCard(user, p, returnTo, opts.mentionMap)).join('')}</div>` : `<div class="card feed-empty">
-  <div class="feed-empty-icon">${icon('flame', 'fe1')}</div>
-  <p style="margin:0; font-weight:800;">${opts.tag ? 'Nenhum post com essa hashtag' : (scope === 'following' ? 'Ninguém que você segue postou ainda' : 'Nenhum post ainda')}</p>
-  <p class="muted" style="margin:4px 0 0;">${scope === 'following' ? 'Siga outros atletas pelo perfil público deles para ver os treinos aqui.' : 'Seja o primeiro a compartilhar com a galera.'}</p>
-</div>`}
+${list(emptyHtml(opts.tag ? 'Nenhum post com essa hashtag' : (scope === 'following' ? 'Ninguém que você segue postou ainda' : 'Nenhum post ainda'), scope === 'following' ? 'Siga outros atletas pelo perfil público deles para ver os treinos aqui.' : 'Seja o primeiro a compartilhar com a galera.'))}
 ${pagination}
 ${LIVE_MAP_SCRIPT}
 ${fx.FEED_SCRIPT}
