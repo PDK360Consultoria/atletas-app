@@ -2097,7 +2097,7 @@ ${(() => { const zs = zonesForActivity(activity, user.hr_zones_json, activity.zo
 ${activity.route_polyline ? `<div class="card route-card">
   <h2><span class="h-icon">${icon('mountain', 'rt')}</span>Rota</h2>
   ${routeTileMap(activity.route_polyline, { width: 900, height: 440 })}
-</div>` : ''}
+</div>${LIVE_MAP_SCRIPT}` : ''}
 
 ${prInfo && prInfo.isPR ? `<div class="card pr-banner">
   <div class="pr-banner-icon">${icon('trophy', 'prb')}</div>
@@ -2217,6 +2217,54 @@ function workoutTypeIcon(workoutType) {
 // is centered/scaled to fill the given box with a bit of padding. Returns
 // '' when there's no polyline (manual entries, GPX files without real GPS,
 // or activities synced before this feature existed).
+// Mapa interativo (Leaflet + OpenStreetMap): sobe por cima do mapa estático
+// quando o card chega perto da tela. Scroll do mouse só dá zoom depois de
+// clicar no mapa (pra não travar a rolagem do feed); no celular, 1 dedo
+// rola a página e 2 dedos dão zoom/arrastam.
+const LIVE_MAP_SCRIPT = `<script>
+(function(){
+  var els = document.querySelectorAll('.rtm[data-poly]');
+  if (!els.length) return;
+  function dec(str){var i=0,lat=0,lng=0,pts=[];while(i<str.length){var b,s=0,r=0;do{b=str.charCodeAt(i++)-63;r|=(b&31)<<s;s+=5;}while(b>=32);lat+=(r&1)?~(r>>1):(r>>1);s=0;r=0;do{b=str.charCodeAt(i++)-63;r|=(b&31)<<s;s+=5;}while(b>=32);lng+=(r&1)?~(r>>1):(r>>1);pts.push([lat/1e5,lng/1e5]);}return pts;}
+  var waiting = null;
+  function loadLeaflet(cb){
+    if (window.L) { cb(); return; }
+    if (waiting) { waiting.push(cb); return; }
+    waiting = [cb];
+    var l = document.createElement('link'); l.rel = 'stylesheet'; l.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css'; document.head.appendChild(l);
+    var s = document.createElement('script'); s.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+    s.onload = function(){ waiting.forEach(function(f){ f(); }); };
+    document.head.appendChild(s);
+  }
+  function init(el){
+    if (el.__live) return; el.__live = true;
+    var pts = dec(el.getAttribute('data-poly') || '');
+    if (pts.length < 2) return;
+    loadLeaflet(function(){
+      try {
+        var host = document.createElement('div'); host.className = 'rtm-live'; el.appendChild(host);
+        var touch = L.Browser.mobile;
+        var m = L.map(host, { scrollWheelZoom: false, dragging: !touch, tap: false, zoomSnap: 0.5 });
+        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(m);
+        var casing = L.polyline(pts, { color: '#ffffff', weight: 6.5, opacity: 0.95 }).addTo(m);
+        L.polyline(pts, { color: '#FC4C02', weight: 3.6 }).addTo(m);
+        L.circleMarker(pts[0], { radius: 6, color: '#ffffff', weight: 2, fillColor: '#34C759', fillOpacity: 1 }).addTo(m);
+        L.circleMarker(pts[pts.length - 1], { radius: 6, color: '#ffffff', weight: 2, fillColor: '#FF3B30', fillOpacity: 1 }).addTo(m);
+        m.fitBounds(casing.getBounds(), { padding: [30, 30] });
+        host.addEventListener('click', function(){ m.scrollWheelZoom.enable(); });
+        host.addEventListener('mouseleave', function(){ m.scrollWheelZoom.disable(); });
+        if (touch) { m.touchZoom.enable(); }
+        el.classList.add('live');
+      } catch (e) { console.error('[mapa]', e); }
+    });
+  }
+  if ('IntersectionObserver' in window) {
+    var io = new IntersectionObserver(function(entries){ entries.forEach(function(en){ if (en.isIntersecting) { io.unobserve(en.target); init(en.target); } }); }, { rootMargin: '300px' });
+    Array.prototype.forEach.call(els, function(el){ io.observe(el); });
+  } else { Array.prototype.forEach.call(els, init); }
+})();
+</script>`;
+
 // Mapa de verdade (ruas) como no Strava: tiles do OpenStreetMap (escurecidos por CSS)
 // posicionados em volta do traçado, com a rota desenhada por cima em SVG.
 // Se os tiles não carregarem, o fundo escuro + a linha continuam legíveis.
@@ -2259,7 +2307,7 @@ function routeTileMap(polylineStr, opts) {
   const xy = points.map(([la, lo]) => { const [x, y] = toWorld(la, lo, z); return [(x - cx) * s + W / 2, (y - cy) * s + H / 2]; });
   const d = xy.map(([x, y], i) => `${i ? 'L' : 'M'}${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
   const [sx, sy] = xy[0], [ex, ey] = xy[xy.length - 1];
-  return `<div class="rtm" style="aspect-ratio:${W}/${H}">${tiles}
+  return `<div class="rtm" data-poly="${esc(polylineStr)}" style="aspect-ratio:${W}/${H}">${tiles}
     <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Mapa do percurso">
       <path d="${d}" fill="none" stroke="#fff" stroke-opacity=".95" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round"/>
       <path d="${d}" fill="none" stroke="#FC4C02" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"/>
@@ -2330,7 +2378,7 @@ function activityStatBlock(p) {
   ${body ? `<div class="strava-desc">${esc(body).replace(/\n/g, '<br>')}</div>` : ''}
   ${stats.length ? `<div class="strava-stats">${stats.map(([v, u, k]) => `<div class="strava-stat"><div class="k">${esc(k)}</div><div class="v">${esc(String(v))}${u ? `<span class="u">${esc(u)}</span>` : ''}</div></div>`).join('')}</div>` : ''}
   ${zonesHtml(zonesForActivity({ laps_json: p.activity_laps_json, intervals_json: p.activity_intervals_json, avg_hr: p.activity_avg_hr, max_hr: null, duration_sec: p.activity_duration_sec }, p.author_hr_zones_json, p.author_obs_max_hr), true)}
-  ${p.activity_route_polyline ? `<a class="strava-map" href="/activities/${p.activity_id}">${routeTileMap(p.activity_route_polyline, { width: 900, height: 440 })}</a>` : (p.activity_laps && p.activity_laps.length > 1 ? `<div class="strava-splits">${paceBarsHtml({ avg_pace_sec: p.activity_avg_pace_sec }, p.activity_laps, 12)}</div>` : '')}`;
+  ${p.activity_route_polyline ? `<div class="strava-map">${routeTileMap(p.activity_route_polyline, { width: 900, height: 440 })}</div>` : (p.activity_laps && p.activity_laps.length > 1 ? `<div class="strava-splits">${paceBarsHtml({ avg_pace_sec: p.activity_avg_pace_sec }, p.activity_laps, 12)}</div>` : '')}`;
 }
 
 // Reaction picker: a <details>/<summary> disclosure (same idiom as the
@@ -2469,6 +2517,7 @@ ${posts.length ? `<div class="feed-list">${posts.map((p) => postCard(user, p, re
   <p class="muted" style="margin:4px 0 0;">${scope === 'following' ? 'Siga outros atletas pelo perfil público deles para ver os treinos aqui.' : 'Seja o primeiro a compartilhar um treino com a galera.'}</p>
 </div>`}
 ${pagination}
+${LIVE_MAP_SCRIPT}
 <script defer>
 (function(){
   try {
