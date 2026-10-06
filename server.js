@@ -16,6 +16,7 @@ const { buildContext, buildActivityFocusContext, buildVoiceInstructions, streamC
 const { mintRealtimeSession, synthesizeSpeech } = require('./lib/openai');
 const { weekSummary, recentStories, mentionMapFor } = require('./lib/feedextras');
 const { getNews } = require('./lib/news');
+const { readArticle } = require('./lib/reader');
 const { fetchNearbyRaces } = require('./lib/races');
 const { buildMonthCalendar } = require('./lib/calendar');
 const { ensurePublicSlug, buildShareDraft, buildPRShareDraft, REACTION_KEYS, notify, safePath, memberNumber, buildDiagnosis } = require('./lib/social');
@@ -407,6 +408,13 @@ async function handle(req, res) {
     // the same feed to just your own posts + people you follow, it never
     // hides anyone from the default "Todos" view.
     const FEED_PAGE_SIZE = 20;
+    if (method === 'GET' && pathname === '/feed/noticia') {
+      if (!requireAuth()) return;
+      const link = (parsed.query.u || '').toString();
+      const meta = { title: (parsed.query.t || '').toString().slice(0, 220), source: (parsed.query.s || '').toString().slice(0, 80), cat: (parsed.query.c || '').toString().slice(0, 20), link };
+      const article = await readArticle(link);
+      return html(res, 200, views.readerPage(user, article, meta));
+    }
     if (method === 'GET' && pathname === '/feed') {
       if (!requireAuth()) return;
       if (parsed.query.view === 'noticias') {

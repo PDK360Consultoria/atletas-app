@@ -2498,7 +2498,7 @@ function feedPage(user, posts, opts) {
     ${NEWS_CAT_KEYS.map((k) => `<a class="news-chip${newsCat === k ? ' on' : ''}" href="/feed?view=noticias&cat=${k}">${esc(NEWS_CATS[k].label)}</a>`).join('')}
   </div>`;
   const newsItems = (opts.news && opts.news.items) || [];
-  const newsHtml = newsItems.length ? `<div class="news-list">${newsItems.map((n) => `<a class="card news-item" href="${esc(n.link)}" target="_blank" rel="noopener noreferrer">
+  const newsHtml = newsItems.length ? `<div class="news-list">${newsItems.map((n) => `<a class="card news-item" href="/feed/noticia?u=${encodeURIComponent(n.link)}&t=${encodeURIComponent(n.title)}&s=${encodeURIComponent(n.source || '')}&c=${esc(n.cat || '')}">
     <span class="news-thumb c-${esc(n.cat || 'noticias')}">${esc((n.source || 'N').trim().charAt(0).toUpperCase())}</span>
     <span class="news-main">
       <span class="news-cat">${esc((NEWS_CATS[n.cat] || NEWS_CATS.noticias).label)}</span>
@@ -2506,7 +2506,7 @@ function feedPage(user, posts, opts) {
       <span class="news-meta">${esc(n.source || 'Fonte')} · ${timeAgo(new Date(n.ts).toISOString())}</span>
     </span>
   </a>`).join('')}</div>
-  <p class="muted" style="font-size:12px;margin:10px 2px 0;">Manchetes via Google Notícias. O texto completo abre no site de cada veículo.</p>` : `<div class="card feed-empty">
+  <p class="muted" style="font-size:12px;margin:10px 2px 0;">Manchetes via Google Notícias. Toque numa manchete para ler aqui dentro, com crédito e link do veículo.</p>` : `<div class="card feed-empty">
   <div class="feed-empty-icon">${icon('flame', 'fe1')}</div>
   <p style="margin:0; font-weight:800;">${opts.news && !opts.news.ok ? 'Não consegui carregar as notícias agora' : 'Nenhuma notícia nessa categoria'}</p>
   <p class="muted" style="margin:4px 0 0;">Tente de novo em instantes.</p>
@@ -2578,6 +2578,32 @@ ${LIVE_MAP_SCRIPT}
 ${fx.FEED_SCRIPT}
 `;
   return layout({ title: 'Feed', user, body, active: 'feed' });
+}
+
+function readerPage(user, a, meta) {
+  a = a || {};
+  meta = meta || {};
+  const cat = NEWS_CATS[meta.cat] ? meta.cat : '';
+  const back = `/feed?view=noticias${cat ? `&cat=${cat}` : ''}`;
+  const title = a.title || meta.title || 'Notícia';
+  const source = a.site || meta.source || a.host || 'Fonte';
+  const original = a.ok && a.url ? a.url : meta.link;
+  const head = `<a class="reader-back" href="${esc(back)}">&larr; Notícias</a>
+  ${cat ? `<span class="news-cat">${esc(NEWS_CATS[cat].label)}</span>` : ''}
+  <h1 class="reader-title">${esc(title)}</h1>
+  <div class="news-meta">${esc(source)}${a.host && a.host !== source ? ` · ${esc(a.host)}` : ''}</div>`;
+  const orig = `<a class="btn reader-orig" href="${esc(original)}" target="_blank" rel="noopener noreferrer">Ler no site original &#8599;</a>`;
+  const body = a.ok ? `<article class="card reader">
+    ${head}
+    ${a.image ? `<img class="reader-img" src="${esc(a.image)}" alt="" referrerpolicy="no-referrer" loading="lazy" onerror="this.remove()">` : ''}
+    <div class="reader-body">${a.blocks.map((b) => (b.kind === 'h' ? `<h3>${esc(b.text)}</h3>` : (b.kind === 'q' ? `<blockquote>${esc(b.text)}</blockquote>` : `<p>${esc(b.text)}</p>`))).join('')}</div>
+    <div class="reader-foot"><p class="muted">Texto de ${esc(a.host || source)}, exibido aqui em modo leitura. Todos os direitos pertencem ao veículo.</p>${orig}</div>
+  </article>` : `<article class="card reader">
+    ${head}
+    <p class="reader-fail">Esse veículo não permite a leitura aqui dentro. Você pode abrir a matéria no site original.</p>
+    <div class="reader-foot">${orig}</div>
+  </article>`;
+  return layout({ title: 'Notícia', user, body: `<div class="reader-wrap">${body}</div>`, active: 'feed' });
 }
 
 // Distance medals (5K/10K/Meia/Maratona) — locked ones render dimmed with a
@@ -3129,5 +3155,5 @@ module.exports = {
   layout, loginPage, signupPage, dashboardPage, racesPage,
   activitiesPage, activityNewPage, activityDetailPage, feedPage, settingsPage, coachChatPage,
   publicProfilePage, storyPage, landingPage, welcomePage, discoverPage,
-  adminPage, adminUserDetailPage,
+  adminPage, adminUserDetailPage, readerPage,
 };
