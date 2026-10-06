@@ -749,3 +749,9 @@ body.landing-dark{
 @media (max-width:520px){ .strava-stat{padding:0 8px;} .strava-stat .v{font-size:18px;} .strava-title{font-size:19px;} }
 .post-card-auto .post-time{font-family:inherit; font-size:12.5px; color:var(--ink-dim);}
 .strava-splits{padding-bottom:26px;}
+.rtm{position:relative; width:100%; overflow:hidden; background:#0e1013; border-radius:0;}
+.rtm-tile{position:absolute; display:block; max-width:none; image-rendering:auto;}
+.rtm svg{position:absolute; inset:0; width:100%; height:100%;}
+.rtm-attr{position:absolute; right:6px; bottom:4px; font-size:9px; color:rgba(255,255,255,.55); background:rgba(0,0,0,.35); padding:1px 5px; border-radius:4px;}
+.strava-map{display:block; padding:0; background:none;}
+.route-card .rtm{border-radius:14px;}
