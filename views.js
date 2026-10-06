@@ -2244,7 +2244,7 @@ const LIVE_MAP_SCRIPT = `<script>
       try {
         var host = document.createElement('div'); host.className = 'rtm-live'; el.appendChild(host);
         var touch = L.Browser.mobile;
-        var m = L.map(host, { scrollWheelZoom: false, dragging: !touch, tap: false, zoomSnap: 0.5 });
+        var m = L.map(host, { scrollWheelZoom: false, dragging: !touch, tap: false, zoomSnap: 0.5, fadeAnimation: false });
         L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(m);
         var casing = L.polyline(pts, { color: '#ffffff', weight: 6.5, opacity: 0.95 }).addTo(m);
         L.polyline(pts, { color: '#FC4C02', weight: 3.6 }).addTo(m);
