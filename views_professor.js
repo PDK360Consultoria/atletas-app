@@ -1000,7 +1000,7 @@ function professorPage(user, opts) {
   // The music is /assets/bomdia.mp3 when that file exists (a clip Felipe
   // supplies, royalty-free); otherwise an ORIGINAL rock riff synthesized
   // right here with Web Audio, so the ritual always works.
-  var INTRO_MS = 2200, BUMP_MS = 2600, TAIL_MS = 3200, DUCK_LEVEL = 0.30;
+  var CLAPS_MS = 1000, INTRO_MS = 2200, BUMP_MS = 2600, TAIL_MS = 3200, DUCK_LEVEL = 0.30;
   var MUSIC_URL = '/assets/bomdia.mp3';
   var musicBytesPromise = null;
   function preloadMusic(){
@@ -1039,7 +1039,7 @@ function professorPage(user, opts) {
         if (ritual !== mine) { if (ctrl) ctrl.stop(); return; }
         mine.ctrl = ctrl;
         musicActive = !!ctrl;
-        setTimeout(function(){ if (ritual === mine) ritualSay(1); }, ctrl ? INTRO_MS : 0);
+        setTimeout(function(){ if (ritual === mine) ritualSay(1); }, ctrl ? CLAPS_MS + INTRO_MS : 0);
       });
     });
   }
@@ -1165,7 +1165,8 @@ function professorPage(user, opts) {
       };
       function go(buffer){
         try {
-          if (buffer) playMusicFile(ac, buffer, fade); else playRockRiff(ac, fade);
+          playClaps(ac, fade); // two hand claps open the ritual, then the music hits
+          if (buffer) playMusicFile(ac, buffer, fade, CLAPS_MS / 1000); else playRockRiff(ac, fade, CLAPS_MS / 1000);
         } catch (e6) {}
         resolve(ctrl);
       }
@@ -1175,11 +1176,35 @@ function professorPage(user, opts) {
       } else go(null);
     });
   }
-  function playMusicFile(ac, buffer, dest){
+  // Two synthesized hand claps ("palma, palma"): each is a few tiny filtered
+  // noise bursts a few ms apart (the hands never land together) plus a short
+  // decaying tail, the second one a little stronger.
+  function playClaps(ac, dest){
+    var nb = ac.createBuffer(1, Math.floor(ac.sampleRate * 0.5), ac.sampleRate);
+    var nd = nb.getChannelData(0);
+    for (var i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
+    function clap(when, vel){
+      var offs = [0, 0.009, 0.019, 0.031];
+      offs.forEach(function(o, k){
+        var s = ac.createBufferSource(); s.buffer = nb;
+        var bp = ac.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 1400 + k * 150; bp.Q.value = 0.9;
+        var g = ac.createGain();
+        var a = vel * (k === offs.length - 1 ? 1 : 0.7);
+        g.gain.setValueAtTime(a, when + o);
+        g.gain.exponentialRampToValueAtTime(0.001, when + o + (k === offs.length - 1 ? 0.16 : 0.025));
+        s.connect(bp); bp.connect(g); g.connect(dest);
+        s.start(when + o); s.stop(when + o + 0.2);
+      });
+    }
+    var t = ac.currentTime + 0.12;
+    clap(t, 0.85);
+    clap(t + 0.42, 1.0);
+  }
+  function playMusicFile(ac, buffer, dest, delay){
     var src = ac.createBufferSource();
     src.buffer = buffer;
     var g = ac.createGain();
-    var t0 = ac.currentTime + 0.05, dur = buffer.duration;
+    var t0 = ac.currentTime + 0.05 + (delay || 0), dur = buffer.duration;
     g.gain.setValueAtTime(1, t0);
     if (dur > 1.5) { g.gain.setValueAtTime(1, t0 + dur - 0.6); g.gain.linearRampToValueAtTime(0.0001, t0 + dur); }
     src.connect(g); g.connect(dest);
@@ -1189,10 +1214,10 @@ function professorPage(user, opts) {
   // Original hard-rock riff (no real recording): distorted power chords on a
   // stomping riff in E minor, bass, kick/snare/hats, a crash on each repeat.
   // About 12 seconds so it can sit under the whole ritual.
-  function playRockRiff(ac, dest){
+  function playRockRiff(ac, dest, delay){
     var BEAT = 0.5; // 120 bpm
     var REPS = 3;
-    var t0 = ac.currentTime + 0.1;
+    var t0 = ac.currentTime + 0.1 + (delay || 0);
     var master = ac.createGain();
     master.gain.setValueAtTime(0.0001, t0);
     master.gain.exponentialRampToValueAtTime(0.8, t0 + 0.02);
