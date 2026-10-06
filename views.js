@@ -726,8 +726,50 @@ ${user ? MOBILE_NAV_SCRIPT : ''}
 ${user ? NOTIF_SCRIPT : ''}
 ${user ? tourScript(['flame', 'shoe', 'mountain', 'trophy', 'camera', 'pin', 'chat', 'stopwatch', 'calendar'].reduce((o, n) => { o[n] = icon(n, 'tour-' + n); return o; }, {}), !user.tour_seen_at) : ''}
 ${bodyEnd || ''}
+<p class="site-foot"><a href="/privacidade">Privacidade</a> · Compatível com Strava</p>
 </body>
 </html>`;
+}
+
+const STRAVA_NOTE = `<p class="muted" style="font-size:12.5px; margin:10px 0 0;">Seus dados da Strava ficam visíveis só para você e não são usados por inteligência artificial. Ao desconectar, eles são apagados. <a href="/privacidade">Saiba mais</a>.</p>`;
+
+function privacyPage(user) {
+  const body = `<div class="card legal">
+<h1>Política de privacidade</h1>
+<p class="muted">Última atualização: outubro de 2026</p>
+
+<h2>Quem somos</h2>
+<p>O Runiqx é um app de treino de corrida operado pela 360 Consultoria Empresarial (“nós”), responsável pelo tratamento dos seus dados pessoais, nos termos da Lei Geral de Proteção de Dados (LGPD, Lei 13.709/2018) e, quando aplicável, do GDPR.</p>
+
+<h2>Quais dados coletamos</h2>
+<p>Dados de cadastro (nome, e-mail, senha protegida por hash, foto e bio), informações que você escolhe informar (nível, metas, provas, observações), treinos que você registra ou envia, e conteúdo que você publica no feed (legendas, fotos, local e comentários).</p>
+<p>Se você conectar a Strava, recebemos pela API da Strava, com a sua autorização, o seu perfil básico e as suas atividades (distância, tempo, pace, frequência cardíaca, altimetria, parciais e rota).</p>
+
+<h2>Como usamos</h2>
+<p>Usamos os dados para operar o app: mostrar o seu histórico, calcular métricas e recordes, montar o seu feed e enviar notificações dentro do app. Não vendemos dados pessoais.</p>
+
+<h2>Dados da Strava</h2>
+<p>Os dados que vêm da sua conta Strava são exibidos somente para você. Outros atletas não veem o mapa, o pace, as zonas nem as métricas dos seus treinos da Strava, mesmo quando você publica no feed: nesse caso aparece apenas o que você escrever e as fotos que adicionar.</p>
+<p>Os dados da Strava não são usados para treinar, ajustar ou operar modelos de inteligência artificial, nem alimentam o treinador virtual ou as análises automáticas.</p>
+<p>Você pode desconectar a Strava a qualquer momento em Configurações. Ao desconectar, apagamos de forma permanente os treinos importados da Strava. Você também pode revogar o acesso em strava.com/settings/apps.</p>
+
+<h2>Compartilhamento</h2>
+<p>O que você publica no feed é visível para os outros atletas do app. Usamos provedores de infraestrutura para hospedar o serviço. Não compartilhamos seus dados com terceiros para publicidade.</p>
+
+<h2>Seus direitos</h2>
+<p>Você pode acessar, corrigir, exportar e excluir seus dados, e revogar consentimentos, escrevendo para o contato abaixo. Atendemos os pedidos em até 30 dias.</p>
+
+<h2>Retenção e segurança</h2>
+<p>Mantemos seus dados enquanto a conta existir. Ao excluir a conta, removemos os dados pessoais, salvo o que a lei exigir guardar. As conexões usam HTTPS e as senhas são armazenadas de forma protegida.</p>
+
+<h2>Contato</h2>
+<p>Dúvidas e solicitações: <a href="mailto:felipe@360consultoria.com.br">felipe@360consultoria.com.br</a>.</p>
+<p class="muted" style="font-size:12.5px;">Compatível com Strava. Strava é marca de seus titulares e o Runiqx não é afiliado à Strava.</p>
+</div>`;
+  if (user) return layout({ title: 'Privacidade', user, body });
+  return `<!DOCTYPE html>
+<html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Privacidade · Runiqx</title><link rel="stylesheet" href="/style.css"></head>
+<body><div class="wrap" style="max-width:760px; margin:0 auto; padding:24px 16px;"><div class="center-logo"><a href="/" style="color:inherit; text-decoration:none;">Runiqx</a></div>${body}</div></body></html>`;
 }
 
 function authLayout(title, body) {
@@ -743,6 +785,7 @@ function authLayout(title, body) {
 <div class="auth-box">
 <div class="center-logo">Runiqx</div>
 ${body}
+<p class="site-foot"><a href="/privacidade">Política de privacidade</a></p>
 </div>
 </body>
 </html>`;
@@ -822,7 +865,8 @@ function welcomePage(user, flags) {
     <p class="muted" style="margin:0;">Integração com Strava ainda não configurada no servidor. Você pode registrar seus treinos manualmente por enquanto, e conectar depois em Configurações.</p>
   ` : `
     <p class="muted" style="margin:0 0 12px;">É a forma mais rápida de começar: conecte sua conta do Strava e seus treinos entram automaticamente — pace, FC, splits, tudo. Se você usa Garmin, Coros ou outro relógio que já sincroniza com o Strava, funciona do mesmo jeito, sem precisar conectar o relógio direto.</p>
-    <a class="btn" href="/strava/connect?return_to=welcome" style="width:100%; text-align:center;">Conectar com Strava</a>
+    <a class="btn strava-btn" href="/strava/connect?return_to=welcome" style="width:100%; text-align:center;">Conectar com Strava</a>
+    ${STRAVA_NOTE}
   `}
 </div>
 
@@ -2024,6 +2068,9 @@ function paceBarsHtml(activity, laps, limit) {
 }
 
 function activityDetailPage({ user, activity, laps, intervals, evolution, prInfo, alreadyShared, aiEnabled }) {
+  // Strava policy: Strava-sourced activities are never used by AI features.
+  const fromStrava = activity.source === 'strava';
+  if (fromStrava) aiEnabled = false;
   const tiros = summarizeIntervals(intervals);
   const vo2max = estimateVO2max(activity.distance_km, activity.duration_sec);
   const bars = paceBarsHtml(activity, laps);
@@ -2123,7 +2170,7 @@ ${(!tiros && laps.length) ? `<div class="card">
 
 ${trainingCompareChart(activity, evolution)}
 
-<div class="card">
+${fromStrava ? `<div class="card"><p class="muted" style="margin:0;">Treino importado da Strava: por regra da Strava, ele não é analisado por inteligência artificial e só você o vê.</p></div>` : `<div class="card">
   <h2><span class="h-icon">${icon('heart', 'ai')}</span>Análise com IA</h2>
   ${activity.ai_analysis ? `<div class="ai-analysis">${renderMarkdownLite(activity.ai_analysis)}</div>
     ${aiEnabled ? `<form method="POST" action="/activities/${activity.id}/analyze" style="margin-top:14px;" onsubmit="var b=this.querySelector('button'); b.disabled=true; b.textContent='Gerando análise…';"><button class="ghost" type="submit">↻ Gerar nova análise</button></form>` : ''}` : `
@@ -2131,7 +2178,7 @@ ${trainingCompareChart(activity, evolution)}
       ? `<form method="POST" action="/activities/${activity.id}/analyze" onsubmit="var b=this.querySelector('button'); b.disabled=true; b.textContent='Gerando análise… (pode levar até 30s)';"><button type="submit">Gerar análise técnica</button></form>`
       : `<p class="muted" style="margin:0;">Cadastre sua chave da API da Anthropic em <a href="/settings">Config</a> para gerar análises técnicas automáticas.</p>`}
   `}
-</div>
+</div>`}
 
 ${aiEnabled ? `<div class="card">
   <h2><span class="h-icon">${icon('heart', 'ca')}</span>Conversar com o coach sobre este treino</h2>
@@ -2448,6 +2495,7 @@ function postCard(user, p, returnTo, mentionMap) {
   } else if (photos.length) {
     media = fx.carousel(photos.map(fx.photoSlide), '4/3');
   }
+  const stravaNote = p.strava_hidden ? `<p class="muted strava-note" style="font-size:12.5px; margin:8px 0 0;">Treino registrado pelo Strava. Os detalhes (mapa, pace, zonas) ficam visíveis só para o atleta.</p>` : '';
   const caption = p.body && !isAct ? `<div class="post-body${kind === 'texto' ? ' post-body-x' : ''}">${fx.linkify(p.body, mentionMap)}</div>` : '';
   return `<div class="card post-card post-${kind}${isAct ? ' post-card-auto' : ''}${p.is_pr ? ' post-pr' : ''}">
   <div class="post-head">
@@ -2463,7 +2511,7 @@ function postCard(user, p, returnTo, mentionMap) {
     </form>` : ''}
   </div>
   ${kind === 'foto' ? media : ''}
-  ${caption}
+  ${caption}${stravaNote}
   ${p.is_pr && p.pr_label ? `<p class="pr-label">${icon('trophy', 'prl' + p.id)}${esc(p.pr_label)}</p>` : ''}
   ${isAct ? activityStatBlock(p, media) : ''}
   <div class="post-actions">
@@ -2806,11 +2854,12 @@ ${flags.stravaError ? `<div class="err">Não consegui conectar com o Strava agor
     <p class="muted">Conectado — o Garmin sincroniza com o Strava automaticamente, e o Runiqx importa suas corridas de lá.</p>
     <div class="row" style="gap:10px; display:flex;">
       <a class="ghost btn" href="/activities">Ir para Treinos e sincronizar</a>
-      <form method="POST" action="/strava/disconnect"><button class="danger" type="submit">Desconectar</button></form>
+      <form method="POST" action="/strava/disconnect" onsubmit="return confirm('Ao desconectar, apagamos de forma permanente os treinos importados da Strava. Continuar?')"><button class="danger" type="submit">Desconectar</button></form>
     </div>
   ` : `
     <p class="muted">Conecte sua conta do Strava para importar seus treinos automaticamente (inclusive os que já sincronizam do Garmin para o Strava).</p>
-    <a class="btn" href="/strava/connect">Conectar com Strava</a>
+    <a class="btn strava-btn" href="/strava/connect">Conectar com Strava</a>
+    ${STRAVA_NOTE}
   `}
 </div>
 
@@ -3155,7 +3204,7 @@ function adminUserDetailPage(user, { athlete, activities, posts }) {
 }
 
 module.exports = {
-  layout, loginPage, signupPage, dashboardPage, racesPage,
+  layout, privacyPage, loginPage, signupPage, dashboardPage, racesPage,
   activitiesPage, activityNewPage, activityDetailPage, feedPage, settingsPage, coachChatPage,
   publicProfilePage, storyPage, landingPage, welcomePage, discoverPage,
   adminPage, adminUserDetailPage, readerPage,

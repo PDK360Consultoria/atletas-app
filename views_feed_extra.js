@@ -91,7 +91,7 @@ function composer(user, opts, avatarHtml) {
       ${avatarHtml(user.name, user.id, user.avatar_path, 'composer-avatar')}
       <div class="composer-main">
         <div class="composer-recent">
-          <span class="muted mono" style="font-size:12px;">Escolha o treino (mapa, zonas e pace entram automaticamente):</span>
+          <span class="muted mono" style="font-size:12px;">Escolha o treino (os dados da Strava aparecem só para você; os outros veem a legenda e as fotos):</span>
           <div class="composer-recent-chips" id="composerChips">${chips}</div>
         </div>
         <input type="hidden" name="activity_id" id="composerActivity" value="${sel ? sel.id : ''}">

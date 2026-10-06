@@ -145,6 +145,8 @@ async function handle(req, res) {
   };
 
   try {
+    // ---------- legal ----------
+    if (method === 'GET' && pathname === '/privacidade') return html(res, 200, views.privacyPage(user));
     // ---------- auth ----------
     if (method === 'GET' && pathname === '/login') return html(res, 200, views.loginPage(parsed.query.error));
     if (method === 'POST' && pathname === '/login') {
@@ -376,6 +378,7 @@ async function handle(req, res) {
       if (!requireAuth()) return;
       const activity = db.prepare('SELECT * FROM activities WHERE id = ? AND user_id = ?').get(m[1], user.id);
       if (!activity) return notFound(res);
+      if (activity.source === 'strava') return redirect(res, `/activities/${activity.id}`);
       const laps = activity.laps_json ? JSON.parse(activity.laps_json) : [];
       const intervals = activity.intervals_json ? JSON.parse(activity.intervals_json) : [];
       try {
@@ -459,6 +462,17 @@ async function handle(req, res) {
       const nextBeforeId = hasMore ? posts[posts.length - 1].id : null;
       // Pace-by-km chart on the card (see paceBarsHtml in views.js) — parsed
       // here rather than shipping the raw JSON column into the view layer.
+      // Strava API policy: data that came from a user's Strava account may
+      // only be shown to that same user. For other viewers a post that points
+      // at a Strava-sourced activity becomes a plain caption/photo post.
+      posts.forEach((p) => {
+        if (p.activity_id && p.activity_source === 'strava' && (!user || p.user_id !== user.id)) {
+          p.activity_id = null; p.is_pr = 0; p.strava_hidden = 1;
+          p.activity_title = p.activity_distance_km = p.activity_duration_sec = p.activity_avg_pace_sec = null;
+          p.activity_elevation_gain_m = p.activity_laps_json = p.activity_route_polyline = null;
+          p.activity_intervals_json = p.activity_avg_hr = p.activity_started_at = null;
+        }
+      });
       posts.forEach((p) => {
         try { p.activity_laps = p.activity_laps_json ? JSON.parse(p.activity_laps_json) : null; }
         catch (e) { p.activity_laps = null; }
@@ -668,7 +682,9 @@ async function handle(req, res) {
     if (method === 'GET' && (m = /^\/u\/([a-zA-Z0-9-]+)$/.exec(pathname))) {
       const profileUser = db.prepare('SELECT * FROM users WHERE public_slug = ?').get(m[1]);
       if (!profileUser) return notFound(res);
-      const activities = db.prepare('SELECT * FROM activities WHERE user_id = ?').all(profileUser.id);
+      let activities = db.prepare('SELECT * FROM activities WHERE user_id = ?').all(profileUser.id);
+      // Strava policy: Strava-sourced data is visible only to its owner.
+      if (!user || user.id !== profileUser.id) activities = activities.filter((a) => a.source !== 'strava');
       const evolution = computeEvolution(activities);
       const medals = computeMedals(activities);
       const weeklyStreak = computeWeeklyStreak(activities);
@@ -801,6 +817,14 @@ async function handle(req, res) {
     if (method === 'POST' && pathname === '/strava/disconnect') {
       if (!requireAuth()) return;
       db.prepare('UPDATE users SET strava_athlete_id=NULL, strava_access_token=NULL, strava_refresh_token=NULL, strava_token_expires_at=NULL, strava_connected_at=NULL WHERE id=?').run(user.id);
+      // Strava API policy: on disconnect, permanently delete the Strava data.
+      const sIds = db.prepare("SELECT id FROM activities WHERE user_id = ? AND source = 'strava'").all(user.id).map((r) => r.id);
+      for (const aid of sIds) {
+        db.prepare('DELETE FROM blocks WHERE activity_id = ?').run(aid);
+        db.prepare('UPDATE posts SET activity_id = NULL, is_pr = 0 WHERE activity_id = ?').run(aid);
+        db.prepare('DELETE FROM chat_messages WHERE activity_id = ?').run(aid);
+        db.prepare('DELETE FROM activities WHERE id = ?').run(aid);
+      }
       return redirect(res, '/settings?strava_disconnected=1');
     }
     if (method === 'POST' && pathname === '/strava/sync') {
@@ -958,10 +982,11 @@ async function handle(req, res) {
       let full = '';
       try {
         const races = db.prepare('SELECT * FROM races WHERE user_id = ? ORDER BY race_date ASC').all(user.id);
-        const activities = db.prepare('SELECT * FROM activities WHERE user_id = ? ORDER BY COALESCE(started_at, created_at) DESC').all(user.id);
+        // Strava policy: no Strava-sourced data may be used by AI features.
+        const activities = db.prepare("SELECT * FROM activities WHERE user_id = ? AND source != 'strava' ORDER BY COALESCE(started_at, created_at) DESC").all(user.id);
         const evolution = computeEvolution(activities);
         let context = buildContext(user, races, activities, evolution);
-        if (activity) {
+        if (activity && activity.source !== 'strava') {
           const laps = activity.laps_json ? JSON.parse(activity.laps_json) : [];
           const intervals = activity.intervals_json ? JSON.parse(activity.intervals_json) : [];
           context += '\n' + buildActivityFocusContext(activity, laps, intervals);
@@ -1042,7 +1067,7 @@ async function handle(req, res) {
       if (!key) { res.writeHead(412, { 'content-type': 'application/json; charset=utf-8' }); return res.end(JSON.stringify({ error: 'missing_key' })); }
       try {
         const races = db.prepare('SELECT * FROM races WHERE user_id = ? ORDER BY race_date ASC').all(user.id);
-        const activities = db.prepare('SELECT * FROM activities WHERE user_id = ? ORDER BY COALESCE(started_at, created_at) DESC').all(user.id);
+        const activities = db.prepare("SELECT * FROM activities WHERE user_id = ? AND source != 'strava' ORDER BY COALESCE(started_at, created_at) DESC").all(user.id);
         const evolution = computeEvolution(activities);
         const instructions = buildVoiceInstructions(user, races, activities, evolution);
         const session = await mintRealtimeSession(key, instructions);
