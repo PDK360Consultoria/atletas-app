@@ -2,6 +2,7 @@ const { secToPace, fmtClock, fmtDate, timeAgo, esc, renderMarkdownLite, icon } =
 
 const { ZONE_META, zoneBounds, zoneSeconds } = require('./lib/zones');
 const fx = require('./views_feed_extra');
+const { tourScript } = require('./views_tour');
 const { CATS: NEWS_CATS, CAT_KEYS: NEWS_CAT_KEYS } = require('./lib/news');
 
 // Tempo por zona de FC (Z1–Z5): barra empilhada + legenda. `compact` é a
@@ -674,6 +675,7 @@ function layout({ title, user, body, active, extraHead, bodyEnd, hideCoachWidget
               <a class="nav-more-item ${active === 'races' ? 'active' : ''}" href="/races">Provas</a>
               <a class="nav-more-item ${active === 'coach' ? 'active' : ''}" href="/coach">Treino ao Vivo</a>
               <a class="nav-more-item ${active === 'settings' ? 'active' : ''}" href="/settings">Config</a>
+              <a class="nav-more-item" href="#tutorial" data-tour-open>Tutorial</a>
               ${user.is_admin ? `<a class="nav-more-item ${active === 'admin' ? 'active' : ''}" href="/admin">Admin</a>` : ''}
             </div>
           </div>
@@ -722,6 +724,7 @@ ${COACH_CHAT_SCRIPT}
 ${showWidget ? COACH_WIDGET_SCRIPT : ''}
 ${user ? MOBILE_NAV_SCRIPT : ''}
 ${user ? NOTIF_SCRIPT : ''}
+${user ? tourScript(['flame', 'shoe', 'mountain', 'trophy', 'camera', 'pin', 'chat', 'stopwatch', 'calendar'].reduce((o, n) => { o[n] = icon(n, 'tour-' + n); return o; }, {}), !user.tour_seen_at) : ''}
 ${bodyEnd || ''}
 </body>
 </html>`;

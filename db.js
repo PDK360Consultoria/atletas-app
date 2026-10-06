@@ -425,4 +425,12 @@ ensureColumn('users', 'member_number', 'member_number INTEGER');
   }
 }
 
+// Tutorial do primeiro acesso: quem já existia antes deste recurso não recebe o
+// tour automático (continua podendo abrir em Mais > Tutorial).
+{
+  const had = db.prepare('PRAGMA table_info(users)').all().some((c) => c.name === 'tour_seen_at');
+  ensureColumn('users', 'tour_seen_at', 'tour_seen_at TEXT');
+  if (!had) db.exec("UPDATE users SET tour_seen_at = datetime('now') WHERE tour_seen_at IS NULL");
+}
+
 module.exports = db;

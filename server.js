@@ -607,6 +607,12 @@ async function handle(req, res) {
       if (wantsJson) { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ ok: true, redirect: dest })); }
       return redirect(res, dest);
     }
+    if (method === 'POST' && pathname === '/tour/done') {
+      if (!requireAuth()) return;
+      db.prepare("UPDATE users SET tour_seen_at = datetime('now') WHERE id = ? AND tour_seen_at IS NULL").run(user.id);
+      res.writeHead(204);
+      return res.end();
+    }
     if (method === 'POST' && pathname === '/feed/bio') {
       if (!requireAuth()) return;
       const bio = (fields.bio || '').trim().slice(0, 300);
