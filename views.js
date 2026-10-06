@@ -2235,7 +2235,7 @@ function routeTileMap(polylineStr, opts) {
   for (; z > 3; z--) {
     let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
     for (const [la, lo] of points) { const [x, y] = toWorld(la, lo, z); if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
-    if (x1 - x0 <= W * 0.78 && y1 - y0 <= H * 0.78) break;
+    if (x1 - x0 <= W * 0.9 && y1 - y0 <= H * 0.88) break;
   }
   let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
   for (const [la, lo] of points) { const [x, y] = toWorld(la, lo, z); if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
