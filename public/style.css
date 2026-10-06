@@ -979,3 +979,8 @@ body.tour-open{overflow:hidden;}
 .site-foot a{color:inherit; text-decoration:underline;}
 .legal h1{margin-top:0;} .legal h2{font-size:17px; margin:22px 0 6px;} .legal p{line-height:1.6;}
 .btn.strava-btn{background:#FC4C02; border-color:#FC4C02; color:#fff;}
+
+/* app (iOS/Android shell): notch + home-indicator safe areas */
+.nav{padding-top:calc(18px + env(safe-area-inset-top));}
+body{padding-left:env(safe-area-inset-left); padding-right:env(safe-area-inset-right);}
+.site-foot{padding-bottom:env(safe-area-inset-bottom);}
