@@ -421,7 +421,7 @@ async function handle(req, res) {
           a.distance_km as activity_distance_km, a.duration_sec as activity_duration_sec,
           a.avg_pace_sec as activity_avg_pace_sec, a.elevation_gain_m as activity_elevation_gain_m,
           a.source as activity_source, a.laps_json as activity_laps_json,
-          a.route_polyline as activity_route_polyline,
+          a.route_polyline as activity_route_polyline, a.started_at as activity_started_at, u.city as author_city,
           u.name as author_name, u.public_slug as author_slug, u.avatar_path as author_avatar_path
         FROM posts p
         JOIN users u ON u.id = p.user_id

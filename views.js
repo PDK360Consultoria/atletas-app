@@ -2239,21 +2239,17 @@ function routeMapSvg(polylineStr, opts) {
 // activity stream reads than a blank-textarea social post.
 function activityStatBlock(p) {
   const stats = [
-    p.activity_distance_km != null ? [`${p.activity_distance_km}`, 'km', 'Distância'] : null,
+    p.activity_distance_km != null ? [`${p.activity_distance_km}`, ' km', 'Distância'] : null,
+    p.activity_avg_pace_sec != null ? [secToPace(p.activity_avg_pace_sec), ' /km', 'Ritmo'] : null,
     p.activity_duration_sec != null ? [fmtClock(p.activity_duration_sec), '', 'Tempo'] : null,
-    p.activity_avg_pace_sec != null ? [secToPace(p.activity_avg_pace_sec), '/km', 'Pace'] : null,
-    p.activity_elevation_gain_m ? [Math.round(p.activity_elevation_gain_m), 'm', 'Elevação'] : null,
+    p.activity_elevation_gain_m ? [Math.round(p.activity_elevation_gain_m), ' m', 'Elevação'] : null,
   ].filter(Boolean);
-  return `<a class="post-activity-head" href="/activities/${p.activity_id}">
-    <span class="post-activity-icon">${icon(workoutTypeIcon(p.activity_workout_type), 'wt' + p.id)}</span>
-    <span class="post-activity-headtext">
-      <span class="post-activity-title">${esc(p.activity_title)}</span>
-      <span class="post-activity-type">${esc(p.activity_workout_type || 'treino')}${p.activity_source === 'strava' ? ' · Strava' : ''}</span>
-    </span>
-  </a>
-  ${stats.length ? `<div class="post-stats">${stats.map(([v, u, k]) => `<div class="post-stat"><div class="v">${esc(String(v))}${u ? `<span class="u">${esc(u)}</span>` : ''}</div><div class="k">${esc(k)}</div></div>`).join('')}</div>` : ''}
-  ${p.activity_route_polyline ? `<div class="post-route">${routeMapSvg(p.activity_route_polyline, { width: 600, height: 220 })}</div>` : ''}
-  ${p.activity_laps && p.activity_laps.length > 1 ? `<div class="post-chart">${paceBarsHtml({ avg_pace_sec: p.activity_avg_pace_sec }, p.activity_laps, 12)}</div>` : ''}`;
+  // texto automático "10.6km em 59:00 (pace 5:34/km)" repete os números — some
+  const body = p.body && !/^\s*[\d.,]+\s*km em /i.test(p.body) ? p.body : '';
+  return `<a class="strava-title" href="/activities/${p.activity_id}">${esc(p.activity_title)}</a>
+  ${body ? `<div class="strava-desc">${esc(body).replace(/\n/g, '<br>')}</div>` : ''}
+  ${stats.length ? `<div class="strava-stats">${stats.map(([v, u, k]) => `<div class="strava-stat"><div class="k">${esc(k)}</div><div class="v">${esc(String(v))}${u ? `<span class="u">${esc(u)}</span>` : ''}</div></div>`).join('')}</div>` : ''}
+  ${p.activity_route_polyline ? `<a class="strava-map" href="/activities/${p.activity_id}">${routeMapSvg(p.activity_route_polyline, { width: 640, height: 300 })}</a>` : (p.activity_laps && p.activity_laps.length > 1 ? `<div class="strava-splits">${paceBarsHtml({ avg_pace_sec: p.activity_avg_pace_sec }, p.activity_laps, 12)}</div>` : '')}`;
 }
 
 // Reaction picker: a <details>/<summary> disclosure (same idiom as the
@@ -2283,6 +2279,22 @@ function reactionPicker(p, returnTo) {
   </details>`;
 }
 
+function workoutLabel(t) {
+  t = (t || '').toLowerCase();
+  if (t.includes('long')) return 'Longão';
+  if (t.includes('interval') || t.includes('tiro')) return 'Intervalado';
+  if (t.includes('ritmo') || t.includes('tempo')) return 'Ritmo';
+  if (t.includes('prog')) return 'Progressivo';
+  return 'Corrida';
+}
+function fmtStartLine(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const day = d.toLocaleDateString('pt-BR', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
+  const hm = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', timeZone: 'UTC' });
+  return `${day} às ${hm}`;
+}
+
 function postCard(user, p, returnTo) {
   const mine = p.user_id === user.id;
   const comments = p.comments || [];
@@ -2291,8 +2303,8 @@ function postCard(user, p, returnTo) {
   <div class="post-head">
     ${avatarHtml(p.author_name, p.user_id, p.author_avatar_path)}
     <div class="post-head-meta">
-      <div class="post-name">${p.author_slug ? `<a href="/u/${esc(p.author_slug)}">${esc(p.author_name)}</a>` : esc(p.author_name)}${mine ? ' <span class="pill">você</span>' : ''}<span class="post-verb muted">${p.is_auto ? 'completou um treino' : 'compartilhou'}</span></div>
-      <div class="post-time" title="${esc(fmtDate(p.created_at))}">${timeAgo(p.created_at)}</div>
+      <div class="post-name">${p.author_slug ? `<a href="/u/${esc(p.author_slug)}">${esc(p.author_name)}</a>` : esc(p.author_name)}${mine ? ' <span class="pill">você</span>' : ''}<span class="post-verb muted"></div>
+      <div class="post-time" title="${esc(fmtDate(p.created_at))}">${p.activity_id ? `${esc(workoutLabel(p.activity_workout_type))} · ` : ''}${p.activity_started_at ? esc(fmtStartLine(p.activity_started_at)) : timeAgo(p.created_at)}${p.author_city ? ` · ${esc(p.author_city)}` : ''}</div>
     </div>
     ${p.is_pr ? `<span class="pill pr-badge" title="${p.pr_label ? esc(p.pr_label) : ''}">${icon('trophy', 'pr' + p.id)}Recorde</span>` : ''}
     ${mine ? `<form method="POST" action="/feed/${p.id}/delete" class="post-delete-form" onsubmit="return confirm('Excluir este post? Essa ação não pode ser desfeita.')">
@@ -2300,7 +2312,7 @@ function postCard(user, p, returnTo) {
       <button class="post-delete-btn" type="submit" title="Excluir post" aria-label="Excluir post">${icon('trash', 'del' + p.id)}</button>
     </form>` : ''}
   </div>
-  ${p.body ? `<div class="post-body">${esc(p.body).replace(/\n/g, '<br>')}</div>` : ''}
+  ${p.body && !p.activity_id ? `<div class="post-body">${esc(p.body).replace(/\n/g, '<br>')}</div>` : ''}
   ${p.is_pr && p.pr_label ? `<p class="pr-label">${icon('trophy', 'prl' + p.id)}${esc(p.pr_label)}</p>` : ''}
   ${p.photo_path ? `<div class="post-photo"><img src="/uploads/${esc(p.photo_path)}" alt="" loading="lazy"></div>` : ''}
   ${p.activity_id ? activityStatBlock(p) : ''}
