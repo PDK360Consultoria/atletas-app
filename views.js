@@ -1,6 +1,7 @@
 const { secToPace, fmtClock, fmtDate, timeAgo, esc, renderMarkdownLite, icon } = require('./lib/format');
 
 const { ZONE_META, zoneBounds, zoneSeconds } = require('./lib/zones');
+const fx = require('./views_feed_extra');
 
 // Tempo por zona de FC (Z1–Z5): barra empilhada + legenda. `compact` é a
 // versão do feed e da lista (barra fina com Z1..Z4 em texto); a completa
@@ -2365,7 +2366,8 @@ function routeMapSvg(polylineStr, opts) {
 // publish (p.is_auto, set only via "Compartilhar no feed"), the card shows
 // the run's own stats instead of a typed caption, closer to how Strava's
 // activity stream reads than a blank-textarea social post.
-function activityStatBlock(p) {
+function activityStatBlock(p, mediaHtml) {
+  mediaHtml = mediaHtml || '';
   const stats = [
     p.activity_distance_km != null ? [`${p.activity_distance_km}`, ' km', 'Distância'] : null,
     p.activity_avg_pace_sec != null ? [secToPace(p.activity_avg_pace_sec), ' /km', 'Ritmo'] : null,
@@ -2378,7 +2380,7 @@ function activityStatBlock(p) {
   ${body ? `<div class="strava-desc">${esc(body).replace(/\n/g, '<br>')}</div>` : ''}
   ${stats.length ? `<div class="strava-stats">${stats.map(([v, u, k]) => `<div class="strava-stat"><div class="k">${esc(k)}</div><div class="v">${esc(String(v))}${u ? `<span class="u">${esc(u)}</span>` : ''}</div></div>`).join('')}</div>` : ''}
   ${zonesHtml(zonesForActivity({ laps_json: p.activity_laps_json, intervals_json: p.activity_intervals_json, avg_hr: p.activity_avg_hr, max_hr: null, duration_sec: p.activity_duration_sec }, p.author_hr_zones_json, p.author_obs_max_hr), true)}
-  ${p.activity_route_polyline ? `<div class="strava-map">${routeTileMap(p.activity_route_polyline, { width: 900, height: 440 })}</div>` : (p.activity_laps && p.activity_laps.length > 1 ? `<div class="strava-splits">${paceBarsHtml({ avg_pace_sec: p.activity_avg_pace_sec }, p.activity_laps, 12)}</div>` : '')}`;
+  ${mediaHtml}`;
 }
 
 // Reaction picker: a <details>/<summary> disclosure (same idiom as the
@@ -2424,16 +2426,31 @@ function fmtStartLine(iso) {
   return `${day} às ${hm}`;
 }
 
-function postCard(user, p, returnTo) {
+function postCard(user, p, returnTo, mentionMap) {
   const mine = p.user_id === user.id;
   const comments = p.comments || [];
   returnTo = returnTo || '/feed';
-  return `<div class="card post-card${p.is_auto || p.activity_id ? ' post-card-auto' : ''}">
+  const photos = p.photos || (p.photo_path ? [p.photo_path] : []);
+  const isAct = !!p.activity_id;
+  const kind = isAct ? 'treino' : (photos.length ? 'foto' : 'texto');
+  let media = '';
+  if (isAct) {
+    const slides = [];
+    if (p.activity_route_polyline) slides.push(routeTileMap(p.activity_route_polyline, { width: 900, height: 506 }));
+    photos.forEach((ph) => slides.push(fx.photoSlide(ph)));
+    media = slides.length ? fx.carousel(slides, '16/9') : '';
+    if (media) media = `<div class="strava-map">${media}</div>`;
+    else if (p.activity_laps && p.activity_laps.length > 1) media = `<div class="strava-splits">${paceBarsHtml({ avg_pace_sec: p.activity_avg_pace_sec }, p.activity_laps, 12)}</div>`;
+  } else if (photos.length) {
+    media = fx.carousel(photos.map(fx.photoSlide), '4/3');
+  }
+  const caption = p.body && !isAct ? `<div class="post-body${kind === 'texto' ? ' post-body-x' : ''}">${fx.linkify(p.body, mentionMap)}</div>` : '';
+  return `<div class="card post-card post-${kind}${isAct ? ' post-card-auto' : ''}${p.is_pr ? ' post-pr' : ''}">
   <div class="post-head">
     ${avatarHtml(p.author_name, p.user_id, p.author_avatar_path)}
     <div class="post-head-meta">
-      <div class="post-name">${p.author_slug ? `<a href="/u/${esc(p.author_slug)}">${esc(p.author_name)}</a>` : esc(p.author_name)}${mine ? ' <span class="pill">você</span>' : ''}<span class="post-verb muted"></div>
-      <div class="post-time" title="${esc(fmtDate(p.created_at))}">${p.activity_id ? `${esc(workoutLabel(p.activity_workout_type))} · ` : ''}${p.activity_started_at ? esc(fmtStartLine(p.activity_started_at)) : timeAgo(p.created_at)}${p.author_city ? ` · ${esc(p.author_city)}` : ''}</div>
+      <div class="post-name">${p.author_slug ? `<a href="/u/${esc(p.author_slug)}">${esc(p.author_name)}</a>` : esc(p.author_name)}${mine ? ' <span class="pill">você</span>' : ''}</div>
+      <div class="post-time" title="${esc(fmtDate(p.created_at))}">${isAct ? `${esc(workoutLabel(p.activity_workout_type))} · ` : ''}${p.activity_started_at ? esc(fmtStartLine(p.activity_started_at)) : timeAgo(p.created_at)}${p.location ? ` · <span class="post-loc">${icon('pin', 'loc' + p.id)}${esc(p.location)}</span>` : (p.author_city ? ` · ${esc(p.author_city)}` : '')}</div>
     </div>
     ${p.is_pr ? `<span class="pill pr-badge" title="${p.pr_label ? esc(p.pr_label) : ''}">${icon('trophy', 'pr' + p.id)}Recorde</span>` : ''}
     ${mine ? `<form method="POST" action="/feed/${p.id}/delete" class="post-delete-form" onsubmit="return confirm('Excluir este post? Essa ação não pode ser desfeita.')">
@@ -2441,10 +2458,10 @@ function postCard(user, p, returnTo) {
       <button class="post-delete-btn" type="submit" title="Excluir post" aria-label="Excluir post">${icon('trash', 'del' + p.id)}</button>
     </form>` : ''}
   </div>
-  ${p.body && !p.activity_id ? `<div class="post-body">${esc(p.body).replace(/\n/g, '<br>')}</div>` : ''}
+  ${kind === 'foto' ? media : ''}
+  ${caption}
   ${p.is_pr && p.pr_label ? `<p class="pr-label">${icon('trophy', 'prl' + p.id)}${esc(p.pr_label)}</p>` : ''}
-  ${p.photo_path ? `<div class="post-photo"><img src="/uploads/${esc(p.photo_path)}" alt="" loading="lazy"></div>` : ''}
-  ${p.activity_id ? activityStatBlock(p) : ''}
+  ${isAct ? activityStatBlock(p, media) : ''}
   <div class="post-actions">
     ${reactionPicker(p, returnTo)}
     <span class="post-comment-count">${icon('chat', 'c' + p.id)}<span>${comments.length}</span></span>
@@ -2466,19 +2483,11 @@ function feedPage(user, posts, opts) {
   const scope = opts.scope === 'following' ? 'following' : 'all';
   const returnQs = [scope === 'following' ? 'scope=following' : null, opts.beforeId ? `before_id=${opts.beforeId}` : null].filter(Boolean).join('&');
   const returnTo = '/feed' + (returnQs ? `?${returnQs}` : '');
-  const isPr = !!opts.isPrShare;
 
   const scopeTabs = `<div class="feed-tabs">
     <a class="feed-tab${scope === 'all' ? ' active' : ''}" href="/feed">Todos</a>
     <a class="feed-tab${scope === 'following' ? ' active' : ''}" href="/feed?scope=following">Seguindo</a>
   </div>`;
-
-  const recentChips = (opts.recentUnshared && opts.recentUnshared.length) ? `<div class="composer-recent">
-    <span class="muted mono" style="font-size:12px;">Compartilhar um treino recente:</span>
-    <div class="composer-recent-chips">
-      ${opts.recentUnshared.map((a) => `<a class="pill composer-recent-chip" href="/feed?share_activity=${a.id}${scope === 'following' ? '&scope=following' : ''}"><span class="dot"></span>${esc(a.title)}${a.distance_km != null ? ` · ${a.distance_km}km` : ''}</a>`).join('')}
-    </div>
-  </div>` : '';
 
   const pagination = opts.nextBeforeId ? `<div class="feed-pagination">
     <a class="ghost btn" href="/feed?before_id=${opts.nextBeforeId}${scope === 'following' ? '&scope=following' : ''}">Ver mais treinos antigos →</a>
@@ -2488,62 +2497,18 @@ function feedPage(user, posts, opts) {
 <h1>Feed</h1>
 <p class="lede">O que a galera está treinando.</p>
 ${scopeTabs}
-<div class="card feed-composer">
-  <form method="POST" action="/feed" enctype="multipart/form-data" id="composerForm">
-    <div class="composer-row">
-      ${avatarHtml(user.name, user.id, user.avatar_path, 'composer-avatar')}
-      <div class="composer-main">
-        ${opts.shareActivity ? `<div class="pill${isPr ? ' pr-badge' : ''}" style="margin-bottom:10px;"><input type="hidden" name="activity_id" value="${opts.shareActivity.id}">${isPr ? '<input type="hidden" name="is_pr" value="1">' : ''}${isPr ? icon('trophy', 'cpr2') : '<span class="dot"></span>'}${isPr ? 'Recorde pessoal: ' : 'Vinculado a: '}${esc(opts.shareActivity.title)}</div>` : ''}
-        ${!opts.shareActivity ? recentChips : ''}
-        <textarea name="body" placeholder="Compartilhe algo..." required>${opts.shareDraft ? esc(opts.shareDraft) : ''}</textarea>
-        <div id="composerPreviewWrap" class="composer-preview-wrap" hidden>
-          <img id="composerPreview" alt="">
-          <button type="button" id="composerPreviewRemove" class="composer-preview-remove" aria-label="Remover foto">${icon('close', 'cpr')}</button>
-        </div>
-        <div class="row" style="margin-top:12px; justify-content:space-between;">
-          <label class="photo-input-label">
-            <input type="file" name="photo" id="composerPhotoInput" accept="image/*" style="display:none;">
-            <span class="ghost btn photo-btn" id="composerPhotoLabel">${icon('camera', 'cpl')}Adicionar foto</span>
-          </label>
-          <button type="submit">Postar</button>
-        </div>
-      </div>
-    </div>
-  </form>
-</div>
-${posts.length ? `<div class="feed-list">${posts.map((p) => postCard(user, p, returnTo)).join('')}</div>` : `<div class="card feed-empty">
+${opts.tag ? `<div class="tag-filter"><span class="pill"><span class="dot"></span>#${esc(opts.tag)}</span> <a href="/feed">limpar filtro</a></div>` : ''}
+${!opts.tag ? fx.storiesBar(opts.stories, user, avatarHtml) : ''}
+${!opts.tag ? fx.weekCard(opts.week, user, avatarHtml) : ''}
+${fx.composer(user, opts, avatarHtml)}
+${posts.length ? `<div class="feed-list">${posts.map((p) => postCard(user, p, returnTo, opts.mentionMap)).join('')}</div>` : `<div class="card feed-empty">
   <div class="feed-empty-icon">${icon('flame', 'fe1')}</div>
-  <p style="margin:0; font-weight:800;">${scope === 'following' ? 'Ninguém que você segue postou ainda' : 'Nenhum post ainda'}</p>
-  <p class="muted" style="margin:4px 0 0;">${scope === 'following' ? 'Siga outros atletas pelo perfil público deles para ver os treinos aqui.' : 'Seja o primeiro a compartilhar um treino com a galera.'}</p>
+  <p style="margin:0; font-weight:800;">${opts.tag ? 'Nenhum post com essa hashtag' : (scope === 'following' ? 'Ninguém que você segue postou ainda' : 'Nenhum post ainda')}</p>
+  <p class="muted" style="margin:4px 0 0;">${scope === 'following' ? 'Siga outros atletas pelo perfil público deles para ver os treinos aqui.' : 'Seja o primeiro a compartilhar com a galera.'}</p>
 </div>`}
 ${pagination}
 ${LIVE_MAP_SCRIPT}
-<script defer>
-(function(){
-  try {
-    var input = document.getElementById('composerPhotoInput');
-    var label = document.getElementById('composerPhotoLabel');
-    var wrap = document.getElementById('composerPreviewWrap');
-    var img = document.getElementById('composerPreview');
-    var removeBtn = document.getElementById('composerPreviewRemove');
-    if (!input || !label || !wrap || !img || !removeBtn) return;
-    var labelDefault = label.innerHTML;
-    input.addEventListener('change', function(){
-      var file = input.files && input.files[0];
-      if (!file) return;
-      img.src = URL.createObjectURL(file);
-      wrap.hidden = false;
-      label.textContent = file.name;
-    });
-    removeBtn.addEventListener('click', function(){
-      input.value = '';
-      wrap.hidden = true;
-      img.src = '';
-      label.innerHTML = labelDefault;
-    });
-  } catch (e) { console.error('[dbg]', e); }
-})();
-</script>
+${fx.FEED_SCRIPT}
 `;
   return layout({ title: 'Feed', user, body, active: 'feed' });
 }

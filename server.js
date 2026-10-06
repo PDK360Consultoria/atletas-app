@@ -14,6 +14,7 @@ const strava = require('./lib/strava');
 const { computeEvolution, computeMedals, detectPersonalRecord, computeWeeklyStreak } = require('./lib/stats');
 const { buildContext, buildActivityFocusContext, buildVoiceInstructions, streamChatWithAssistant, computeHumanDelayMs, detectImageRequest, extractWorkoutCard } = require('./lib/assistant');
 const { mintRealtimeSession, synthesizeSpeech } = require('./lib/openai');
+const { weekSummary, recentStories, mentionMapFor } = require('./lib/feedextras');
 const { fetchNearbyRaces } = require('./lib/races');
 const { buildMonthCalendar } = require('./lib/calendar');
 const { ensurePublicSlug, buildShareDraft, buildPRShareDraft, REACTION_KEYS, notify, safePath, memberNumber, buildDiagnosis } = require('./lib/social');
@@ -119,14 +120,14 @@ async function handle(req, res) {
   const isForm = method === 'POST' && (req.headers['content-type'] || '').includes('application/x-www-form-urlencoded');
   const isMultipart = method === 'POST' && (req.headers['content-type'] || '').includes('multipart/form-data');
 
-  let fields = {}, files = {};
+  let fields = {}, files = {}, filesAll = [];
   if (isForm) {
     const buf = await readBody(req).catch(() => null);
     fields = buf ? parseUrlEncoded(buf) : {};
   } else if (isMultipart) {
     try {
-      const buf = await readBody(req);
-      ({ fields, files } = parseMultipart(buf, req.headers['content-type']));
+      const buf = await readBody(req, 45 * 1024 * 1024);
+      ({ fields, files, filesAll } = parseMultipart(buf, req.headers['content-type']));
     } catch (e) {
       return html(res, 413, 'Arquivo muito grande.');
     }
@@ -416,6 +417,8 @@ async function handle(req, res) {
         where.push('(p.user_id = ? OR p.user_id IN (SELECT followee_id FROM follows WHERE follower_id = ?))');
         params.push(user.id, user.id);
       }
+      const tag = (parsed.query.tag || '').toString().toLowerCase().replace(/[^\p{L}\p{N}_]/gu, '').slice(0, 40);
+      if (tag) { where.push("LOWER(p.body) LIKE ? ESCAPE '\\'"); params.push('%#' + tag + '%'); }
       const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
       const rows = db.prepare(`SELECT p.*, a.title as activity_title, a.workout_type as activity_workout_type,
@@ -440,6 +443,10 @@ async function handle(req, res) {
       posts.forEach((p) => {
         try { p.activity_laps = p.activity_laps_json ? JSON.parse(p.activity_laps_json) : null; }
         catch (e) { p.activity_laps = null; }
+        let photos = [];
+        try { photos = p.photos_json ? JSON.parse(p.photos_json) : []; } catch (e) { photos = []; }
+        if (!photos.length && p.photo_path) photos = [p.photo_path];
+        p.photos = photos;
       });
 
       // Specific PR wording ("Pace mais rápido já registrado em ~20km")
@@ -522,24 +529,51 @@ async function handle(req, res) {
           ORDER BY COALESCE(started_at, created_at) DESC LIMIT 5`).all(user.id);
       }
 
+      let week = null, stories = [];
+      if (!beforeId && !tag) {
+        try { week = weekSummary(db, user, computeWeeklyStreak); } catch (e) { console.error('[feed week]', e.message); }
+        try { stories = recentStories(db, user); } catch (e) { console.error('[feed stories]', e.message); }
+      }
+      let mentionMap = {};
+      try { mentionMap = mentionMapFor(db, posts); } catch (e) { /* menções são opcionais */ }
+
       return html(res, 200, views.feedPage(user, posts, {
-        shareDraft, shareActivity, isPrShare, recentUnshared, scope, nextBeforeId, beforeId,
+        shareDraft, shareActivity, isPrShare, recentUnshared, scope, nextBeforeId, beforeId, week, stories, mentionMap, tag,
       }));
     }
     if (method === 'POST' && pathname === '/feed') {
       if (!requireAuth()) return;
-      if (fields.body && fields.body.trim()) {
-        let photoPath = null;
-        const photo = files.photo;
-        if (photo && photo.data && photo.data.length) {
-          const ext = (path.extname(photo.filename || '').slice(0, 5) || '').replace(/[^.a-zA-Z0-9]/g, '');
-          photoPath = `post_${Date.now()}_${crypto.randomBytes(4).toString('hex')}${ext}`;
-          fs.writeFileSync(path.join(UPLOAD_DIR, photoPath), photo.data);
-        }
-        db.prepare('INSERT INTO posts (user_id, activity_id, body, photo_path, is_pr) VALUES (?,?,?,?,?)')
-          .run(user.id, fields.activity_id ? parseInt(fields.activity_id, 10) : null, fields.body.trim(), photoPath, fields.is_pr === '1' ? 1 : 0);
+      const wantsJson = (req.headers['x-requested-with'] || '') === 'fetch';
+      const body = (fields.body || '').trim().slice(0, 2200);
+      const location = (fields.location || '').trim().slice(0, 80) || null;
+      // O treino precisa ser do próprio atleta.
+      let activityId = null;
+      if (fields.activity_id) {
+        const act = db.prepare('SELECT id FROM activities WHERE id = ? AND user_id = ?').get(parseInt(fields.activity_id, 10), user.id);
+        if (act) activityId = act.id;
       }
-      return redirect(res, fields.activity_id ? `/activities/${fields.activity_id}` : '/feed');
+      // Fotos (até 6): só imagens, nome gerado no servidor.
+      const saved = [];
+      const okExt = { '.jpg': 1, '.jpeg': 1, '.png': 1, '.webp': 1, '.gif': 1 };
+      for (const f of filesAll.filter((x) => x.name === 'photo').slice(0, 6)) {
+        if (!f.data || !f.data.length || f.data.length > 12 * 1024 * 1024) continue;
+        let ext = path.extname(f.filename || '').toLowerCase();
+        if (!okExt[ext]) {
+          const ct = (f.contentType || '').toLowerCase();
+          ext = ct.includes('png') ? '.png' : ct.includes('webp') ? '.webp' : ct.includes('gif') ? '.gif' : ct.includes('jpeg') || ct.includes('jpg') ? '.jpg' : '';
+        }
+        if (!ext) continue;
+        const name = `post_${Date.now()}_${crypto.randomBytes(4).toString('hex')}${ext}`;
+        fs.writeFileSync(path.join(UPLOAD_DIR, name), f.data);
+        saved.push(name);
+      }
+      if (body || saved.length || activityId) {
+        db.prepare('INSERT INTO posts (user_id, activity_id, body, photo_path, photos_json, location, is_pr) VALUES (?,?,?,?,?,?,?)')
+          .run(user.id, activityId, body, saved[0] || null, saved.length ? JSON.stringify(saved) : null, location, fields.is_pr === '1' ? 1 : 0);
+      }
+      const dest = activityId && fields.activity_id ? `/activities/${activityId}` : '/feed';
+      if (wantsJson) { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ ok: true, redirect: dest })); }
+      return redirect(res, dest);
     }
     if (method === 'POST' && (m = /^\/feed\/(\d+)\/react$/.exec(pathname))) {
       if (!requireAuth()) return;

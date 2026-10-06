@@ -121,6 +121,8 @@ ensureColumn('activities', 'cadence_spm', 'cadence_spm REAL');
 // per user (used by the no-login /u/:slug page — generated on first access,
 // see ensurePublicSlug in server.js).
 ensureColumn('posts', 'photo_path', 'photo_path TEXT');
+ensureColumn('posts', 'photos_json', 'photos_json TEXT');
+ensureColumn('posts', 'location', 'location TEXT');
 ensureColumn('users', 'public_slug', 'public_slug TEXT');
 db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_public_slug ON users(public_slug) WHERE public_slug IS NOT NULL`);
 
