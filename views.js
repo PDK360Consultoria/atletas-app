@@ -2,6 +2,7 @@ const { secToPace, fmtClock, fmtDate, timeAgo, esc, renderMarkdownLite, icon } =
 
 const { ZONE_META, zoneBounds, zoneSeconds } = require('./lib/zones');
 const fx = require('./views_feed_extra');
+const { CATS: NEWS_CATS, CAT_KEYS: NEWS_CAT_KEYS } = require('./lib/news');
 
 // Tempo por zona de FC (Z1–Z5): barra empilhada + legenda. `compact` é a
 // versão do feed e da lista (barra fina com Z1..Z4 em texto); a completa
@@ -2480,7 +2481,7 @@ function postCard(user, p, returnTo, mentionMap) {
 
 function feedPage(user, posts, opts) {
   opts = opts || {};
-  const view = opts.view === 'meu' ? 'meu' : 'pub';
+  const view = opts.view === 'meu' ? 'meu' : (opts.view === 'noticias' ? 'noticias' : 'pub');
   const scope = opts.scope === 'following' ? 'following' : 'all';
   const returnQs = [view === 'meu' ? 'view=meu' : null, scope === 'following' && view === 'pub' ? 'scope=following' : null, opts.beforeId ? `before_id=${opts.beforeId}` : null].filter(Boolean).join('&');
   const returnTo = '/feed' + (returnQs ? `?${returnQs}` : '');
@@ -2488,7 +2489,28 @@ function feedPage(user, posts, opts) {
   const mainTabs = `<div class="feed-main-tabs" role="tablist">
     <a class="fmt${view === 'pub' ? ' active' : ''}" href="/feed" role="tab">Publicações</a>
     <a class="fmt${view === 'meu' ? ' active' : ''}" href="/feed?view=meu" role="tab">Meu feed</a>
+    <a class="fmt${view === 'noticias' ? ' active' : ''}" href="/feed?view=noticias" role="tab">Notícias</a>
   </div>`;
+
+  const newsCat = NEWS_CATS[opts.newsCat] ? opts.newsCat : 'todas';
+  const newsChips = `<div class="news-chips">
+    <a class="news-chip${newsCat === 'todas' ? ' on' : ''}" href="/feed?view=noticias">Tudo</a>
+    ${NEWS_CAT_KEYS.map((k) => `<a class="news-chip${newsCat === k ? ' on' : ''}" href="/feed?view=noticias&cat=${k}">${esc(NEWS_CATS[k].label)}</a>`).join('')}
+  </div>`;
+  const newsItems = (opts.news && opts.news.items) || [];
+  const newsHtml = newsItems.length ? `<div class="news-list">${newsItems.map((n) => `<a class="card news-item" href="${esc(n.link)}" target="_blank" rel="noopener noreferrer">
+    <span class="news-thumb c-${esc(n.cat || 'noticias')}">${esc((n.source || 'N').trim().charAt(0).toUpperCase())}</span>
+    <span class="news-main">
+      <span class="news-cat">${esc((NEWS_CATS[n.cat] || NEWS_CATS.noticias).label)}</span>
+      <span class="news-title">${esc(n.title)}</span>
+      <span class="news-meta">${esc(n.source || 'Fonte')} · ${timeAgo(new Date(n.ts).toISOString())}</span>
+    </span>
+  </a>`).join('')}</div>
+  <p class="muted" style="font-size:12px;margin:10px 2px 0;">Manchetes via Google Notícias. O texto completo abre no site de cada veículo.</p>` : `<div class="card feed-empty">
+  <div class="feed-empty-icon">${icon('flame', 'fe1')}</div>
+  <p style="margin:0; font-weight:800;">${opts.news && !opts.news.ok ? 'Não consegui carregar as notícias agora' : 'Nenhuma notícia nessa categoria'}</p>
+  <p class="muted" style="margin:4px 0 0;">Tente de novo em instantes.</p>
+</div>`;
 
   const scopeTabs = `<div class="feed-tabs">
     <a class="feed-tab${scope === 'all' ? ' active' : ''}" href="/feed">Todos</a>
@@ -2529,7 +2551,12 @@ function feedPage(user, posts, opts) {
 </div>`;
   const list = (empty) => (posts.length ? `<div class="feed-list">${posts.map((p) => postCard(user, p, returnTo, opts.mentionMap)).join('')}</div>` : empty);
 
-  const body = view === 'meu' ? `
+  const body = view === 'noticias' ? `
+<h1>Feed</h1>
+${mainTabs}
+${newsChips}
+${newsHtml}
+` : view === 'meu' ? `
 <h1>Feed</h1>
 ${mainTabs}
 ${profileHead}

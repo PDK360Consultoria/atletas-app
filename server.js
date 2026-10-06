@@ -15,6 +15,7 @@ const { computeEvolution, computeMedals, detectPersonalRecord, computeWeeklyStre
 const { buildContext, buildActivityFocusContext, buildVoiceInstructions, streamChatWithAssistant, computeHumanDelayMs, detectImageRequest, extractWorkoutCard } = require('./lib/assistant');
 const { mintRealtimeSession, synthesizeSpeech } = require('./lib/openai');
 const { weekSummary, recentStories, mentionMapFor } = require('./lib/feedextras');
+const { getNews } = require('./lib/news');
 const { fetchNearbyRaces } = require('./lib/races');
 const { buildMonthCalendar } = require('./lib/calendar');
 const { ensurePublicSlug, buildShareDraft, buildPRShareDraft, REACTION_KEYS, notify, safePath, memberNumber, buildDiagnosis } = require('./lib/social');
@@ -408,6 +409,11 @@ async function handle(req, res) {
     const FEED_PAGE_SIZE = 20;
     if (method === 'GET' && pathname === '/feed') {
       if (!requireAuth()) return;
+      if (parsed.query.view === 'noticias') {
+        const newsCat = (parsed.query.cat || '').toString();
+        const news = await getNews(newsCat);
+        return html(res, 200, views.feedPage(user, [], { view: 'noticias', news, newsCat }));
+      }
       const scope = parsed.query.scope === 'following' ? 'following' : 'all';
       const beforeId = parsed.query.before_id ? parseInt(parsed.query.before_id, 10) : null;
 
