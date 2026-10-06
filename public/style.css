@@ -751,7 +751,7 @@ body.landing-dark{
 .strava-splits{padding-bottom:26px;}
 .rtm{position:relative; width:100%; overflow:hidden; background:#e8e6e1; border-radius:0;}
 .rtm-tile{position:absolute; display:block; max-width:none; image-rendering:auto;}
-.rtm svg{position:absolute; inset:0; width:100%; height:100%;}
+.rtm > svg{position:absolute; inset:0; width:100%; height:100%;}
 .rtm-attr{position:absolute; right:6px; bottom:4px; font-size:9px; color:rgba(255,255,255,.55); background:rgba(0,0,0,.35); padding:1px 5px; border-radius:4px;}
 .strava-map{display:block; padding:0; background:none;}
 .route-card .rtm{border-radius:14px;}
@@ -781,3 +781,11 @@ body.landing-dark{
 .strava-map .rtm{aspect-ratio:900/440;}
 .post-card-auto .strava-stats + .zones{margin-top:14px;}
 .strava-map{margin-top:14px;}
+
+/* mapa interativo (Leaflet) por cima do estático */
+.rtm-live{position:absolute; inset:0; z-index:5; background:#e8e6e1;}
+.rtm.live > .rtm-tile, .rtm.live > svg, .rtm.live > .rtm-attr{display:none;}
+.rtm-live .leaflet-tile{filter:grayscale(.45) saturate(.8) contrast(.96) brightness(1.02);}
+.rtm-live .leaflet-control-zoom{border:none; box-shadow:0 2px 8px rgba(0,0,0,.35);}
+.rtm-live .leaflet-control-zoom a{background:#fff; color:#222;}
+.rtm-live .leaflet-control-attribution{font-size:9px; background:rgba(255,255,255,.7);}
