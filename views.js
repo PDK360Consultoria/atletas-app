@@ -2231,31 +2231,38 @@ function routeTileMap(polylineStr, opts) {
     const s = Math.sin(lat * Math.PI / 180);
     return [(lon + 180) / 360 * n, (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * n];
   };
-  let z = 17;
-  for (; z > 3; z--) {
+  const bbox = (zz) => {
     let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
-    for (const [la, lo] of points) { const [x, y] = toWorld(la, lo, z); if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
-    if (x1 - x0 <= W * 0.9 && y1 - y0 <= H * 0.88) break;
-  }
-  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
-  for (const [la, lo] of points) { const [x, y] = toWorld(la, lo, z); if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
-  const ox = (x0 + x1) / 2 - W / 2, oy = (y0 + y1) / 2 - H / 2;
+    for (const [la, lo] of points) { const [x, y] = toWorld(la, lo, zz); if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    return { x0, x1, y0, y1, w: Math.max(x1 - x0, 1), h: Math.max(y1 - y0, 1) };
+  };
+  // Zoom fracionário: sobe até o primeiro zoom em que a rota passa do alvo
+  // (86% da largura / 78% da altura) e encolhe os tiles por um fator < 1 —
+  // assim a rota enche o mapa e os tiles continuam nítidos.
+  const TW = W * 0.86, TH = H * 0.78;
+  let z = 3;
+  while (z < 17 && bbox(z + 1).w <= TW && bbox(z + 1).h <= TH) z++;
+  let s = 1, bb = bbox(z);
+  if (z < 17) { const bb2 = bbox(z + 1); s = Math.min(TW / bb2.w, TH / bb2.h, 1); z = z + 1; bb = bb2; }
+  const cx = (bb.x0 + bb.x1) / 2, cy = (bb.y0 + bb.y1) / 2;
   const maxT = Math.pow(2, z);
   let tiles = '';
-  for (let ty = Math.floor(oy / 256); ty <= Math.floor((oy + H) / 256); ty++) {
-    for (let tx = Math.floor(ox / 256); tx <= Math.floor((ox + W) / 256); tx++) {
+  const halfW = W / 2 / s, halfH = H / 2 / s;
+  for (let ty = Math.floor((cy - halfH) / 256); ty <= Math.floor((cy + halfH) / 256); ty++) {
+    for (let tx = Math.floor((cx - halfW) / 256); tx <= Math.floor((cx + halfW) / 256); tx++) {
       if (ty < 0 || ty >= maxT) continue;
       const wx = ((tx % maxT) + maxT) % maxT;
-            tiles += `<img class="rtm-tile" loading="lazy" alt="" src="https://${'abc'[(wx + ty) % 3]}.tile.openstreetmap.org/${z}/${wx}/${ty}.png" style="left:${((tx * 256 - ox) / W * 100).toFixed(3)}%;top:${((ty * 256 - oy) / H * 100).toFixed(3)}%;width:${(256 / W * 100).toFixed(3)}%;height:${(256 / H * 100).toFixed(3)}%">`;
+      const left = (tx * 256 - cx) * s + W / 2, top = (ty * 256 - cy) * s + H / 2;
+      tiles += `<img class="rtm-tile" loading="lazy" alt="" src="https://${'abc'[(wx + ty) % 3]}.tile.openstreetmap.org/${z}/${wx}/${ty}.png" style="left:${(left / W * 100).toFixed(3)}%;top:${(top / H * 100).toFixed(3)}%;width:${(256 * s / W * 100).toFixed(3)}%;height:${(256 * s / H * 100).toFixed(3)}%">`;
     }
   }
-  const xy = points.map(([la, lo]) => { const [x, y] = toWorld(la, lo, z); return [x - ox, y - oy]; });
+  const xy = points.map(([la, lo]) => { const [x, y] = toWorld(la, lo, z); return [(x - cx) * s + W / 2, (y - cy) * s + H / 2]; });
   const d = xy.map(([x, y], i) => `${i ? 'L' : 'M'}${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
   const [sx, sy] = xy[0], [ex, ey] = xy[xy.length - 1];
   return `<div class="rtm" style="aspect-ratio:${W}/${H}">${tiles}
     <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Mapa do percurso">
-      <path d="${d}" fill="none" stroke="rgba(0,0,0,.55)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
-      <path d="${d}" fill="none" stroke="#FC4C02" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="${d}" fill="none" stroke="#fff" stroke-opacity=".95" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="${d}" fill="none" stroke="#FC4C02" stroke-width="3.6" stroke-linecap="round" stroke-linejoin="round"/>
       <circle cx="${sx.toFixed(1)}" cy="${sy.toFixed(1)}" r="5" fill="#34C759" stroke="#fff" stroke-width="1.5"/>
       <circle cx="${ex.toFixed(1)}" cy="${ey.toFixed(1)}" r="5" fill="#FF3B30" stroke="#fff" stroke-width="1.5"/>
     </svg>
