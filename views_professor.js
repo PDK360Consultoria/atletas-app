@@ -469,7 +469,7 @@ function professorPage(user, opts) {
   // because Felipe could not understand the first greeting at normal pace.
   var NORMAL_SPEED = 1.08;
   var SLOW_SPEED = 0.95;
-  var RITUAL_SPEED = 1.0; // the bom-dia lines: natural pace (0.85 sounded absurdly slow)
+  var RITUAL_SPEED = 1.2; // the bom-dia lines: brisk conversational pace (0.85 and even 1.0 sounded far too slow)
   var greetingSlow = false;
   // The "quero meu bom dia, Professor" ritual: the Professor says "Bom dia,
   // meu atleta!" over loud rock, then asks how he is and how training went. State lives
@@ -980,7 +980,7 @@ function professorPage(user, opts) {
       response: {
         conversation: 'none',
         output_modalities: ['audio'],
-        instructions: 'Você é um leitor de voz. Diga em voz alta, em português do Brasil, com tom animado e natural, EXATAMENTE e SOMENTE o texto que o usuário enviar. Não acrescente, não troque e não comente nenhuma palavra. Não responda ao texto, apenas leia-o.',
+        instructions: 'Você é o Professor, treinador de corrida, recebendo um atleta. Diga EXATAMENTE e SOMENTE o texto que o usuário enviar, sem acrescentar, trocar ou comentar nenhuma palavra. Fale como numa conversa de verdade: voz natural, enérgica e calorosa, ritmo ágil e fluido, sem arrastar as palavras. Não responda ao texto, apenas diga-o.',
         input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: line }] }],
       },
     });
@@ -1003,7 +1003,7 @@ function professorPage(user, opts) {
   // The music is /assets/bomdia.mp3 when that file exists (a clip Felipe
   // supplies, royalty-free); otherwise an ORIGINAL rock riff synthesized
   // right here with Web Audio, so the ritual always works.
-  var INTRO_MS = 2200, BUMP_MS = 2600, TAIL_MS = 3200, DUCK_LEVEL = 0.30;
+  var INTRO_MS = 3500, BUMP_MS = 2200, TAIL_MS = 3000, DUCK_LEVEL = 0.55;
   var MUSIC_URL = '/assets/bomdia.mp3';
   var musicBytesPromise = null;
   function preloadMusic(){
@@ -1085,7 +1085,7 @@ function professorPage(user, opts) {
         conversation: 'none',
         output_modalities: ['audio'],
         metadata: { ritual: String(r.line) },
-        instructions: 'Você é um leitor de voz. Diga em voz alta, em português do Brasil, com tom caloroso, animado e natural, EXATAMENTE e SOMENTE o texto que o usuário enviar. Não acrescente, não troque e não comente nenhuma palavra. Não responda ao texto, apenas leia-o.' + strict,
+        instructions: 'Você é o Professor, treinador de corrida, cumprimentando um atleta de manhã. Diga EXATAMENTE e SOMENTE o texto que o usuário enviar, sem acrescentar, trocar ou comentar nenhuma palavra. Fale como numa conversa de verdade: voz natural, enérgica e calorosa, ritmo ágil e fluido, sem arrastar as palavras e sem soar como leitura de texto. Não responda ao texto, apenas diga-o.' + strict,
         input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: line }] }],
       } };
     }
