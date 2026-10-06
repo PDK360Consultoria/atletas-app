@@ -708,7 +708,10 @@ function layout({ title, user, body, active, extraHead, bodyEnd, hideCoachWidget
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0B0D10">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/assets/runiqx-icon-192.png">
 <title>${esc(title)} · Runiqx</title>
 <link rel="stylesheet" href="/style.css">
 ${extraHead || ''}
@@ -768,7 +771,10 @@ function privacyPage(user) {
 </div>`;
   if (user) return layout({ title: 'Privacidade', user, body });
   return `<!DOCTYPE html>
-<html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Privacidade · Runiqx</title><link rel="stylesheet" href="/style.css"></head>
+<html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0B0D10">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/assets/runiqx-icon-192.png"><title>Privacidade · Runiqx</title><link rel="stylesheet" href="/style.css"></head>
 <body><div class="wrap" style="max-width:760px; margin:0 auto; padding:24px 16px;"><div class="center-logo"><a href="/" style="color:inherit; text-decoration:none;">Runiqx</a></div>${body}</div></body></html>`;
 }
 
@@ -777,7 +783,10 @@ function authLayout(title, body) {
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0B0D10">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/assets/runiqx-icon-192.png">
 <title>${esc(title)} · Runiqx</title>
 <link rel="stylesheet" href="/style.css">
 </head>
@@ -2917,6 +2926,19 @@ ${flags.publicUrl ? `<div class="card">
     <label>Chave da API (sk-...)</label>
     <input name="openai_api_key" value="${user.openai_api_key ? '••••••••••••' + esc(user.openai_api_key.slice(-4)) : ''}" placeholder="sk-...">
     <div style="margin-top:12px;"><button class="ghost" type="submit">Salvar chave</button></div>
+  </form>
+</div>
+
+<div class="card" id="excluir-conta">
+  <h2>Excluir conta</h2>
+  <p class="muted">Apaga de forma permanente a sua conta e tudo o que está ligado a ela: treinos, posts, fotos, comentários e a conexão com a Strava. Essa ação não pode ser desfeita.</p>
+  ${flags.deleteError === 'admin' ? `<div class="err">Contas de administrador não podem ser excluídas por aqui.</div>` : flags.deleteError ? `<div class="err">Não consegui excluir. Confira a senha e digite EXCLUIR.</div>` : ''}
+  <form method="POST" action="/settings/delete-account" onsubmit="return confirm('Excluir sua conta de forma permanente?')">
+    <label>Sua senha</label>
+    <input type="password" name="password" required autocomplete="current-password">
+    <label>Digite EXCLUIR para confirmar</label>
+    <input type="text" name="confirm" required autocomplete="off">
+    <div style="margin-top:12px;"><button class="danger" type="submit">Excluir minha conta</button></div>
   </form>
 </div>
 `;

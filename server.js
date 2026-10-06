@@ -102,6 +102,20 @@ async function handle(req, res) {
   }
 
 
+  if (method === 'GET' && pathname === '/manifest.webmanifest') {
+    res.writeHead(200, { 'content-type': 'application/manifest+json; charset=utf-8', 'cache-control': 'public, max-age=86400' });
+    return res.end(JSON.stringify({
+      name: 'Runiqx', short_name: 'Runiqx', description: 'Treino de corrida e feed entre atletas',
+      start_url: '/', scope: '/', display: 'standalone', orientation: 'portrait',
+      background_color: '#0B0D10', theme_color: '#0B0D10', lang: 'pt-BR',
+      icons: [
+        { src: '/assets/runiqx-icon-192.png', sizes: '192x192', type: 'image/png' },
+        { src: '/assets/runiqx-icon-512.png', sizes: '512x512', type: 'image/png' },
+        { src: '/assets/runiqx-icon-maskable-512.png', sizes: '512x512', type: 'image/png', purpose: 'maskable' },
+      ],
+    }));
+  }
+
   const cookies = parseCookies(req);
 
   // Feed photos — auth-gated (the feed itself is only visible to signed-in
@@ -145,6 +159,17 @@ async function handle(req, res) {
   };
 
   try {
+    // ---------- self-service account deletion ----------
+    if (method === 'POST' && pathname === '/settings/delete-account') {
+      if (!requireAuth()) return;
+      if (user.is_admin) return redirect(res, '/settings?delete_error=admin');
+      const ok = String(fields.confirm || '').trim().toUpperCase() === 'EXCLUIR'
+        && verifyPassword(fields.password || '', user.password_salt, user.password_hash);
+      if (!ok) return redirect(res, '/settings?delete_error=1');
+      deleteUserCompletely(db, user.id);
+      return redirect(res, '/login', serializeCookie('session', '', { expire: true }));
+    }
+
     // ---------- legal ----------
     if (method === 'GET' && pathname === '/privacidade') return html(res, 200, views.privacyPage(user));
     // ---------- auth ----------
@@ -737,6 +762,7 @@ async function handle(req, res) {
         stravaConnected: parsed.query.strava_connected,
         stravaError: parsed.query.strava_error,
         stravaDisconnected: parsed.query.strava_disconnected,
+        deleteError: parsed.query.delete_error,
         stravaConfigured: strava.isConfigured(),
         publicUrl: `${baseUrl(req)}/u/${slug}`,
         aiSharedAvailable: !!SHARED_ANTHROPIC_KEY,
@@ -1164,6 +1190,43 @@ async function handle(req, res) {
     console.error(err);
     res.writeHead(500, { 'content-type': 'text/html; charset=utf-8' });
     res.end(`<h1>Erro interno</h1><pre>${(err && err.message) || err}</pre>`);
+  }
+}
+
+
+// Permanently removes an athlete and everything that hangs off their id,
+// including uploaded photos. Used by the in-app "Excluir conta" flow
+// (required by the App Store / Play Store account-deletion rules).
+function deleteUserCompletely(db, uid) {
+  const files = [];
+  const u = db.prepare('SELECT avatar_path FROM users WHERE id = ?').get(uid);
+  if (u && u.avatar_path) files.push(u.avatar_path);
+  const posts = db.prepare('SELECT id, photo_path, photos_json FROM posts WHERE user_id = ?').all(uid);
+  for (const p of posts) {
+    if (p.photo_path) files.push(p.photo_path);
+    try { (JSON.parse(p.photos_json || '[]') || []).forEach((f) => files.push(f)); } catch (e) { /* ignore */ }
+  }
+  const postIds = posts.map((p) => p.id);
+  if (postIds.length) {
+    const ph = postIds.map(() => '?').join(',');
+    db.prepare(`DELETE FROM comments WHERE post_id IN (${ph})`).run(...postIds);
+    db.prepare(`DELETE FROM reactions WHERE post_id IN (${ph})`).run(...postIds);
+    db.prepare(`DELETE FROM notifications WHERE post_id IN (${ph})`).run(...postIds);
+  }
+  db.prepare('DELETE FROM comments WHERE user_id = ?').run(uid);
+  db.prepare('DELETE FROM reactions WHERE user_id = ?').run(uid);
+  db.prepare('DELETE FROM notifications WHERE user_id = ? OR actor_user_id = ?').run(uid, uid);
+  db.prepare('DELETE FROM posts WHERE user_id = ?').run(uid);
+  db.prepare('DELETE FROM blocks WHERE activity_id IN (SELECT id FROM activities WHERE user_id = ?)').run(uid);
+  db.prepare('DELETE FROM activities WHERE user_id = ?').run(uid);
+  db.prepare('DELETE FROM races WHERE user_id = ?').run(uid);
+  db.prepare('DELETE FROM chat_messages WHERE user_id = ?').run(uid);
+  db.prepare('DELETE FROM follows WHERE follower_id = ? OR followee_id = ?').run(uid, uid);
+  db.prepare('DELETE FROM sessions WHERE user_id = ?').run(uid);
+  db.prepare('DELETE FROM users WHERE id = ?').run(uid);
+  for (const f of files) {
+    if (!/^[a-zA-Z0-9._-]+$/.test(String(f))) continue;
+    try { fs.unlinkSync(path.join(UPLOAD_DIR, String(f))); } catch (e) { /* already gone */ }
   }
 }
 
