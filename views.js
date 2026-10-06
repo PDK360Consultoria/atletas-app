@@ -15,7 +15,7 @@ function zonesHtml(secs, compact) {
     return pct > 0 ? `<span class="zone-seg" style="width:${pct.toFixed(2)}%;background:${m.color}" title="${m.z} · ${fmtClock(secs[i])} · ${Math.round(pct)}%"></span>` : '';
   }).join('');
   if (compact) {
-    return `<div class="zones zones-compact"><div class="zone-bar">${seg}</div><div class="zone-chips">${ZONE_META.slice(0, last).map((m, i) => `<span class="zone-chip"><i style="background:${m.color}"></i>${m.z} <b>${fmtClock(secs[i])}</b></span>`).join('')}</div></div>`;
+    return `<div class="zones zones-compact"><div class="zone-title">Zonas de FC</div><div class="zone-bar">${seg}</div><div class="zone-chips">${ZONE_META.slice(0, last).map((m, i) => `<span class="zone-chip${secs[i] > 0 ? '' : ' off'}"><i style="background:${m.color}"></i>${m.z} <b>${secs[i] > 0 ? fmtClock(secs[i]) : '—'}</b></span>`).join('')}</div></div>`;
   }
   return `<div class="zones"><div class="zone-bar zone-bar-lg">${seg}</div>
     <div class="zone-rows">${ZONE_META.slice(0, last).map((m, i) => `<div class="zone-row"><span class="zone-name"><i style="background:${m.color}"></i><b>${m.z}</b> ${m.name}</span><span class="zone-time">${fmtClock(secs[i])}</span><span class="zone-pct">${Math.round(secs[i] / total * 100)}%</span></div>`).join('')}</div></div>`;
@@ -2096,7 +2096,7 @@ ${(() => { const zs = zonesForActivity(activity, user.hr_zones_json, activity.zo
 
 ${activity.route_polyline ? `<div class="card route-card">
   <h2><span class="h-icon">${icon('mountain', 'rt')}</span>Rota</h2>
-  ${routeTileMap(activity.route_polyline, { width: 800, height: 380 })}
+  ${routeTileMap(activity.route_polyline, { width: 900, height: 440 })}
 </div>` : ''}
 
 ${prInfo && prInfo.isPR ? `<div class="card pr-banner">
@@ -2254,10 +2254,10 @@ function routeTileMap(polylineStr, opts) {
   const [sx, sy] = xy[0], [ex, ey] = xy[xy.length - 1];
   return `<div class="rtm" style="aspect-ratio:${W}/${H}">${tiles}
     <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Mapa do percurso">
-      <path d="${d}" fill="none" stroke="rgba(0,0,0,.55)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
-      <path d="${d}" fill="none" stroke="#FC5200" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
-      <circle cx="${sx.toFixed(1)}" cy="${sy.toFixed(1)}" r="6" fill="#34C759" stroke="#fff" stroke-width="2"/>
-      <circle cx="${ex.toFixed(1)}" cy="${ey.toFixed(1)}" r="6" fill="#FF3B30" stroke="#fff" stroke-width="2"/>
+      <path d="${d}" fill="none" stroke="rgba(0,0,0,.55)" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="${d}" fill="none" stroke="#FC4C02" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="${sx.toFixed(1)}" cy="${sy.toFixed(1)}" r="5" fill="#34C759" stroke="#fff" stroke-width="1.5"/>
+      <circle cx="${ex.toFixed(1)}" cy="${ey.toFixed(1)}" r="5" fill="#FF3B30" stroke="#fff" stroke-width="1.5"/>
     </svg>
     <span class="rtm-attr">© OpenStreetMap</span></div>`;
 }
@@ -2323,7 +2323,7 @@ function activityStatBlock(p) {
   ${body ? `<div class="strava-desc">${esc(body).replace(/\n/g, '<br>')}</div>` : ''}
   ${stats.length ? `<div class="strava-stats">${stats.map(([v, u, k]) => `<div class="strava-stat"><div class="k">${esc(k)}</div><div class="v">${esc(String(v))}${u ? `<span class="u">${esc(u)}</span>` : ''}</div></div>`).join('')}</div>` : ''}
   ${zonesHtml(zonesForActivity({ laps_json: p.activity_laps_json, intervals_json: p.activity_intervals_json, avg_hr: p.activity_avg_hr, max_hr: null, duration_sec: p.activity_duration_sec }, p.author_hr_zones_json, p.author_obs_max_hr), true)}
-  ${p.activity_route_polyline ? `<a class="strava-map" href="/activities/${p.activity_id}">${routeTileMap(p.activity_route_polyline, { width: 640, height: 340 })}</a>` : (p.activity_laps && p.activity_laps.length > 1 ? `<div class="strava-splits">${paceBarsHtml({ avg_pace_sec: p.activity_avg_pace_sec }, p.activity_laps, 12)}</div>` : '')}`;
+  ${p.activity_route_polyline ? `<a class="strava-map" href="/activities/${p.activity_id}">${routeTileMap(p.activity_route_polyline, { width: 900, height: 440 })}</a>` : (p.activity_laps && p.activity_laps.length > 1 ? `<div class="strava-splits">${paceBarsHtml({ avg_pace_sec: p.activity_avg_pace_sec }, p.activity_laps, 12)}</div>` : '')}`;
 }
 
 // Reaction picker: a <details>/<summary> disclosure (same idiom as the
