@@ -2068,7 +2068,7 @@ function activityDetailPage({ user, activity, laps, intervals, evolution, prInfo
 
 ${activity.route_polyline ? `<div class="card route-card">
   <h2><span class="h-icon">${icon('mountain', 'rt')}</span>Rota</h2>
-  ${routeMapSvg(activity.route_polyline, { width: 800, height: 320, pad: 20 })}
+  ${routeTileMap(activity.route_polyline, { width: 800, height: 380 })}
 </div>` : ''}
 
 ${prInfo && prInfo.isPR ? `<div class="card pr-banner">
@@ -2189,6 +2189,52 @@ function workoutTypeIcon(workoutType) {
 // is centered/scaled to fill the given box with a bit of padding. Returns
 // '' when there's no polyline (manual entries, GPX files without real GPS,
 // or activities synced before this feature existed).
+// Mapa de verdade (ruas) como no Strava: tiles escuros do CARTO/OpenStreetMap
+// posicionados em volta do traçado, com a rota desenhada por cima em SVG.
+// Se os tiles não carregarem, o fundo escuro + a linha continuam legíveis.
+function routeTileMap(polylineStr, opts) {
+  if (!polylineStr) return '';
+  const points = decodePolyline(polylineStr);
+  if (points.length < 2) return '';
+  opts = opts || {};
+  const W = opts.width || 640, H = opts.height || 320;
+  const toWorld = (lat, lon, z) => {
+    const n = 256 * Math.pow(2, z);
+    const s = Math.sin(lat * Math.PI / 180);
+    return [(lon + 180) / 360 * n, (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * n];
+  };
+  let z = 17;
+  for (; z > 3; z--) {
+    let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+    for (const [la, lo] of points) { const [x, y] = toWorld(la, lo, z); if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    if (x1 - x0 <= W * 0.78 && y1 - y0 <= H * 0.78) break;
+  }
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (const [la, lo] of points) { const [x, y] = toWorld(la, lo, z); if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  const ox = (x0 + x1) / 2 - W / 2, oy = (y0 + y1) / 2 - H / 2;
+  const maxT = Math.pow(2, z);
+  let tiles = '';
+  for (let ty = Math.floor(oy / 256); ty <= Math.floor((oy + H) / 256); ty++) {
+    for (let tx = Math.floor(ox / 256); tx <= Math.floor((ox + W) / 256); tx++) {
+      if (ty < 0 || ty >= maxT) continue;
+      const wx = ((tx % maxT) + maxT) % maxT;
+      const sub = 'abcd'[(wx + ty) % 4];
+      tiles += `<img class="rtm-tile" loading="lazy" alt="" src="https://${sub}.basemaps.cartocdn.com/dark_all/${z}/${wx}/${ty}@2x.png" style="left:${((tx * 256 - ox) / W * 100).toFixed(3)}%;top:${((ty * 256 - oy) / H * 100).toFixed(3)}%;width:${(256 / W * 100).toFixed(3)}%;height:${(256 / H * 100).toFixed(3)}%">`;
+    }
+  }
+  const xy = points.map(([la, lo]) => { const [x, y] = toWorld(la, lo, z); return [x - ox, y - oy]; });
+  const d = xy.map(([x, y], i) => `${i ? 'L' : 'M'}${x.toFixed(1)},${y.toFixed(1)}`).join(' ');
+  const [sx, sy] = xy[0], [ex, ey] = xy[xy.length - 1];
+  return `<div class="rtm" style="aspect-ratio:${W}/${H}">${tiles}
+    <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Mapa do percurso">
+      <path d="${d}" fill="none" stroke="rgba(0,0,0,.55)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="${d}" fill="none" stroke="#FC5200" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+      <circle cx="${sx.toFixed(1)}" cy="${sy.toFixed(1)}" r="6" fill="#34C759" stroke="#fff" stroke-width="2"/>
+      <circle cx="${ex.toFixed(1)}" cy="${ey.toFixed(1)}" r="6" fill="#FF3B30" stroke="#fff" stroke-width="2"/>
+    </svg>
+    <span class="rtm-attr">© OpenStreetMap · © CARTO</span></div>`;
+}
+
 function routeMapSvg(polylineStr, opts) {
   if (!polylineStr) return '';
   const points = decodePolyline(polylineStr);
@@ -2249,7 +2295,7 @@ function activityStatBlock(p) {
   return `<a class="strava-title" href="/activities/${p.activity_id}">${esc(p.activity_title)}</a>
   ${body ? `<div class="strava-desc">${esc(body).replace(/\n/g, '<br>')}</div>` : ''}
   ${stats.length ? `<div class="strava-stats">${stats.map(([v, u, k]) => `<div class="strava-stat"><div class="k">${esc(k)}</div><div class="v">${esc(String(v))}${u ? `<span class="u">${esc(u)}</span>` : ''}</div></div>`).join('')}</div>` : ''}
-  ${p.activity_route_polyline ? `<a class="strava-map" href="/activities/${p.activity_id}">${routeMapSvg(p.activity_route_polyline, { width: 640, height: 300 })}</a>` : (p.activity_laps && p.activity_laps.length > 1 ? `<div class="strava-splits">${paceBarsHtml({ avg_pace_sec: p.activity_avg_pace_sec }, p.activity_laps, 12)}</div>` : '')}`;
+  ${p.activity_route_polyline ? `<a class="strava-map" href="/activities/${p.activity_id}">${routeTileMap(p.activity_route_polyline, { width: 640, height: 340 })}</a>` : (p.activity_laps && p.activity_laps.length > 1 ? `<div class="strava-splits">${paceBarsHtml({ avg_pace_sec: p.activity_avg_pace_sec }, p.activity_laps, 12)}</div>` : '')}`;
 }
 
 // Reaction picker: a <details>/<summary> disclosure (same idiom as the
