@@ -1045,6 +1045,10 @@ function professorPage(user, opts) {
     ritual2 = mine;
     clearTimeout(inactivityTimer);
     stopReveal();
+    // The browser's speech recognizer (the "Hey Professor" listener) holds the
+    // mic and, on some Macs, makes the system turn OTHER audio down while it runs
+    // - one more thing that must not be active while the music plays.
+    stopRecognition();
     if (live) {
       sendEvent({ type: 'response.cancel' });
       sendEvent({ type: 'output_audio_buffer.clear' });
@@ -1052,11 +1056,14 @@ function professorPage(user, opts) {
       setVoiceMuted(true);
       setMicEnabled(false);
     } else {
+      // No call yet. It is opened only when the music starts fading (see below):
+      // starting a WebRTC call turns on the browser's voice processing, which on
+      // macOS can lower everything else that is playing - so nothing of that may
+      // happen while the music and the two lines are being played.
       mine.needCall = true;
       ritualSkipGreeting = true;
       permErrEl.hidden = true;
       activateBlock.style.display = 'none';
-      startLiveCall(''); // connects in the background; its greeting is suppressed while ritual2 is active
     }
     setState('speaking');
     setStatus('Tocando', 'speaking');
@@ -1123,6 +1130,7 @@ function professorPage(user, opts) {
       function at(sec, fn){ mine.timers.push(setTimeout(function(){ if (ritual2 === mine && !mine.ended) fn(); }, Math.max(0, (sec - ac.currentTime) * 1000))); }
       at(a1, function(){ pushLog('professor', 'Bom dia, meu atleta!'); setCaption('Bom dia, meu atleta!', true); });
       at(a2, function(){ pushLog('professor', 'Como você está hoje? Como foram os treinos?'); setCaption('Como você está hoje?', true); });
+      if (mine.needCall) at(END - FADE - 0.2, function(){ startLiveCall(''); }); // connect while the music fades out
       at(END, endRitual2);
       mine.timers.push(setTimeout(function(){ if (ritual2 === mine) endRitual2(); }, (END - ac.currentTime) * 1000 + 4000));
     });
@@ -1148,8 +1156,9 @@ function professorPage(user, opts) {
       setCaption('Pode responder…', true);
       armInactivityTimer();
     } else if (STATE === 'speaking') {
-      // the call never connected (or is still connecting): leave the state as the connect flow sets it
-      if (r.needCall) { setCaption('Conectando o Professor…', true); }
+      // no live call (still connecting, or it could not be started)
+      if (r.needCall && VOICE_ENABLED) { setState('connecting'); setCaption('Conectando o Professor…', true); }
+      else startAmbient();
     }
   }
 
