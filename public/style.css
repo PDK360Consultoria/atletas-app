@@ -772,4 +772,12 @@ body.landing-dark{
 .zone-time{font-family:'IBM Plex Mono',monospace; font-weight:600; color:var(--ink);}
 .zone-pct{text-align:right; color:var(--ink-faint); font-family:'IBM Plex Mono',monospace; font-size:12.5px;}
 .activity-row .zones-compact{margin-top:8px; max-width:420px;}
-.rtm-tile{filter:invert(1) hue-rotate(180deg) brightness(.82) contrast(.95) saturate(.7);}
+.rtm-tile{filter:grayscale(1) invert(1) brightness(.72) contrast(1.2);}
+
+.zone-title{font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--ink-faint); font-weight:700; margin-bottom:6px;}
+.zone-bar{gap:2px; background:none;}
+.zone-seg{border-radius:99px;}
+.zone-chip.off{opacity:.4;}
+.strava-map .rtm{aspect-ratio:900/440;}
+.post-card-auto .strava-stats + .zones{margin-top:14px;}
+.strava-map{margin-top:14px;}
