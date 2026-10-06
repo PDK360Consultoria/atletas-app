@@ -893,3 +893,26 @@ body.landing-dark{
 .composer-title{font-size:13px; font-weight:800; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-dim); margin-bottom:12px;}
 button.composer-recent-chip{font:inherit; font-size:12.5px; color:var(--ink); background:var(--surface2); border:1px solid var(--line); box-shadow:none; cursor:pointer; text-align:left;}
 button.composer-recent-chip.on{border-color:#FC5200; background:rgba(252,82,0,.12); color:var(--ink); font-weight:700;}
+
+/* ---- feed: abas principais e "Meu feed" estilo Instagram ---- */
+.feed-main-tabs{display:flex; border-bottom:1px solid var(--line); margin:4px 0 16px;}
+.fmt{flex:1; text-align:center; padding:12px 8px; font-size:14px; font-weight:800; color:var(--ink-faint); text-decoration:none; border-bottom:2px solid transparent; margin-bottom:-1px; letter-spacing:.02em;}
+.fmt.active{color:var(--ink); border-bottom-color:var(--ink);}
+.ig-head{padding:22px 24px;}
+.ig-top{display:flex; align-items:center; gap:22px;}
+.ig-avatar{width:84px !important; height:84px !important; font-size:28px !important; flex:none;}
+.ig-counts{display:flex; flex:1; justify-content:space-around; text-align:center;}
+.ig-counts b{display:block; font-size:19px; font-weight:800;}
+.ig-counts span{font-size:12.5px; color:var(--ink-dim);}
+.ig-name{margin-top:14px; font-weight:800; font-size:15px;}
+.ig-slug{font-weight:600; font-size:13px; color:var(--ink-faint); text-decoration:none; margin-left:6px;}
+.ig-city{font-size:13px; margin-top:2px;}
+.ig-bio{margin-top:8px; font-size:14.5px; line-height:1.5; word-break:break-word;}
+.ig-edit{margin-top:14px;}
+.ig-edit summary{display:inline-block; list-style:none; cursor:pointer; font-size:13px; padding:9px 16px;}
+.ig-edit summary::-webkit-details-marker{display:none;}
+.ig-bio-form{margin-top:12px;}
+.ig-bio-form textarea{width:100%; min-height:90px;}
+.ig-bio-actions{display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:10px;}
+.ig-links{display:flex; gap:8px; flex-wrap:wrap; margin-top:12px;}
+.ig-links .btn{font-size:13px; padding:9px 16px; text-decoration:none;}
