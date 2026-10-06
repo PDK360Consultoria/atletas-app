@@ -339,7 +339,7 @@ function professorPage(user, opts) {
 </div>
 
 <div class="footer">
-  TOQUE NO ORBE PRA FALAR<span class="sep">·</span>DIGA <kbd>"HEY PROFESSOR"</kbd> TAMBÉM FUNCIONA<span class="sep">·</span><kbd>ESC</kbd> ENCERRA
+  TOQUE NO ORBE PRA FALAR<span class="sep">·</span>DIGA <kbd>"HEY PROFESSOR"</kbd> TAMBÉM FUNCIONA<span class="sep">·</span><kbd>ESC</kbd> ENCERRA<span class="sep">·</span>VERSÃO 7
 </div>
 
 <script>
@@ -1133,6 +1133,8 @@ function professorPage(user, opts) {
     r.ended = true;
     r.timers.forEach(function(t){ clearTimeout(t); });
     ritual2 = { active: false };
+    clap.lock = performance.now() + 10000; // the speakers' own music/voice must never re-trigger it
+    clap.last = 0;
     try { if (r.ac) r.ac.close(); } catch (e) {}
     if (musicCtx === r.ac) musicCtx = null;
     musicActive = false; musicAnalyser = null; musicAnalyserBuf = null; musicFreqBuf = null; musicLevel = 0;
@@ -1342,6 +1344,7 @@ function professorPage(user, opts) {
     clearTimeout(r.timer);
     if (r.poll) clearInterval(r.poll);
     clearTimeout(r.lineTimer);
+    clap.lock = performance.now() + 10000; clap.last = 0;
     ritual = { active: false };
     setVoiceMuted(false);
     rlog('end');
@@ -1906,7 +1909,7 @@ function professorPage(user, opts) {
     clapFeed(Math.sqrt(sum / n), zc / n, performance.now());
   }
   function clapFeed(rms, zcr, now){
-    if (ritual.active || ritual2.active || now < clap.lock) { clap.ev = null; clap.prev = rms; return; }
+    if (ritual.active || ritual2.active || STATE === 'speaking' || STATE === 'connecting' || now < clap.lock) { clap.ev = null; clap.last = 0; clap.prev = rms; return; }
     if (!clap.ev) clap.baseline = Math.max(0.002, clap.baseline * 0.985 + rms * 0.015);
     if (!clap.ev) {
       if (rms >= Math.max(CLAP_MIN_RMS, clap.baseline * CLAP_RATIO) && rms >= clap.prev * 1.8 && zcr > 0.05 && now - clap.evEnd > 110) {
