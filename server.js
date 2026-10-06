@@ -172,6 +172,7 @@ async function handle(req, res) {
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
         .run(fields.name.trim(), email, hash, salt, experienceLevel, Number.isFinite(weeklyKm) ? weeklyKm : null,
           (fields.goal_race_name || '').trim() || null, goalTimeSec, (fields.injury_notes || '').trim() || null);
+      db.prepare('UPDATE users SET member_number = (SELECT COALESCE(MAX(member_number), 0) + 1 FROM users WHERE id != ?) WHERE id = ?').run(info.lastInsertRowid, info.lastInsertRowid);
       const newUser = db.prepare('SELECT * FROM users WHERE id = ?').get(info.lastInsertRowid);
       ensurePublicSlug(db, newUser);
       const token = createSession(newUser.id);

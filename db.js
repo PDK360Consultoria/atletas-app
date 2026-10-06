@@ -415,4 +415,14 @@ ensureColumn('activities', 'route_polyline', 'route_polyline TEXT');
 // modelo bring-your-own-key, cadastrada em Configurações.
 ensureColumn('users', 'openai_api_key', 'openai_api_key TEXT');
 
+// Número de atleta sequencial (Nº 001, 002...), independente do id interno —
+// ids pulados por contas removidas não deixam buracos na numeração.
+ensureColumn('users', 'member_number', 'member_number INTEGER');
+{
+  const pend = db.prepare('SELECT id FROM users WHERE member_number IS NULL ORDER BY id ASC').all();
+  for (const r of pend) {
+    db.prepare('UPDATE users SET member_number = (SELECT COALESCE(MAX(member_number), 0) + 1 FROM users) WHERE id = ?').run(r.id);
+  }
+}
+
 module.exports = db;
