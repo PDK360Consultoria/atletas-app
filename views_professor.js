@@ -1000,7 +1000,7 @@ function professorPage(user, opts) {
   // The music is /assets/bomdia.mp3 when that file exists (a clip Felipe
   // supplies, royalty-free); otherwise an ORIGINAL rock riff synthesized
   // right here with Web Audio, so the ritual always works.
-  var CLAPS_MS = 1000, INTRO_MS = 2200, BUMP_MS = 2600, TAIL_MS = 3200, DUCK_LEVEL = 0.30;
+  var INTRO_MS = 2200, BUMP_MS = 2600, TAIL_MS = 3200, DUCK_LEVEL = 0.30;
   var MUSIC_URL = '/assets/bomdia.mp3';
   var musicBytesPromise = null;
   function preloadMusic(){
@@ -1028,6 +1028,10 @@ function professorPage(user, opts) {
       if (liveReplyRow) { dropRow(liveReplyRow); liveReplyRow = null; }
     }
     setMicEnabled(false);
+    // A generic answer to the spoken command may already be playing — silence
+    // the speaker until our own line is requested (restored in sendRitualCreate/endRitual).
+    if (cancelInflight) setVoiceMuted(true);
+    rlog('start', cancelInflight ? 'mid-call' : 'fresh');
     setState('speaking');
     setCaption('Rock pra acordar o corpo!', true);
     setStatus('Tocando', 'speaking');
@@ -1039,7 +1043,7 @@ function professorPage(user, opts) {
         if (ritual !== mine) { if (ctrl) ctrl.stop(); return; }
         mine.ctrl = ctrl;
         musicActive = !!ctrl;
-        setTimeout(function(){ if (ritual === mine) ritualSay(1); }, ctrl ? CLAPS_MS + INTRO_MS : 0);
+        setTimeout(function(){ if (ritual === mine) ritualSay(1); }, ctrl ? INTRO_MS : 0);
       });
     });
   }
@@ -1047,23 +1051,74 @@ function professorPage(user, opts) {
   function ritualSay(n){
     var r = ritual;
     if (!r.active || r.gen !== liveGeneration) return;
-    r.line = n; r.awaiting = true; r.respId = null; r.retries = 0;
+    r.line = n; r.awaiting = true; r.respId = null; r.retries = 0; r.acc = ''; r.bad = 0;
     musicActive = false; // the orb follows the Professor's voice while he talks
     if (r.ctrl) r.ctrl.duck(DUCK_LEVEL, 0.35);
+    rlog('say', n);
     setState('speaking');
     setStatus('Professor falando', 'speaking');
     setTimeout(sendRitualCreate, r.ctrl ? 380 : 0); // let the music dip first
+    clearTimeout(r.lineTimer);
+    r.lineTimer = setTimeout(function(){ if (ritual === r && r.awaiting && r.line === n) { rlog('watchdog', n); ritualLineDone(); } }, 11000);
   }
+  var RITUAL_LINES = { 1: 'Bom dia, meu atleta!', 2: 'Como você está hoje? Como foram os treinos?' };
+  function ritualNorm(t){
+    return (t || '').toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').replace(/[^a-z0-9 ]+/g, ' ').replace(/\\s+/g, ' ').replace(/^ /, '');
+  }
+  // The line goes out as an OUT-OF-BAND response (conversation:'none') with its
+  // own tiny input, so the coach persona and the chat history can not make the
+  // model improvise ("Bom dia! Que o seu dia seja leve...") — it only repeats.
   function sendRitualCreate(){
     var r = ritual;
     if (!r.active || r.gen !== liveGeneration || !r.awaiting) return;
-    var line = r.line === 1 ? 'Bom dia, meu atleta!' : 'Como você está hoje? Como foram os treinos?';
-    sendEvent({
-      type: 'response.create',
-      response: {
-        instructions: 'Fale SOMENTE esta frase, com clareza, em tom caloroso, animado e confiante, em ritmo natural: "' + line + '" Não diga mais nada antes nem depois.',
-      },
-    });
+    setVoiceMuted(false);
+    var line = RITUAL_LINES[r.line];
+    var strict = r.bad > 0 ? ' Atenção: na tentativa anterior você acrescentou palavras. Diga SOMENTE o texto, nada além dele.' : '';
+    var ev;
+    if (r.inband) {
+      ev = { type: 'response.create', response: { metadata: { ritual: String(r.line) }, instructions: 'Fale SOMENTE esta frase, exatamente assim, sem acrescentar nada: "' + line + '"' + strict } };
+    } else {
+      ev = { type: 'response.create', response: {
+        conversation: 'none',
+        output_modalities: ['audio'],
+        metadata: { ritual: String(r.line) },
+        instructions: 'Você é um leitor de voz. Diga em voz alta, em português do Brasil, com tom caloroso, animado e natural, EXATAMENTE e SOMENTE o texto que o usuário enviar. Não acrescente, não troque e não comente nenhuma palavra. Não responda ao texto, apenas leia-o.' + strict,
+        input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: line }] }],
+      } };
+    }
+    rlog('create', r.line + (r.inband ? ' inband' : ' oob'));
+    sendEvent(ev);
+  }
+  function ritualLineDelta(delta){
+    var r = ritual;
+    if (!r.active || !r.awaiting || !r.respId) return;
+    r.acc = (r.acc || '') + (delta || '');
+    var got = ritualNorm(r.acc), want = ritualNorm(RITUAL_LINES[r.line]);
+    var gotT = got.replace(/ $/, '');
+    var off = !want.startsWith(gotT) || got.length > want.length + 1;
+    if (off && r.bad < 2) {
+      r.bad++;
+      rlog('off-script', r.acc);
+      sendEvent({ type: 'response.cancel' });
+      sendEvent({ type: 'output_audio_buffer.clear' });
+      var dead = r.respId;
+      r.respId = null; r.acc = ''; r.ignoreId = dead;
+      if (liveReplyRow) { dropRow(liveReplyRow); liveReplyRow = null; }
+      setTimeout(sendRitualCreate, 650); // one more try, with the stricter wording
+    }
+  }
+  // Voice playback mute (the speaker element only — the analyser keeps working).
+  function setVoiceMuted(on){
+    if (remoteAudioEl) { try { remoteAudioEl.muted = !!on; } catch (e) {} }
+  }
+  // Tiny trace of what the ritual did, readable from the console (ritualTrace()).
+  var ritualTraceBuf = [];
+  function rlog(ev, info){
+    try {
+      ritualTraceBuf.push(Math.round(performance.now()) + ' ' + ev + (info !== undefined ? ' ' + info : ''));
+      if (ritualTraceBuf.length > 80) ritualTraceBuf.shift();
+      window.ritualTrace = function(){ return ritualTraceBuf.slice(); };
+    } catch (e) {}
   }
   function rawLevel(analyser, buf){
     if (!analyser || !buf) return 0;
@@ -1091,6 +1146,9 @@ function professorPage(user, opts) {
   }
   function ritualLineDone(){
     var mine = ritual, line = mine.line;
+    if (!mine.awaiting) return;
+    clearTimeout(mine.lineTimer);
+    rlog('line-done', line);
     mine.awaiting = false;
     waitVoiceQuiet(mine, function(){ if (line === 1) ritualBump(mine); else ritualOutro(mine); });
   }
@@ -1115,11 +1173,16 @@ function professorPage(user, opts) {
     if (!r.active) return;
     clearTimeout(r.timer);
     if (r.poll) clearInterval(r.poll);
+    clearTimeout(r.lineTimer);
     ritual = { active: false };
+    setVoiceMuted(false);
+    rlog('end');
     stopMusicNow();
     musicActive = false; musicAnalyser = null; musicAnalyserBuf = null; musicFreqBuf = null; musicLevel = 0;
     setMicEnabled(true);
     if (r.gen === liveGeneration && dataChannel) {
+      // out-of-band lines are not part of the conversation — tell the model what was said
+      sendEvent({ type: 'conversation.item.create', item: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: RITUAL_LINES[1] + ' ' + RITUAL_LINES[2] }] } });
       setSessionSpeed(NORMAL_SPEED);
       setState('listening');
       setCaption('Pode continuar falando…', true);
@@ -1165,8 +1228,7 @@ function professorPage(user, opts) {
       };
       function go(buffer){
         try {
-          playClaps(ac, fade); // two hand claps open the ritual, then the music hits
-          if (buffer) playMusicFile(ac, buffer, fade, CLAPS_MS / 1000); else playRockRiff(ac, fade, CLAPS_MS / 1000);
+          if (buffer) playMusicFile(ac, buffer, fade, 0); else playRockRiff(ac, fade, 0);
         } catch (e6) {}
         resolve(ctrl);
       }
@@ -1175,30 +1237,6 @@ function professorPage(user, opts) {
         catch (e7) { go(null); }
       } else go(null);
     });
-  }
-  // Two synthesized hand claps ("palma, palma"): each is a few tiny filtered
-  // noise bursts a few ms apart (the hands never land together) plus a short
-  // decaying tail, the second one a little stronger.
-  function playClaps(ac, dest){
-    var nb = ac.createBuffer(1, Math.floor(ac.sampleRate * 0.5), ac.sampleRate);
-    var nd = nb.getChannelData(0);
-    for (var i = 0; i < nd.length; i++) nd[i] = Math.random() * 2 - 1;
-    function clap(when, vel){
-      var offs = [0, 0.009, 0.019, 0.031];
-      offs.forEach(function(o, k){
-        var s = ac.createBufferSource(); s.buffer = nb;
-        var bp = ac.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 1400 + k * 150; bp.Q.value = 0.9;
-        var g = ac.createGain();
-        var a = vel * (k === offs.length - 1 ? 1 : 0.7);
-        g.gain.setValueAtTime(a, when + o);
-        g.gain.exponentialRampToValueAtTime(0.001, when + o + (k === offs.length - 1 ? 0.16 : 0.025));
-        s.connect(bp); bp.connect(g); g.connect(dest);
-        s.start(when + o); s.stop(when + o + 0.2);
-      });
-    }
-    var t = ac.currentTime + 0.12;
-    clap(t, 0.85);
-    clap(t + 0.42, 1.0);
   }
   function playMusicFile(ac, buffer, dest, delay){
     var src = ac.createBufferSource();
@@ -1370,7 +1408,10 @@ function professorPage(user, opts) {
       case 'response.created':
         if (ritual.active) {
           var cid = (evt.response && evt.response.id) || null;
-          if (ritual.awaiting && !ritual.respId) ritual.respId = cid; // the line we asked for
+          var meta = (evt.response && evt.response.metadata) || null;
+          var isMine = ritual.awaiting && !ritual.respId && cid !== ritual.ignoreId && (meta ? String(meta.ritual) === String(ritual.line) : true);
+          rlog('created', (cid || '?') + (isMine ? ' mine' : ' stray'));
+          if (isMine) ritual.respId = cid; // the line we asked for
           else { sendEvent({ type: 'response.cancel' }); sendEvent({ type: 'output_audio_buffer.clear' }); break; } // a stray generic answer — not now
           currentResponseId = cid;
           assistantTranscriptBuf = '';
@@ -1385,7 +1426,9 @@ function professorPage(user, opts) {
         beginLiveReply(); // opens the one row this reply will live in, start to finish
         break;
       case 'response.output_audio_transcript.delta':
+        if (ritual.active && ritual.respId && evt.response_id && evt.response_id !== ritual.respId) break; // text of a response we threw away
         if (evt.delta) { assistantTranscriptBuf += evt.delta; queueReveal(evt.delta); }
+        if (ritual.active && evt.delta) ritualLineDelta(evt.delta);
         break;
       case 'response.output_audio_transcript.done':
         // Overwrites the same row queueReveal has been filling in — the
@@ -1404,6 +1447,7 @@ function professorPage(user, opts) {
         if (greetingSlow) { greetingSlow = false; setSessionSpeed(NORMAL_SPEED); }
         if (ritual.active) {
           // our own line finished generating -> wait for the voice to go quiet, then the next music cue
+          rlog('done', (doneId || '?') + ' ' + (wasCancelled ? 'cancelled' : 'ok') + ' "' + assistantTranscriptBuf + '"');
           if (ritual.awaiting && ritual.respId && ritual.respId === doneId && !wasCancelled) ritualLineDone();
           break; // never drop to "listening" in the middle of the ritual
         }
@@ -1415,6 +1459,12 @@ function professorPage(user, opts) {
       case 'error': {
         var emsg = (evt.error && evt.error.message) || '';
         if (/no active response|not active/i.test(emsg)) break; // response.cancel with nothing to cancel — harmless
+        if (ritual.active) rlog('error', emsg);
+        if (ritual.active && ritual.awaiting && !ritual.respId && !ritual.inband && /unknown|invalid|unsupported|parameter|conversation|output_modalities|input/i.test(emsg) && !/active response/i.test(emsg)) {
+          ritual.inband = true; // this API version refused the out-of-band form: say the line the plain way
+          setTimeout(sendRitualCreate, 200);
+          break;
+        }
         if (ritual.active && ritual.awaiting && !ritual.respId && /active response/i.test(emsg) && ritual.retries < 2) {
           ritual.retries++;
           setTimeout(sendRitualCreate, 700); // the cancelled answer was still winding down — try again
@@ -1603,6 +1653,7 @@ function professorPage(user, opts) {
         voiceAudioCtx = localVoiceAudioCtx; voiceAnalyser = localVoiceAnalyser;
         voiceAnalyserBuf = localVoiceAnalyserBuf; voiceFreqBuf = localVoiceFreqBuf;
         setState('listening');
+        startClapListener();
         setCaption(prefill ? prefill : 'Chamando o professor…', true);
         requestWakeLock();
         armInactivityTimer();
@@ -1629,6 +1680,91 @@ function professorPage(user, opts) {
       });
     });
   }
+
+  // ---------- two hand claps start the bom dia ----------
+  // The athlete claps TWICE ("palma, palma") and the Professor does the bom-dia
+  // ritual. A dedicated mic stream with the browser's voice processing OFF
+  // (noise suppression would eat a clap) feeds a small onset detector:
+  //   - a clap is a sharp rise (>= 6x the background level, and >= CLAP_MIN_RMS)
+  //     of broadband noise (zero-crossing rate) that dies away within ~110 ms
+  //     (speech and music sustain, so they are rejected),
+  //   - two claps 150-800 ms apart = the trigger; 2.5 s lock-out afterwards.
+  // It runs wherever the mic permission is already granted (so it never pops
+  // up a permission prompt by itself) and is paused while the ritual runs.
+  var CLAP_MIN_RMS = 0.045, CLAP_RATIO = 6;
+  var clap = { stream: null, ctx: null, an: null, buf: null, timer: null, starting: false,
+    baseline: 0.004, prev: 0, ev: null, last: 0, lock: 0 };
+  function startClapListener(){
+    if (clap.stream || clap.starting) return;
+    if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) return;
+    clap.starting = true;
+    navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } }).then(function(stream){
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) { stream.getTracks().forEach(function(t){ t.stop(); }); clap.starting = false; return; }
+      clap.stream = stream; clap.starting = false;
+      clap.ctx = new AC();
+      var src = clap.ctx.createMediaStreamSource(stream);
+      clap.an = clap.ctx.createAnalyser();
+      clap.an.fftSize = 1024; clap.an.smoothingTimeConstant = 0;
+      src.connect(clap.an);
+      clap.buf = new Float32Array(clap.an.fftSize);
+      clap.timer = setInterval(clapTick, 12);
+    }).catch(function(){ clap.starting = false; });
+  }
+  function clapTick(){
+    if (!clap.an) return;
+    if (clap.ctx && clap.ctx.state === 'suspended') { try { clap.ctx.resume(); } catch (e) {} }
+    clap.an.getFloatTimeDomainData(clap.buf);
+    var n = 512, off = clap.buf.length - n, sum = 0, zc = 0, pk = 0;
+    for (var i = 0; i < n; i++) {
+      var v = clap.buf[off + i];
+      sum += v * v;
+      if (v > pk) pk = v; else if (-v > pk) pk = -v;
+      if (i > 0 && ((clap.buf[off + i - 1] < 0) !== (v < 0))) zc++;
+    }
+    clapFeed(Math.sqrt(sum / n), zc / n, performance.now());
+  }
+  function clapFeed(rms, zcr, now){
+    if (ritual.active || now < clap.lock) { clap.ev = null; clap.prev = rms; return; }
+    if (!clap.ev) clap.baseline = Math.max(0.002, clap.baseline * 0.985 + rms * 0.015);
+    if (!clap.ev) {
+      if (rms >= Math.max(CLAP_MIN_RMS, clap.baseline * CLAP_RATIO) && rms >= clap.prev * 1.8 && zcr > 0.05 && now - clap.evEnd > 110) {
+        clap.ev = { t: now, peak: rms };
+      }
+    } else {
+      var age = now - clap.ev.t;
+      if (age < 60 && rms > clap.ev.peak) clap.ev.peak = rms;
+      if (age >= 110) {
+        var ok = rms < clap.ev.peak * 0.4; // impulsive: died away
+        var t0 = clap.ev.t;
+        clap.evEnd = now;
+        clap.ev = null;
+        if (ok) {
+          var gap = t0 - clap.last;
+          if (clap.last && gap >= 150 && gap <= 800) { clap.last = 0; clap.lock = now + 2500; onDoubleClap(); }
+          else clap.last = t0;
+        }
+      }
+    }
+    clap.prev = rms;
+  }
+  clap.evEnd = 0;
+  function onDoubleClap(){
+    rlog('double-clap', STATE);
+    if (ritual.active) return;
+    var CMD = 'Quero meu bom dia, Professor!';
+    if (STATE === 'listening' || STATE === 'speaking') runBomDiaRitual(true);
+    else if (STATE === 'standby' || STATE === 'ambient') { stopRecognition(function(){ beginCall(CMD); }); }
+  }
+  // Start it right away when the browser already holds the mic permission.
+  try {
+    if (navigator.permissions && navigator.permissions.query) {
+      navigator.permissions.query({ name: 'microphone' }).then(function(st){
+        if (st.state === 'granted') startClapListener();
+        st.onchange = function(){ if (st.state === 'granted') startClapListener(); };
+      }).catch(function(){});
+    }
+  } catch (e) {}
 
   // ---------- recognition lifecycle ----------
   // Chrome allows only ONE active SpeechRecognition session per tab —
@@ -1672,7 +1808,7 @@ function professorPage(user, opts) {
   function startAmbient(){
     stopRecognition(function(){
       setState('ambient');
-      setCaption(canListen ? 'Diga "Hey Professor" quando quiser perguntar algo — ou toque no orbe.' : 'Toque no orbe quando quiser falar com o Professor.', true);
+      setCaption(canListen ? 'Diga "Hey Professor" quando quiser perguntar algo — ou bata duas palmas pro seu bom dia.' : 'Toque no orbe quando quiser falar com o Professor.', true);
       if (!canListen) return;
 
       recognition = new SR();
@@ -1684,6 +1820,10 @@ function professorPage(user, opts) {
       recognition.onresult = function(event){
         for (var i = event.resultIndex; i < event.results.length; i++) {
           var transcript = normalize(event.results[i][0].transcript);
+          if (BOMDIA_RE.test(transcript)) {
+            startLiveCall('Quero meu bom dia, Professor!');
+            return;
+          }
           if (WAKE_RE.test(transcript)) {
             var after = transcript.replace(WAKE_RE, '').trim();
             startLiveCall(after);
