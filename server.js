@@ -522,12 +522,12 @@ async function handle(req, res) {
       // A quick-pick list of recent trainings not yet posted, so opening the
       // Feed directly (not via "Compartilhar treino" on an activity) doesn't
       // start from a blank composer with no obvious next step.
-      let recentUnshared = [];
-      if (!shareActivity) {
-        recentUnshared = db.prepare(`SELECT id, title, workout_type, distance_km, started_at, created_at FROM activities
-          WHERE user_id = ? AND id NOT IN (SELECT activity_id FROM posts WHERE activity_id IS NOT NULL)
-          ORDER BY COALESCE(started_at, created_at) DESC LIMIT 5`).all(user.id);
-      }
+      let recentUnshared = db.prepare(`SELECT id, title, workout_type, distance_km, avg_pace_sec, started_at, created_at FROM activities
+        WHERE user_id = ? AND id NOT IN (SELECT activity_id FROM posts WHERE activity_id IS NOT NULL)
+        ORDER BY COALESCE(started_at, created_at) DESC LIMIT 8`).all(user.id);
+      // Sem escolha explícita, já deixa o treino mais recente selecionado.
+      if (!shareActivity && recentUnshared.length) shareActivity = db.prepare('SELECT * FROM activities WHERE id = ?').get(recentUnshared[0].id);
+      if (shareActivity && !recentUnshared.some((a) => a.id === shareActivity.id)) recentUnshared.unshift(shareActivity);
 
       let week = null, stories = [];
       if (!beforeId && !tag) {
@@ -567,11 +567,16 @@ async function handle(req, res) {
         fs.writeFileSync(path.join(UPLOAD_DIR, name), f.data);
         saved.push(name);
       }
-      if (body || saved.length || activityId) {
-        db.prepare('INSERT INTO posts (user_id, activity_id, body, photo_path, photos_json, location, is_pr) VALUES (?,?,?,?,?,?,?)')
-          .run(user.id, activityId, body, saved[0] || null, saved.length ? JSON.stringify(saved) : null, location, fields.is_pr === '1' ? 1 : 0);
+      // Todo post leva um treino (mapa, zonas, pace) e uma legenda.
+      if (!activityId || !body) {
+        saved.forEach((n) => fs.promises.unlink(path.join(UPLOAD_DIR, n)).catch(() => {}));
+        const error = !activityId ? 'Escolha o treino que vai compartilhar.' : 'Escreva uma legenda para o post.';
+        if (wantsJson) { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ ok: false, error })); }
+        return redirect(res, '/feed');
       }
-      const dest = activityId && fields.activity_id ? `/activities/${activityId}` : '/feed';
+      db.prepare('INSERT INTO posts (user_id, activity_id, body, photo_path, photos_json, location, is_pr) VALUES (?,?,?,?,?,?,?)')
+        .run(user.id, activityId, body, saved[0] || null, saved.length ? JSON.stringify(saved) : null, location, fields.is_pr === '1' ? 1 : 0);
+      const dest = '/feed';
       if (wantsJson) { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(JSON.stringify({ ok: true, redirect: dest })); }
       return redirect(res, dest);
     }

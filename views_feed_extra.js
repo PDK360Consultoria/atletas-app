@@ -75,36 +75,37 @@ function storiesBar(stories, user, avatarHtml) {
 }
 
 function composer(user, opts, avatarHtml) {
-  const mode = opts.shareActivity ? 'treino' : (opts.mode || 'texto');
   const isPr = !!opts.isPrShare;
-  const recent = (opts.recentUnshared && opts.recentUnshared.length) ? `<div class="composer-recent" data-only="treino">
-    <span class="muted mono" style="font-size:12px;">Escolha o treino que vai compartilhar:</span>
-    <div class="composer-recent-chips">
-      ${opts.recentUnshared.map((a) => `<a class="pill composer-recent-chip" href="/feed?share_activity=${a.id}"><span class="dot"></span>${esc(a.title)}${a.distance_km != null ? ` · ${a.distance_km}km` : ''}</a>`).join('')}
-    </div>
-  </div>` : `<p class="muted" data-only="treino" style="margin:0 0 10px;font-size:13px;">Nenhum treino novo para compartilhar. Sincronize com o Strava na página de Treinos.</p>`;
-  return `<div class="card feed-composer" id="composer" data-mode="${mode}">
-  <div class="composer-tabs" role="tablist">
-    <button type="button" class="ctab" data-mode="texto" role="tab">Texto</button>
-    <button type="button" class="ctab" data-mode="foto" role="tab">Foto</button>
-    <button type="button" class="ctab" data-mode="treino" role="tab">Treino</button>
-  </div>
+  const list = opts.recentUnshared || [];
+  const sel = opts.shareActivity || null;
+  const fmtPace = (a) => (a.avg_pace_sec ? ` · ${secToPace(a.avg_pace_sec)}/km` : '');
+  if (!list.length && !sel) {
+    return `<div class="card feed-composer" id="composer"><div class="composer-title">Compartilhar treino</div>
+    <p class="muted" style="margin:0;font-size:14px;">Todo post do feed leva um treino com mapa, zonas e pace. Você não tem treino novo para compartilhar: sincronize com o Strava na página de Treinos.</p></div>`;
+  }
+  const chips = list.map((a) => `<button type="button" class="pill composer-recent-chip${sel && a.id === sel.id ? ' on' : ''}" data-id="${a.id}"><span class="dot"></span>${esc(a.title)}${a.distance_km != null ? ` · ${a.distance_km}km` : ''}${fmtPace(a)}</button>`).join('');
+  return `<div class="card feed-composer" id="composer">
+  <div class="composer-title">Compartilhar treino</div>
   <form method="POST" action="/feed" enctype="multipart/form-data" id="composerForm">
     <div class="composer-row">
       ${avatarHtml(user.name, user.id, user.avatar_path, 'composer-avatar')}
       <div class="composer-main">
-        ${opts.shareActivity ? `<div class="pill${isPr ? ' pr-badge' : ''}" data-only="treino" style="margin-bottom:10px;"><input type="hidden" name="activity_id" value="${opts.shareActivity.id}">${isPr ? '<input type="hidden" name="is_pr" value="1">' : ''}${isPr ? 'Recorde pessoal: ' : 'Vinculado a: '}${esc(opts.shareActivity.title)}</div>` : recent}
-        <textarea name="body" id="composerBody" rows="3" placeholder="O que está acontecendo?">${opts.shareDraft ? esc(opts.shareDraft) : ''}</textarea>
-        <div class="composer-count" data-only="texto"><span id="composerCount">0</span>/280</div>
-        <div class="composer-photos" data-only="foto treino">
+        <div class="composer-recent">
+          <span class="muted mono" style="font-size:12px;">Escolha o treino (mapa, zonas e pace entram automaticamente):</span>
+          <div class="composer-recent-chips" id="composerChips">${chips}</div>
+        </div>
+        <input type="hidden" name="activity_id" id="composerActivity" value="${sel ? sel.id : ''}">
+        ${isPr && sel ? `<input type="hidden" name="is_pr" id="composerPr" value="1" data-for="${sel.id}">` : ''}
+        <textarea name="body" id="composerBody" rows="3" maxlength="2200" placeholder="Escreva uma legenda... (use #hashtags e @menções)">${opts.shareDraft ? esc(opts.shareDraft) : ''}</textarea>
+        <div class="composer-photos">
           <div id="composerPreviews" class="composer-previews"></div>
           <label class="ghost btn photo-btn" id="composerPhotoLabel">
             <input type="file" id="composerPhotoInput" accept="image/*" multiple style="display:none;">
             <span id="composerPhotoText">Adicionar fotos</span>
           </label>
-          <span class="muted" style="font-size:12px;">até 6 fotos</span>
+          <span class="muted" style="font-size:12px;">opcional · até 6 fotos entram depois do mapa</span>
         </div>
-        <input type="text" name="location" id="composerLocation" class="composer-location" data-only="foto" maxlength="80" placeholder="Adicionar local (ex.: Parque Barigui)">
+        <input type="text" name="location" id="composerLocation" class="composer-location" maxlength="80" placeholder="Adicionar local (opcional)">
         <div class="composer-actions">
           <span id="composerError" class="composer-error" hidden></span>
           <button type="submit" id="composerSubmit">Postar</button>
@@ -123,25 +124,6 @@ const FEED_SCRIPT = `<script>
   var photos = [];
   var MAXP = 6;
 
-  function setMode(mode){
-    if (!box) return;
-    box.setAttribute('data-mode', mode);
-    var tabs = box.querySelectorAll('.ctab');
-    Array.prototype.forEach.call(tabs, function(t){ t.classList.toggle('active', t.getAttribute('data-mode') === mode); });
-    var els = box.querySelectorAll('[data-only]');
-    Array.prototype.forEach.call(els, function(el){
-      var modes = el.getAttribute('data-only').split(' ');
-      el.style.display = modes.indexOf(mode) >= 0 ? '' : 'none';
-    });
-    var ta = document.getElementById('composerBody');
-    if (ta) {
-      ta.maxLength = mode === 'texto' ? 280 : 2200;
-      ta.placeholder = mode === 'texto' ? 'O que está acontecendo?' : (mode === 'foto' ? 'Escreva uma legenda...' : 'Conte como foi o treino...');
-      ta.rows = mode === 'texto' ? 3 : 2;
-      count();
-    }
-  }
-  function count(){ var ta = document.getElementById('composerBody'); var c = document.getElementById('composerCount'); if (ta && c) { c.textContent = ta.value.length; c.parentNode.classList.toggle('over', ta.value.length > 270); } }
   function renderPreviews(){
     var wrap = document.getElementById('composerPreviews'); if (!wrap) return;
     wrap.innerHTML = '';
@@ -172,33 +154,37 @@ const FEED_SCRIPT = `<script>
   function showError(msg){ var e = document.getElementById('composerError'); if (!e) return; e.textContent = msg; e.hidden = !msg; }
 
   if (box && form) {
-    Array.prototype.forEach.call(box.querySelectorAll('.ctab'), function(t){ t.addEventListener('click', function(){ setMode(t.getAttribute('data-mode')); }); });
+    var chips = box.querySelectorAll('#composerChips .composer-recent-chip');
+    var actInp = document.getElementById('composerActivity');
+    Array.prototype.forEach.call(chips, function(c){
+      c.addEventListener('click', function(){
+        Array.prototype.forEach.call(chips, function(x){ x.classList.toggle('on', x === c); });
+        actInp.value = c.getAttribute('data-id');
+        var pr = document.getElementById('composerPr'); if (pr) pr.disabled = pr.getAttribute('data-for') !== actInp.value;
+      });
+    });
     var inp = document.getElementById('composerPhotoInput');
     if (inp) inp.addEventListener('change', function(){
       Array.prototype.forEach.call(inp.files, function(f){ if (photos.length < MAXP) photos.push(f); });
       inp.value = ''; renderPreviews();
     });
-    var ta = document.getElementById('composerBody'); if (ta) ta.addEventListener('input', count);
-    setMode(box.getAttribute('data-mode') || 'texto');
+    var ta = document.getElementById('composerBody');
     form.addEventListener('submit', function(ev){
       ev.preventDefault(); showError('');
-      var mode = box.getAttribute('data-mode');
       var text = (ta.value || '').trim();
-      var hasAct = !!form.querySelector('[name=activity_id]');
-      if (mode === 'texto' && !text) { showError('Escreva algo para postar.'); return; }
-      if (mode === 'foto' && !photos.length) { showError('Adicione pelo menos uma foto.'); return; }
-      if (mode === 'treino' && !hasAct) { showError('Escolha um treino para compartilhar.'); return; }
+      if (!actInp.value) { showError('Escolha o treino que vai compartilhar.'); return; }
+      if (!text) { showError('Escreva uma legenda para o post.'); ta.focus(); return; }
       var btn = document.getElementById('composerSubmit'); btn.disabled = true; btn.textContent = 'Publicando...';
       var fd = new FormData();
       fd.append('body', text);
-      var loc = document.getElementById('composerLocation'); if (loc && mode === 'foto' && loc.value) fd.append('location', loc.value);
-      var act = form.querySelector('[name=activity_id]'); if (act && mode === 'treino') fd.append('activity_id', act.value);
-      var pr = form.querySelector('[name=is_pr]'); if (pr && mode === 'treino') fd.append('is_pr', pr.value);
-      var useP = mode === 'texto' ? [] : photos;
-      Promise.all(useP.map(function(f){ return resizeImage(f, 1600); })).then(function(list){
+      fd.append('activity_id', actInp.value);
+      var loc = document.getElementById('composerLocation'); if (loc && loc.value) fd.append('location', loc.value);
+      var pr = document.getElementById('composerPr'); if (pr && !pr.disabled) fd.append('is_pr', pr.value);
+      Promise.all(photos.map(function(f){ return resizeImage(f, 1600); })).then(function(list){
         list.forEach(function(f){ fd.append('photo', f, f.name || 'foto.jpg'); });
         return fetch('/feed', { method: 'POST', body: fd, headers: { 'X-Requested-With': 'fetch' }, credentials: 'same-origin' });
       }).then(function(r){ return r.json(); }).then(function(j){
+        if (j && j.ok === false) { btn.disabled = false; btn.textContent = 'Postar'; showError(j.error || 'Não consegui publicar.'); return; }
         window.location.href = (j && j.redirect) || '/feed';
       }).catch(function(){ btn.disabled = false; btn.textContent = 'Postar'; showError('Não consegui publicar agora. Tente de novo.'); });
     });
