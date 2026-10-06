@@ -967,18 +967,21 @@ function professorPage(user, opts) {
     if (micStream) micStream.getAudioTracks().forEach(function(t){ t.enabled = on; });
   }
 
-  // Felipe: "o primeiro bom dia a fala tem que ser mais lenta, não dá para
-  // entender bem" — so the opening line goes out at SLOW_SPEED (restored to
-  // NORMAL_SPEED in response.done) and the prompt asks for clear, calm
-  // articulation with a small pause after the greeting.
+  // Opening line of every plain call: said verbatim at the normal pace.
   function sendGreeting(){
     if (!dataChannel || dataChannel.readyState !== 'open') return;
-    greetingSlow = true;
-    setSessionSpeed(SLOW_SPEED);
+    var line = 'Fala, atleta! O que você precisa agora?';
+    // Read verbatim (out-of-band, no persona/history) at the normal pace: the
+    // earlier prompt asked for a "pausa" and the model SAID the word "pausa",
+    // and the slow pace plus "E aí" sounded wrong in Portuguese.
+    sendEvent({ type: 'conversation.item.create', item: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: line }] } });
     sendEvent({
       type: 'response.create',
       response: {
-        instructions: 'Comece sua fala exatamente com "E aí, atleta!" (nessas palavras, em tom animado) e, na sequência, pergunte o que o atleta precisa agora. Fale com calma e clareza, em ritmo natural, com uma pequena pausa depois de "E aí, atleta!".',
+        conversation: 'none',
+        output_modalities: ['audio'],
+        instructions: 'Você é um leitor de voz. Diga em voz alta, em português do Brasil, com tom animado e natural, EXATAMENTE e SOMENTE o texto que o usuário enviar. Não acrescente, não troque e não comente nenhuma palavra. Não responda ao texto, apenas leia-o.',
+        input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: line }] }],
       },
     });
   }
