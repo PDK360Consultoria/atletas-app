@@ -339,7 +339,7 @@ function professorPage(user, opts) {
 </div>
 
 <div class="footer">
-  TOQUE NO ORBE PRA FALAR<span class="sep">·</span>DIGA <kbd>"HEY PROFESSOR"</kbd> TAMBÉM FUNCIONA<span class="sep">·</span><kbd>ESC</kbd> ENCERRA<span class="sep">·</span>VERSÃO 7
+  TOQUE NO ORBE PRA FALAR<span class="sep">·</span>DIGA <kbd>"HEY PROFESSOR"</kbd> TAMBÉM FUNCIONA<span class="sep">·</span><kbd>ESC</kbd> ENCERRA<span class="sep">·</span>VERSÃO 9
 </div>
 
 <script>
@@ -1180,12 +1180,12 @@ function professorPage(user, opts) {
   // supplies, royalty-free); otherwise an ORIGINAL rock riff synthesized
   // right here with Web Audio, so the ritual always works.
   var INTRO_MS = 3500, BUMP_MS = 2200, TAIL_MS = 3000, DUCK_LEVEL = 0.55;
-  var MUSIC_URL = '/assets/bomdia.mp3';
+  var MUSIC_URL = '/assets/bomdia.mp3?v=21s'; // versioned: browsers keep /assets files for 7 days, and the old 9-second clip was still cached
   var musicBytesPromise = null;
   function preloadMusic(){
     if (musicBytesPromise) return musicBytesPromise;
     try {
-      musicBytesPromise = fetch(MUSIC_URL).then(function(r){ return r.ok ? r.arrayBuffer() : null; }).catch(function(){ return null; });
+      musicBytesPromise = fetch(MUSIC_URL, { cache: 'reload' }).then(function(r){ return r.ok ? r.arrayBuffer() : null; }).catch(function(){ return null; });
     } catch (e) { musicBytesPromise = Promise.resolve(null); }
     return musicBytesPromise;
   }
