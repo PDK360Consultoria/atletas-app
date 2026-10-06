@@ -772,7 +772,7 @@ body.landing-dark{
 .zone-time{font-family:'IBM Plex Mono',monospace; font-weight:600; color:var(--ink);}
 .zone-pct{text-align:right; color:var(--ink-faint); font-family:'IBM Plex Mono',monospace; font-size:12.5px;}
 .activity-row .zones-compact{margin-top:8px; max-width:420px;}
-.rtm-tile{filter:grayscale(1) invert(1) brightness(.72) contrast(1.2);}
+.rtm-tile{filter:grayscale(1) invert(1) brightness(1.05) contrast(1.05);}
 
 .zone-title{font-size:10.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--ink-faint); font-weight:700; margin-bottom:6px;}
 .zone-bar{gap:2px; background:none;}
