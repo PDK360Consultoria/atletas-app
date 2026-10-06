@@ -909,6 +909,7 @@ function professorPage(user, opts) {
 
   function teardownConnection(){
     abortRitual(); // stops any music, un-mutes the mic track before it is stopped below
+    endRitual2();
     liveReplyRow = null;
     currentResponseId = null;
     greetingSlow = false;
@@ -984,6 +985,170 @@ function professorPage(user, opts) {
         input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: line }] }],
       },
     });
+  }
+
+  // ---------- bom dia, version 2: everything pre-recorded, on ONE clock ----------
+  // The live model could not be trusted with the timing (it improvised, spoke
+  // late, and the system ducked the music while the call audio played). So the
+  // two spoken lines are ready-made MP3s (server: /api/professor/bomdia-voice,
+  // synthesized once) and they play together with the music in a single Web
+  // Audio context, with every volume change scheduled up front:
+  //   0.0s   music alone, loud, for MUSIC_ALONE s
+  //   then   music ducks a little (never silent) and "Bom dia, meu atleta!" plays
+  //   then   music back to loud for LOUD1 s
+  //   then   music ducks again and "Como você está hoje? Como foram os treinos?" plays
+  //   then   music back to loud for TAIL s, fades out and ends.
+  // The realtime call (if there is none yet) connects in the background so the
+  // athlete can answer right after; the model is told what was said.
+  var MUSIC_ALONE = 3.5, LOUD1 = 2.2, TAIL = 2.8, LOW = 0.55, FADE = 1.5;
+  var ritual2 = { active: false };
+  var ritualSkipGreeting = false; // set when the pre-recorded bom dia opened the call: no "Fala, atleta!" afterwards
+  var voiceLineBytes = {};
+  function fetchVoiceLine(n){
+    if (voiceLineBytes[n]) return voiceLineBytes[n];
+    voiceLineBytes[n] = fetch('/api/professor/bomdia-voice?line=' + n, { credentials: 'include' })
+      .then(function(r){ if (!r.ok) throw new Error('http ' + r.status); return r.arrayBuffer(); })
+      .catch(function(){ voiceLineBytes[n] = null; return null; });
+    return voiceLineBytes[n];
+  }
+  function preloadBomDiaVoices(){ fetchVoiceLine(1); fetchVoiceLine(2); }
+  function voiceLinesReady(){
+    return Promise.race([
+      Promise.all([fetchVoiceLine(1), fetchVoiceLine(2)]).then(function(a){ return !!(a[0] && a[1]); }),
+      new Promise(function(res){ setTimeout(function(){ res(false); }, 6000); }),
+    ]);
+  }
+  // Entry point for every trigger (chip, claps, ambient voice, in-call voice).
+  function startBomDia(live){
+    if (ritual.active || ritual2.active) return;
+    voiceLinesReady().then(function(ok){
+      if (ritual.active || ritual2.active) return;
+      if (ok) { runBomDiaV2(); return; }
+      // lines not available (no key / no credits / offline): the old live-model version
+      rlog('v2-unavailable');
+      if (live && dataChannel && dataChannel.readyState === 'open') runBomDiaRitual(true);
+      else { permErrEl.hidden = true; activateBlock.style.display = 'none'; startLiveCall('Quero meu bom dia, Professor!'); }
+    });
+  }
+  function decodeBuf(ac, bytes){
+    return new Promise(function(resolve){
+      if (!bytes) { resolve(null); return; }
+      try { ac.decodeAudioData(bytes.slice(0), function(b){ resolve(b); }, function(){ resolve(null); }); }
+      catch (e) { resolve(null); }
+    });
+  }
+  function runBomDiaV2(){
+    var AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) { rlog('v2-noaudio'); return; }
+    var live = !!(dataChannel && dataChannel.readyState === 'open');
+    var mine = { active: true, ac: null, timers: [], ended: false, needCall: false };
+    ritual2 = mine;
+    clearTimeout(inactivityTimer);
+    stopReveal();
+    if (live) {
+      sendEvent({ type: 'response.cancel' });
+      sendEvent({ type: 'output_audio_buffer.clear' });
+      if (liveReplyRow) { dropRow(liveReplyRow); liveReplyRow = null; }
+      setVoiceMuted(true);
+      setMicEnabled(false);
+    } else {
+      mine.needCall = true;
+      ritualSkipGreeting = true;
+      permErrEl.hidden = true;
+      activateBlock.style.display = 'none';
+      startLiveCall(''); // connects in the background; its greeting is suppressed while ritual2 is active
+    }
+    setState('speaking');
+    setStatus('Tocando', 'speaking');
+    setCaption('Rock pra acordar o corpo!', true);
+    var ac;
+    try { ac = new AC(); } catch (e) { endRitual2(); return; }
+    mine.ac = ac;
+    if (ac.state === 'suspended') { try { ac.resume(); } catch (e2) {} }
+    Promise.all([musicBytesWithin(2500), fetchVoiceLine(1), fetchVoiceLine(2)]).then(function(r){
+      return Promise.all([decodeBuf(ac, r[0]), decodeBuf(ac, r[1]), decodeBuf(ac, r[2])]);
+    }).then(function(b){
+      if (ritual2 !== mine || mine.ended) return;
+      var music = b[0], v1 = b[1], v2 = b[2];
+      if (!v1 || !v2) { rlog('v2-decode-failed'); endRitual2(); return; }
+      var bus = ac.createGain();
+      var comp = ac.createDynamicsCompressor();
+      var an = ac.createAnalyser();
+      an.fftSize = 128; an.smoothingTimeConstant = 0.55;
+      bus.connect(comp); comp.connect(an); an.connect(ac.destination);
+      var mg = ac.createGain();   // music level (the ducking)
+      var vg = ac.createGain();   // voice level
+      vg.gain.value = 1.5;
+      mg.connect(bus); vg.connect(bus);
+      var T0 = ac.currentTime + 0.2;
+      var t = T0, lowT, upT;
+      mg.gain.setValueAtTime(1, T0);
+      // phase 1: music alone, loud
+      t = T0 + MUSIC_ALONE;
+      // phase 2: duck (a little), line 1
+      mg.gain.setValueAtTime(1, t); mg.gain.linearRampToValueAtTime(LOW, t + 0.35);
+      var a1 = t + 0.5;
+      play(v1, a1);
+      var a1End = a1 + v1.duration;
+      // phase 3: music loud again
+      t = a1End + 0.2;
+      mg.gain.setValueAtTime(LOW, t); mg.gain.linearRampToValueAtTime(1, t + 0.3);
+      t = t + 0.3 + LOUD1;
+      // phase 4: duck again, line 2
+      mg.gain.setValueAtTime(1, t); mg.gain.linearRampToValueAtTime(LOW, t + 0.35);
+      var a2 = t + 0.5;
+      play(v2, a2);
+      var a2End = a2 + v2.duration;
+      // phase 5: loud again, tail, fade out
+      t = a2End + 0.2;
+      mg.gain.setValueAtTime(LOW, t); mg.gain.linearRampToValueAtTime(1, t + 0.3);
+      t = t + 0.3 + TAIL;
+      mg.gain.setValueAtTime(1, t); mg.gain.linearRampToValueAtTime(0.0001, t + FADE);
+      var END = t + FADE + 0.15;
+      if (music) {
+        var ms = ac.createBufferSource(); ms.buffer = music; ms.connect(mg); ms.start(T0); ms.stop(END);
+      } else {
+        // no music file: the synthesized riff stands in (it feeds the same music gain)
+        try { playRockRiff(ac, mg, T0 - ac.currentTime - 0.1); } catch (e3) {}
+      }
+      function play(buf, when){
+        var s = ac.createBufferSource(); s.buffer = buf; s.connect(vg); s.start(when);
+      }
+      // orb + log follow the same clock
+      musicCtx = ac; musicAnalyser = an;
+      musicAnalyserBuf = new Uint8Array(an.frequencyBinCount);
+      musicFreqBuf = new Uint8Array(an.frequencyBinCount);
+      musicActive = true;
+      rlog('v2-play', 'music=' + (music ? music.duration.toFixed(1) + 's' : 'synth') + ' v1=' + v1.duration.toFixed(2) + ' v2=' + v2.duration.toFixed(2) + ' total=' + (END - T0).toFixed(1));
+      function at(sec, fn){ mine.timers.push(setTimeout(function(){ if (ritual2 === mine && !mine.ended) fn(); }, Math.max(0, (sec - ac.currentTime) * 1000))); }
+      at(a1, function(){ pushLog('professor', 'Bom dia, meu atleta!'); setCaption('Bom dia, meu atleta!', true); });
+      at(a2, function(){ pushLog('professor', 'Como você está hoje? Como foram os treinos?'); setCaption('Como você está hoje?', true); });
+      at(END, endRitual2);
+      mine.timers.push(setTimeout(function(){ if (ritual2 === mine) endRitual2(); }, (END - ac.currentTime) * 1000 + 4000));
+    });
+  }
+  function endRitual2(){
+    var r = ritual2;
+    if (!r.active || r.ended) return;
+    r.ended = true;
+    r.timers.forEach(function(t){ clearTimeout(t); });
+    ritual2 = { active: false };
+    try { if (r.ac) r.ac.close(); } catch (e) {}
+    if (musicCtx === r.ac) musicCtx = null;
+    musicActive = false; musicAnalyser = null; musicAnalyserBuf = null; musicFreqBuf = null; musicLevel = 0;
+    rlog('v2-end');
+    setVoiceMuted(false);
+    if (dataChannel && dataChannel.readyState === 'open') {
+      setMicEnabled(true);
+      sendEvent({ type: 'conversation.item.create', item: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Bom dia, meu atleta! Como você está hoje? Como foram os treinos?' }] } });
+      setSessionSpeed(NORMAL_SPEED);
+      setState('listening');
+      setCaption('Pode responder…', true);
+      armInactivityTimer();
+    } else if (STATE === 'speaking') {
+      // the call never connected (or is still connecting): leave the state as the connect flow sets it
+      if (r.needCall) { setCaption('Conectando o Professor…', true); }
+    }
   }
 
   // ---------- "quero meu bom dia, Professor" ----------
@@ -1405,7 +1570,7 @@ function professorPage(user, opts) {
           capHistory();
           renderLog();
         }
-        if (said && BOMDIA_RE.test(said)) runBomDiaRitual(true);
+        if (said && BOMDIA_RE.test(said)) startBomDia(true);
         break;
       }
       case 'response.created':
@@ -1655,14 +1820,27 @@ function professorPage(user, opts) {
         // case that fires later than this block — redundant, not conflicting.
         voiceAudioCtx = localVoiceAudioCtx; voiceAnalyser = localVoiceAnalyser;
         voiceAnalyserBuf = localVoiceAnalyserBuf; voiceFreqBuf = localVoiceFreqBuf;
-        setState('listening');
         startClapListener();
+        if (ritual2.active) {
+          // the pre-recorded bom dia is playing: keep the mic muted and the greeting out of its way
+          setState('speaking'); setMicEnabled(false);
+          ritualSkipGreeting = false;
+          requestWakeLock(); armHardCap();
+          return;
+        }
+        setState('listening');
         setCaption(prefill ? prefill : 'Chamando o professor…', true);
         requestWakeLock();
         armInactivityTimer();
         armHardCap();
         if (prefill && BOMDIA_RE.test(prefill)) { pushLog('user', prefill); runBomDiaRitual(false); }
         else if (prefill) sendUserTextTurn(prefill);
+        else if (ritualSkipGreeting) {
+          // the bom dia already played while this call was connecting
+          ritualSkipGreeting = false;
+          sendEvent({ type: 'conversation.item.create', item: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Bom dia, meu atleta! Como você está hoje? Como foram os treinos?' }] } });
+          setCaption('Pode responder…', true);
+        }
         else sendGreeting();
       }).catch(function(err){
         cleanupLocal(); // always ours to clean up, whatever went wrong or whoever's current now
@@ -1728,7 +1906,7 @@ function professorPage(user, opts) {
     clapFeed(Math.sqrt(sum / n), zc / n, performance.now());
   }
   function clapFeed(rms, zcr, now){
-    if (ritual.active || now < clap.lock) { clap.ev = null; clap.prev = rms; return; }
+    if (ritual.active || ritual2.active || now < clap.lock) { clap.ev = null; clap.prev = rms; return; }
     if (!clap.ev) clap.baseline = Math.max(0.002, clap.baseline * 0.985 + rms * 0.015);
     if (!clap.ev) {
       if (rms >= Math.max(CLAP_MIN_RMS, clap.baseline * CLAP_RATIO) && rms >= clap.prev * 1.8 && zcr > 0.05 && now - clap.evEnd > 110) {
@@ -1756,9 +1934,11 @@ function professorPage(user, opts) {
     rlog('double-clap', STATE);
     if (ritual.active) return;
     var CMD = 'Quero meu bom dia, Professor!';
-    if (STATE === 'listening' || STATE === 'speaking') runBomDiaRitual(true);
-    else if (STATE === 'standby' || STATE === 'ambient') { stopRecognition(function(){ beginCall(CMD); }); }
+    if (ritual2.active) return;
+    if (STATE === 'listening' || STATE === 'speaking') startBomDia(true);
+    else if (STATE === 'standby' || STATE === 'ambient') { stopRecognition(function(){ startBomDia(false); }); }
   }
+  setTimeout(preloadBomDiaVoices, 2500); // warm the server-side cache of the two spoken lines
   // Start it right away when the browser already holds the mic permission.
   try {
     if (navigator.permissions && navigator.permissions.query) {
@@ -1824,7 +2004,7 @@ function professorPage(user, opts) {
         for (var i = event.resultIndex; i < event.results.length; i++) {
           var transcript = normalize(event.results[i][0].transcript);
           if (BOMDIA_RE.test(transcript)) {
-            startLiveCall('Quero meu bom dia, Professor!');
+            stopRecognition(function(){ startBomDia(false); });
             return;
           }
           if (WAKE_RE.test(transcript)) {
@@ -1908,6 +2088,7 @@ function professorPage(user, opts) {
   // can still have a full voice conversation by tapping; it only loses the
   // hands-free "Hey Professor" shortcut between calls, not the feature.
   function beginCall(prefill){
+    if (prefill && BOMDIA_RE.test(prefill)) { startBomDia(false); return; }
     permErrEl.hidden = true;
     if (!canCall) {
       setCaption('Esse navegador não suporta chamada de voz (funciona no Chrome ou Safari recentes). Você ainda pode falar com o Professor por texto em /assistant.', true);

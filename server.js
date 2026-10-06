@@ -13,7 +13,7 @@ const { analyzeActivity } = require('./lib/anthropic');
 const strava = require('./lib/strava');
 const { computeEvolution, computeMedals, detectPersonalRecord, computeWeeklyStreak } = require('./lib/stats');
 const { buildContext, buildActivityFocusContext, buildVoiceInstructions, streamChatWithAssistant, computeHumanDelayMs, detectImageRequest, extractWorkoutCard } = require('./lib/assistant');
-const { mintRealtimeSession } = require('./lib/openai');
+const { mintRealtimeSession, synthesizeSpeech } = require('./lib/openai');
 const { fetchNearbyRaces } = require('./lib/races');
 const { buildMonthCalendar } = require('./lib/calendar');
 const { ensurePublicSlug, buildShareDraft, buildPRShareDraft, REACTION_KEYS, notify, safePath, memberNumber, buildDiagnosis } = require('./lib/social');
@@ -66,6 +66,11 @@ const SHARED_OPENAI_KEY = (process.env.OPENAI_SHARED_API_KEY || '').trim();
 function openaiApiKeyFor(user) {
   return (user && user.openai_api_key) || SHARED_OPENAI_KEY || '';
 }
+
+// The two fixed lines of the Professor's "bom dia" ritual, synthesized once
+// (by whichever athlete's OpenAI key hits it first) and kept in memory.
+const BOMDIA_LINES = { '1': 'Bom dia, meu atleta!', '2': 'Como você está hoje? Como foram os treinos?' };
+const bomdiaVoiceCache = new Map(); // line -> Promise<Buffer>
 
 async function handle(req, res) {
   const parsed = url.parse(req.url, true);
@@ -966,6 +971,31 @@ async function handle(req, res) {
         console.error('realtime-session error', e);
         res.writeHead(502, { 'content-type': 'application/json; charset=utf-8' });
         return res.end(JSON.stringify({ error: 'realtime_failed', message: e.message }));
+      }
+    }
+
+    // The ritual's two spoken lines as ready-made MP3s (see synthesizeSpeech).
+    if (method === 'GET' && pathname === '/api/professor/bomdia-voice') {
+      if (!user) { res.writeHead(401); return res.end(JSON.stringify({ error: 'auth' })); }
+      const line = String((parsed.query && parsed.query.line) || '');
+      const text = BOMDIA_LINES[line];
+      if (!text) { res.writeHead(400); return res.end(JSON.stringify({ error: 'bad_line' })); }
+      let pending = bomdiaVoiceCache.get(line);
+      if (!pending) {
+        const key = openaiApiKeyFor(user);
+        if (!key) { res.writeHead(412, { 'content-type': 'application/json; charset=utf-8' }); return res.end(JSON.stringify({ error: 'missing_key' })); }
+        pending = synthesizeSpeech(key, text);
+        bomdiaVoiceCache.set(line, pending);
+        pending.catch(() => { if (bomdiaVoiceCache.get(line) === pending) bomdiaVoiceCache.delete(line); }); // never cache a failure
+      }
+      try {
+        const buf = await pending;
+        res.writeHead(200, { 'content-type': 'audio/mpeg', 'content-length': buf.length, 'cache-control': 'private, max-age=86400' });
+        return res.end(buf);
+      } catch (e) {
+        console.error('bomdia-voice error', e.status || '', e.detail || e.message);
+        res.writeHead(502, { 'content-type': 'application/json; charset=utf-8' });
+        return res.end(JSON.stringify({ error: 'tts_failed', status: e.status || null }));
       }
     }
 
