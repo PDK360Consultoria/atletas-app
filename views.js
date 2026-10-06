@@ -1,4 +1,29 @@
 const { secToPace, fmtClock, fmtDate, timeAgo, esc, renderMarkdownLite, icon } = require('./lib/format');
+
+const { ZONE_META, zoneBounds, zoneSeconds } = require('./lib/zones');
+
+// Tempo por zona de FC (Z1–Z5): barra empilhada + legenda. `compact` é a
+// versão do feed e da lista (barra fina com Z1..Z4 em texto); a completa
+// vai na página do treino.
+function zonesHtml(secs, compact) {
+  if (!secs) return '';
+  const total = secs.reduce((a, b) => a + b, 0);
+  if (!total) return '';
+  const last = secs[4] > 0 ? 5 : 4; // Z5 só aparece quando houve tempo nela
+  const seg = ZONE_META.slice(0, last).map((m, i) => {
+    const pct = secs[i] / total * 100;
+    return pct > 0 ? `<span class="zone-seg" style="width:${pct.toFixed(2)}%;background:${m.color}" title="${m.z} · ${fmtClock(secs[i])} · ${Math.round(pct)}%"></span>` : '';
+  }).join('');
+  if (compact) {
+    return `<div class="zones zones-compact"><div class="zone-bar">${seg}</div><div class="zone-chips">${ZONE_META.slice(0, last).map((m, i) => `<span class="zone-chip"><i style="background:${m.color}"></i>${m.z} <b>${fmtClock(secs[i])}</b></span>`).join('')}</div></div>`;
+  }
+  return `<div class="zones"><div class="zone-bar zone-bar-lg">${seg}</div>
+    <div class="zone-rows">${ZONE_META.slice(0, last).map((m, i) => `<div class="zone-row"><span class="zone-name"><i style="background:${m.color}"></i><b>${m.z}</b> ${m.name}</span><span class="zone-time">${fmtClock(secs[i])}</span><span class="zone-pct">${Math.round(secs[i] / total * 100)}%</span></div>`).join('')}</div></div>`;
+}
+function zonesForActivity(a, zonesJson, obsMax) {
+  const bounds = zoneBounds(zonesJson, Math.max(obsMax || 0, a.max_hr || 0));
+  return zoneSeconds({ laps: a.laps_json, intervals: a.intervals_json, avg_hr: a.avg_hr, duration_sec: a.duration_sec }, bounds);
+}
 const { summarizeIntervals } = require('./lib/intervals');
 const { estimateVO2max } = require('./lib/stats');
 const { decode: decodePolyline } = require('./lib/polyline');
@@ -1842,6 +1867,7 @@ ${added ? `<div class="ok">Prova adicionada ao seu calendário.</div>` : ''}
 }
 
 function activitiesPage(user, activities, synced) {
+  const obsMaxHr = activities.reduce((m, a) => Math.max(m, a.max_hr || 0), 0);
   const body = `
 <h1>Treinos</h1>
 <p class="lede">Histórico de treinos, com splits e análise.</p>
@@ -1854,7 +1880,7 @@ ${synced !== undefined ? `<div class="ok">${synced == 0 ? 'Tudo já estava sincr
   ${activities.length ? activities.map(a => `
     <div class="list-item activity-row">
       <a class="activity-row-link" href="/activities/${a.id}">
-        <div><div class="t">${esc(a.title)}${a.source === 'strava' ? ' <span class="muted mono" style="font-size:11px;">· strava</span>' : ''}</div><div class="d">${fmtDate(a.started_at || a.created_at)} · ${a.distance_km ? a.distance_km + 'km' : '—'} ${a.duration_sec ? '· ' + fmtClock(a.duration_sec) : ''} ${a.avg_pace_sec ? '· ' + secToPace(a.avg_pace_sec) + '/km' : ''}</div></div>
+        <div><div class="t">${esc(a.title)}${a.source === 'strava' ? ' <span class="muted mono" style="font-size:11px;">· strava</span>' : ''}</div><div class="d">${fmtDate(a.started_at || a.created_at)} · ${a.distance_km ? a.distance_km + 'km' : '—'} ${a.duration_sec ? '· ' + fmtClock(a.duration_sec) : ''} ${a.avg_pace_sec ? '· ' + secToPace(a.avg_pace_sec) + '/km' : ''}</div>${zonesHtml(zonesForActivity(a, user.hr_zones_json, obsMaxHr), true)}</div>
         <span class="pill"><span class="dot"></span>${esc(a.workout_type || 'treino')}</span>
       </a>
       <a class="btn ghost xs activity-row-publish" href="/feed?share_activity=${a.id}" title="Publicar este treino no feed">${icon('chat', 'pub' + a.id)}Publicar</a>
@@ -2066,6 +2092,8 @@ function activityDetailPage({ user, activity, laps, intervals, evolution, prInfo
   <div class="card stat"><div class="icon-badge">${icon('trophy', 'ad8')}</div><div class="k">VO2 máx (estimado)</div><div class="v">${vo2max ?? '—'}${vo2max != null ? '<span class="u">ml/kg/min</span>' : ''}</div></div>
 </div>
 
+${(() => { const zs = zonesForActivity(activity, user.hr_zones_json, activity.zones_obs_max); return zs ? `<div class="card"><h2><span class="h-icon">${icon('heart', 'zn')}</span>Zonas de frequência cardíaca</h2>${zonesHtml(zs, false)}<p class="muted" style="margin:10px 0 0;font-size:12px;">Tempo estimado pelas parciais do treino.</p></div>` : ''; })()}
+
 ${activity.route_polyline ? `<div class="card route-card">
   <h2><span class="h-icon">${icon('mountain', 'rt')}</span>Rota</h2>
   ${routeTileMap(activity.route_polyline, { width: 800, height: 380 })}
@@ -2189,7 +2217,7 @@ function workoutTypeIcon(workoutType) {
 // is centered/scaled to fill the given box with a bit of padding. Returns
 // '' when there's no polyline (manual entries, GPX files without real GPS,
 // or activities synced before this feature existed).
-// Mapa de verdade (ruas) como no Strava: tiles escuros do CARTO/OpenStreetMap
+// Mapa de verdade (ruas) como no Strava: tiles do OpenStreetMap (escurecidos por CSS)
 // posicionados em volta do traçado, com a rota desenhada por cima em SVG.
 // Se os tiles não carregarem, o fundo escuro + a linha continuam legíveis.
 function routeTileMap(polylineStr, opts) {
@@ -2218,8 +2246,7 @@ function routeTileMap(polylineStr, opts) {
     for (let tx = Math.floor(ox / 256); tx <= Math.floor((ox + W) / 256); tx++) {
       if (ty < 0 || ty >= maxT) continue;
       const wx = ((tx % maxT) + maxT) % maxT;
-      const sub = 'abcd'[(wx + ty) % 4];
-      tiles += `<img class="rtm-tile" loading="lazy" alt="" src="https://${sub}.basemaps.cartocdn.com/dark_all/${z}/${wx}/${ty}@2x.png" style="left:${((tx * 256 - ox) / W * 100).toFixed(3)}%;top:${((ty * 256 - oy) / H * 100).toFixed(3)}%;width:${(256 / W * 100).toFixed(3)}%;height:${(256 / H * 100).toFixed(3)}%">`;
+            tiles += `<img class="rtm-tile" loading="lazy" alt="" src="https://${'abc'[(wx + ty) % 3]}.tile.openstreetmap.org/${z}/${wx}/${ty}.png" style="left:${((tx * 256 - ox) / W * 100).toFixed(3)}%;top:${((ty * 256 - oy) / H * 100).toFixed(3)}%;width:${(256 / W * 100).toFixed(3)}%;height:${(256 / H * 100).toFixed(3)}%">`;
     }
   }
   const xy = points.map(([la, lo]) => { const [x, y] = toWorld(la, lo, z); return [x - ox, y - oy]; });
@@ -2232,7 +2259,7 @@ function routeTileMap(polylineStr, opts) {
       <circle cx="${sx.toFixed(1)}" cy="${sy.toFixed(1)}" r="6" fill="#34C759" stroke="#fff" stroke-width="2"/>
       <circle cx="${ex.toFixed(1)}" cy="${ey.toFixed(1)}" r="6" fill="#FF3B30" stroke="#fff" stroke-width="2"/>
     </svg>
-    <span class="rtm-attr">© OpenStreetMap · © CARTO</span></div>`;
+    <span class="rtm-attr">© OpenStreetMap</span></div>`;
 }
 
 function routeMapSvg(polylineStr, opts) {
@@ -2295,6 +2322,7 @@ function activityStatBlock(p) {
   return `<a class="strava-title" href="/activities/${p.activity_id}">${esc(p.activity_title)}</a>
   ${body ? `<div class="strava-desc">${esc(body).replace(/\n/g, '<br>')}</div>` : ''}
   ${stats.length ? `<div class="strava-stats">${stats.map(([v, u, k]) => `<div class="strava-stat"><div class="k">${esc(k)}</div><div class="v">${esc(String(v))}${u ? `<span class="u">${esc(u)}</span>` : ''}</div></div>`).join('')}</div>` : ''}
+  ${zonesHtml(zonesForActivity({ laps_json: p.activity_laps_json, intervals_json: p.activity_intervals_json, avg_hr: p.activity_avg_hr, max_hr: null, duration_sec: p.activity_duration_sec }, p.author_hr_zones_json, p.author_obs_max_hr), true)}
   ${p.activity_route_polyline ? `<a class="strava-map" href="/activities/${p.activity_id}">${routeTileMap(p.activity_route_polyline, { width: 640, height: 340 })}</a>` : (p.activity_laps && p.activity_laps.length > 1 ? `<div class="strava-splits">${paceBarsHtml({ avg_pace_sec: p.activity_avg_pace_sec }, p.activity_laps, 12)}</div>` : '')}`;
 }
 
@@ -2345,7 +2373,7 @@ function postCard(user, p, returnTo) {
   const mine = p.user_id === user.id;
   const comments = p.comments || [];
   returnTo = returnTo || '/feed';
-  return `<div class="card post-card${p.is_auto ? ' post-card-auto' : ''}">
+  return `<div class="card post-card${p.is_auto || p.activity_id ? ' post-card-auto' : ''}">
   <div class="post-head">
     ${avatarHtml(p.author_name, p.user_id, p.author_avatar_path)}
     <div class="post-head-meta">

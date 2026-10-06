@@ -354,6 +354,7 @@ async function handle(req, res) {
       const laps = activity.laps_json ? JSON.parse(activity.laps_json) : [];
       const intervals = activity.intervals_json ? JSON.parse(activity.intervals_json) : [];
       const allActivities = db.prepare('SELECT * FROM activities WHERE user_id = ?').all(user.id);
+      activity.zones_obs_max = allActivities.reduce((mx, a) => Math.max(mx, a.max_hr || 0), 0);
       const evolution = computeEvolution(allActivities);
       const prInfo = detectPersonalRecord(activity, allActivities);
       const alreadyShared = !!db.prepare('SELECT 1 FROM posts WHERE activity_id = ?').get(activity.id);
@@ -422,6 +423,8 @@ async function handle(req, res) {
           a.avg_pace_sec as activity_avg_pace_sec, a.elevation_gain_m as activity_elevation_gain_m,
           a.source as activity_source, a.laps_json as activity_laps_json,
           a.route_polyline as activity_route_polyline, a.started_at as activity_started_at, u.city as author_city,
+          a.intervals_json as activity_intervals_json, a.avg_hr as activity_avg_hr, u.hr_zones_json as author_hr_zones_json,
+          (SELECT MAX(max_hr) FROM activities WHERE user_id = p.user_id) as author_obs_max_hr,
           u.name as author_name, u.public_slug as author_slug, u.avatar_path as author_avatar_path
         FROM posts p
         JOIN users u ON u.id = p.user_id

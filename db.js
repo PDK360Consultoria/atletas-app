@@ -98,6 +98,7 @@ function ensureColumn(table, column, ddl) {
   }
 }
 ensureColumn('users', 'strava_athlete_id', 'strava_athlete_id TEXT');
+ensureColumn('users', 'hr_zones_json', 'hr_zones_json TEXT');
 ensureColumn('users', 'strava_access_token', 'strava_access_token TEXT');
 ensureColumn('users', 'strava_refresh_token', 'strava_refresh_token TEXT');
 ensureColumn('users', 'strava_token_expires_at', 'strava_token_expires_at INTEGER');
