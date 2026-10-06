@@ -728,3 +728,24 @@ body.landing-dark{
 .chat-story-card canvas{width:100%; max-width:320px; border-radius:14px; box-shadow:0 14px 30px -16px rgba(0,0,0,0.5);}
 .chat-story-download{padding:7px 12px; font-size:12px;}
 .story-card canvas{width:100%; max-width:360px; aspect-ratio:1080/1350; border-radius:18px; box-shadow:0 18px 40px -16px rgba(0,0,0,0.45);}
+
+/* ---- feed no estilo Strava ---- */
+.post-card-auto .post-head{margin-bottom:10px;}
+.post-card-auto .post-time{font-size:12px; margin-top:1px; letter-spacing:0;}
+.strava-title{display:block; font-size:22px; line-height:1.2; font-weight:800; color:var(--ink); text-decoration:none; margin:4px 0 0; letter-spacing:-0.01em;}
+.strava-title:hover{color:var(--accent);}
+.strava-desc{margin-top:6px; font-size:14px; line-height:1.5; color:var(--ink-dim);}
+.strava-stats{display:flex; margin-top:14px;}
+.strava-stat{flex:1; padding:0 14px; border-left:1px solid var(--line);}
+.strava-stat:first-child{padding-left:0; border-left:none;}
+.strava-stat .k{font-size:11.5px; color:var(--ink-faint); font-weight:600; margin-bottom:2px;}
+.strava-stat .v{font-size:22px; font-weight:700; letter-spacing:-0.01em; color:var(--ink); white-space:nowrap;}
+.strava-stat .v .u{font-size:13px; font-weight:600; color:var(--ink-dim);}
+.strava-map{display:flex; justify-content:center; margin:14px -22px 0; padding:14px 22px; background:var(--surface2); border-top:1px solid var(--line); border-bottom:1px solid var(--line);}
+.strava-map .route-map{max-height:300px;}
+.strava-splits{margin-top:14px;}
+.strava-splits .bars{height:56px;}
+.post-card-auto .post-actions{border-top:none; padding-top:0; margin-top:12px;}
+@media (max-width:520px){ .strava-stat{padding:0 8px;} .strava-stat .v{font-size:18px;} .strava-title{font-size:19px;} }
+.post-card-auto .post-time{font-family:inherit; font-size:12.5px; color:var(--ink-dim);}
+.strava-splits{padding-bottom:26px;}
