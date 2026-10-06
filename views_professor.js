@@ -171,6 +171,7 @@ function professorPage(user, opts) {
   }
   .quickchips button:hover{background:rgba(255,194,78,0.1); border-color:rgba(255,194,78,0.4); color:var(--ink);}
   .quickchips button:active{transform:scale(.96);}
+  .quickchips button.feat{color:var(--gold); border-color:rgba(255,194,78,0.45); background:rgba(255,194,78,0.08);}
 
   @media (max-width:640px){
     .quickchips{gap:7px;}
@@ -220,16 +221,34 @@ function professorPage(user, opts) {
     position:relative; z-index:2; display:flex; align-items:flex-end; justify-content:space-between;
     gap:16px; padding:0 26px 18px; order:0;
   }
+  /* Felipe: the corner log was not good — the athlete's lines and the
+     Professor's lines were not clearly his vs. the coach's (and, before the
+     ordering fix in the script below, were even swapped). Each speaker now
+     gets his own color on both the label and a thin bar down the left edge
+     (blue = you, gold = Professor, the same two colors as the status dot and
+     the orb), older lines fold to two lines instead of one ellipsized line,
+     the newest line always shows in full, and the whole stack is bottom-
+     anchored with a soft fade at the top so the newest line never gets
+     pushed out of view as the conversation grows. */
   .log{
-    display:flex; flex-direction:column; gap:7px; max-width:min(46vw, 420px); min-width:0;
+    display:flex; flex-direction:column; justify-content:flex-end; gap:10px;
+    width:min(92vw, 520px); max-height:34vh; overflow:hidden; min-width:0;
+    -webkit-mask-image:linear-gradient(to bottom, transparent 0, #000 24%);
+            mask-image:linear-gradient(to bottom, transparent 0, #000 24%);
   }
   .log .row{
-    display:flex; gap:10px; font-family:'IBM Plex Mono',monospace; font-size:12.5px; line-height:1.4;
+    display:grid; grid-template-columns:78px 1fr; column-gap:12px; align-items:baseline;
+    padding:3px 0 3px 12px; border-left:2px solid var(--blue);
+    font-family:'IBM Plex Mono',monospace; font-size:12.5px; line-height:1.5;
   }
-  .log .who{color:var(--ink-faint); flex:none; letter-spacing:0.08em;}
+  .log .row.prof{border-left-color:var(--gold);}
+  .log .who{color:var(--blue); letter-spacing:0.1em; font-size:10.5px; font-weight:600;}
   .log .who.prof{color:var(--gold);}
-  .log .txt{color:var(--ink-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
-  .log .row.active .txt{color:var(--ink); white-space:normal; text-overflow:clip;}
+  .log .txt{
+    color:var(--ink-dim); display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
+  }
+  .log .row.active .txt{display:block; color:var(--ink); overflow:visible;}
+  .log .row.pending .txt{opacity:0.55; font-style:italic;}
 
   .meter{display:flex; flex-direction:column; align-items:flex-end; gap:8px; flex:none;}
   .meter .lbl{font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:0.12em; color:var(--ink-faint); text-transform:uppercase;}
@@ -256,7 +275,7 @@ function professorPage(user, opts) {
 
   @media (max-width:640px){
     .bottom{flex-direction:column; align-items:stretch;}
-    .log{max-width:100%;}
+    .log{width:100%;}
     .meter{flex-direction:row; align-items:center; justify-content:flex-end;}
   }
 </style>
@@ -301,6 +320,7 @@ function professorPage(user, opts) {
 </div>
 
 <div class="quickchips" id="quickChips">
+  <button type="button" class="feat" data-q="Quero meu bom dia, Professor!">Quero meu bom dia</button>
   <button type="button" data-q="Qual é meu treino de hoje?">Treino de hoje</button>
   <button type="button" data-q="Analise meu último treino.">Analisar último treino</button>
   <button type="button" data-q="Estou com dores. Pode me ajudar?">Estou com dores</button>
@@ -442,6 +462,23 @@ function professorPage(user, opts) {
   var voiceFreqBuf = null;
   var voiceLevel = 0;
   var assistantTranscriptBuf = ''; // the CURRENT reply's transcript, as it streams in
+  var currentResponseId = null;    // id of the response whose events we are currently showing
+  // Voice pace. NORMAL_SPEED must match the speed lib/openai.js mints the
+  // session with; SLOW_SPEED is what the opening line and the "bom dia" line
+  // switch to (session.update, then switched back when that line is done)
+  // because Felipe could not understand the first greeting at normal pace.
+  var NORMAL_SPEED = 1.08;
+  var SLOW_SPEED = 0.85;
+  var greetingSlow = false;
+  // The "quero meu bom dia, Professor" ritual: the Professor says "Bom dia,
+  // meu atleta!" over loud rock, then asks how he is and how training went. State lives
+  // here; the logic is in runBomDiaRitual() and friends further down.
+  var BOMDIA_RE = /(quero|manda|solta|me\\s+d[aá])\\s+(o\\s+)?(meu\\s+)?bom[\\s-]+dia/i;
+  var ritual = { active: false };
+  var musicActive = false;     // true while the rock stinger is playing (the orb dances to it)
+  var musicCtx = null;
+  var musicAnalyser = null, musicAnalyserBuf = null, musicFreqBuf = null;
+  var musicLevel = 0;
   // The caption used to just dump every response.output_audio_transcript.delta
   // onto the screen the instant it arrived — Felipe's "aparece digitando e
   // depois fala" complaint is exactly the documented behavior of OpenAI's
@@ -565,10 +602,31 @@ function professorPage(user, opts) {
   }
   loadHistory();
 
+  // The log used to treat "the last row" as "the row the Professor's reply
+  // is being written into". That broke the moment the athlete's own
+  // transcript (which OpenAI sends a beat AFTER the Professor has already
+  // started answering) got appended after the empty Professor row — the
+  // reply text then landed in the athlete's row (labelled VOCÊ) while the
+  // Professor's row stayed empty. Felipe saw exactly that: "minha fala vs
+  // fala do professor não está legal". Two fixes, both below:
+  //   1. the athlete's row is opened the instant he STARTS talking
+  //      (input_audio_buffer.speech_started), as a pending "…" placeholder, so
+  //      it always sits before the reply in the log whenever its transcript
+  //      finally arrives — and is simply filled in later, by item id;
+  //   2. the Professor's reply is tracked by an explicit reference
+  //      (liveReplyRow), never by position.
+  var liveReplyRow = null;
+  function capHistory(){ while (history.length > 6) history.shift(); }
   function pushLog(role, text){
-    history.push({ role: role, text: text });
-    if (history.length > 6) history.shift();
+    var row = { role: role, text: text };
+    history.push(row);
+    capHistory();
     renderLog();
+    return row;
+  }
+  function dropRow(row){
+    var i = history.indexOf(row);
+    if (i >= 0) { history.splice(i, 1); renderLog(); }
   }
   // Opens a new (empty) row for the Professor's reply the moment OpenAI
   // starts generating one (response.created) — queueReveal then fills it in
@@ -576,26 +634,49 @@ function professorPage(user, opts) {
   // output_audio_transcript.done overwrites it with the authoritative final
   // text. Same row the whole time, never a second one appended after.
   function beginLiveReply(){
-    history.push({ role: 'professor', text: '' });
-    if (history.length > 6) history.shift();
+    liveReplyRow = { role: 'professor', text: '' };
+    history.push(liveReplyRow);
+    capHistory();
     renderLog();
   }
   function setLiveReplyText(text){
-    if (!history.length) return;
-    history[history.length - 1].text = text;
+    if (!liveReplyRow) return;
+    liveReplyRow.text = text;
     renderLog();
+  }
+  function beginUserRow(itemId){
+    var row = { role: 'user', text: '', pending: true, itemId: itemId || null };
+    history.push(row);
+    capHistory();
+    renderLog();
+    return row;
+  }
+  function findPendingUserRow(itemId){
+    var i, h;
+    if (itemId) {
+      for (i = history.length - 1; i >= 0; i--) {
+        h = history[i];
+        if (h.role === 'user' && h.pending && h.itemId === itemId) return h;
+      }
+    }
+    for (i = history.length - 1; i >= 0; i--) {
+      h = history[i];
+      if (h.role === 'user' && h.pending) return h;
+    }
+    return null;
   }
   function renderLog(){
     logEl.innerHTML = '';
     history.forEach(function(h, i){
+      var isProf = h.role === 'professor';
       var row = document.createElement('div');
-      row.className = 'row' + (i === history.length - 1 ? ' active' : '');
+      row.className = 'row ' + (isProf ? 'prof' : 'user') + (i === history.length - 1 ? ' active' : '') + (h.pending && !h.text ? ' pending' : '');
       var who = document.createElement('span');
-      who.className = 'who' + (h.role === 'professor' ? ' prof' : '');
-      who.textContent = h.role === 'professor' ? 'PROFESSOR' : 'VOCÊ';
+      who.className = 'who' + (isProf ? ' prof' : '');
+      who.textContent = isProf ? 'PROFESSOR' : 'VOCÊ';
       var txt = document.createElement('span');
       txt.className = 'txt';
-      txt.textContent = h.text;
+      txt.textContent = h.text || (h.pending ? '…' : '');
       row.appendChild(who); row.appendChild(txt);
       logEl.appendChild(row);
     });
@@ -704,7 +785,12 @@ function professorPage(user, opts) {
 
     var tune = stateTuning();
     var amps, level;
-    if (STATE === 'listening') {
+    if (musicActive && musicAnalyser) {
+      // the rock stinger of the "bom dia" ritual: the bars follow the music
+      musicLevel = sampleLevel(musicAnalyser, musicAnalyserBuf, musicLevel);
+      amps = freqBars(musicAnalyser, musicFreqBuf) || idleBars(t, tune.idle);
+      level = musicLevel;
+    } else if (STATE === 'listening') {
       micLevel = sampleLevel(micAnalyser, micAnalyserBuf, micLevel);
       amps = freqBars(micAnalyser, micFreqBuf) || idleBars(t, tune.idle);
       level = micLevel;
@@ -821,6 +907,10 @@ function professorPage(user, opts) {
   }
 
   function teardownConnection(){
+    abortRitual(); // stops any music, un-mutes the mic track before it is stopped below
+    liveReplyRow = null;
+    currentResponseId = null;
+    greetingSlow = false;
     if (dataChannel) { try { dataChannel.close(); } catch (e) {} dataChannel = null; }
     if (pc) { try { pc.close(); } catch (e) {} pc = null; }
     if (micStream) { micStream.getTracks().forEach(function(t){ try { t.stop(); } catch (e) {} }); micStream = null; }
@@ -862,14 +952,348 @@ function professorPage(user, opts) {
   // override is what keeps the opening line itself ("E aí, atleta!")
   // exact every time rather than leaving it to whatever the model would
   // improvise from the session's general instructions.
+  function sendEvent(obj){
+    if (!dataChannel || dataChannel.readyState !== 'open') return false;
+    try { dataChannel.send(JSON.stringify(obj)); return true; } catch (e) { return false; }
+  }
+  // session.update is how the voice pace is changed mid-call. Best effort:
+  // if the API refuses it the error is only logged, and the slow-pace
+  // instructions in the per-response prompt still apply.
+  function setSessionSpeed(v){
+    sendEvent({ type: 'session.update', session: { type: 'realtime', audio: { output: { speed: v } } } });
+  }
+  function setMicEnabled(on){
+    if (micStream) micStream.getAudioTracks().forEach(function(t){ t.enabled = on; });
+  }
+
+  // Felipe: "o primeiro bom dia a fala tem que ser mais lenta, não dá para
+  // entender bem" — so the opening line goes out at SLOW_SPEED (restored to
+  // NORMAL_SPEED in response.done) and the prompt asks for clear, calm
+  // articulation with a small pause after the greeting.
   function sendGreeting(){
     if (!dataChannel || dataChannel.readyState !== 'open') return;
-    dataChannel.send(JSON.stringify({
+    greetingSlow = true;
+    setSessionSpeed(SLOW_SPEED);
+    sendEvent({
       type: 'response.create',
       response: {
-        instructions: 'Comece sua fala exatamente com "E aí, atleta!" (nessas palavras, em tom natural e animado) e, na sequência, pergunte rapidamente o que o atleta precisa agora.',
+        instructions: 'Comece sua fala exatamente com "E aí, atleta!" (nessas palavras, em tom animado) e, na sequência, pergunte o que o atleta precisa agora. Fale BEM DEVAGAR e com calma, articulando claramente cada palavra, com uma pequena pausa depois de "E aí, atleta!".',
       },
-    }));
+    });
+  }
+
+  // ---------- "quero meu bom dia, Professor" ----------
+  // Felipe's script for the ritual (all client-side, deterministic):
+  //   1. the music starts LOUD (about INTRO_MS),
+  //   2. it ducks to a low bed WITHOUT stopping and the Professor says
+  //      "Bom dia, meu atleta!",
+  //   3. when that voice has really gone quiet the music comes back LOUD for
+  //      about BUMP_MS,
+  //   4. it ducks again and the Professor asks "Como voce esta hoje? Como
+  //      foram os treinos?",
+  //   5. the music swells a touch and fades out, the mic comes back.
+  // The mic track is muted for the whole ritual so the speakers can not
+  // trigger the turn detection. The end of each spoken line is detected by
+  // watching the voice analyser for silence, because response.done fires
+  // well before the audio has finished playing.
+  // The music is /assets/bomdia.mp3 when that file exists (a clip Felipe
+  // supplies, royalty-free); otherwise an ORIGINAL rock riff synthesized
+  // right here with Web Audio, so the ritual always works.
+  var INTRO_MS = 1300, BUMP_MS = 1700, DUCK_LEVEL = 0.16;
+  var MUSIC_URL = '/assets/bomdia.mp3';
+  var musicBytesPromise = null;
+  function preloadMusic(){
+    if (musicBytesPromise) return musicBytesPromise;
+    try {
+      musicBytesPromise = fetch(MUSIC_URL).then(function(r){ return r.ok ? r.arrayBuffer() : null; }).catch(function(){ return null; });
+    } catch (e) { musicBytesPromise = Promise.resolve(null); }
+    return musicBytesPromise;
+  }
+  function musicBytesWithin(ms){
+    return Promise.race([preloadMusic(), new Promise(function(res){ setTimeout(function(){ res(null); }, ms); })]);
+  }
+
+  function runBomDiaRitual(cancelInflight){
+    if (ritual.active || !dataChannel || dataChannel.readyState !== 'open') return;
+    var mine = { active: true, gen: liveGeneration, line: 0, awaiting: false, respId: null, retries: 0, timer: null, poll: null, ctrl: null };
+    ritual = mine;
+    clearTimeout(inactivityTimer);
+    stopReveal();
+    if (cancelInflight) {
+      // The athlete said it mid-call, so the model has already started its
+      // own (generic) answer to that sentence — stop it and drop its row.
+      sendEvent({ type: 'response.cancel' });
+      sendEvent({ type: 'output_audio_buffer.clear' });
+      if (liveReplyRow) { dropRow(liveReplyRow); liveReplyRow = null; }
+    }
+    setMicEnabled(false);
+    setState('speaking');
+    setCaption('Rock pra acordar o corpo!', true);
+    setStatus('Tocando', 'speaking');
+    setSessionSpeed(SLOW_SPEED);
+    mine.timer = setTimeout(function(){ if (ritual === mine) abortRitual(); }, 45000);
+    musicBytesWithin(1500).then(function(bytes){
+      if (ritual !== mine) return null;
+      return startMusicBed(bytes).then(function(ctrl){
+        if (ritual !== mine) { if (ctrl) ctrl.stop(); return; }
+        mine.ctrl = ctrl;
+        musicActive = !!ctrl;
+        setTimeout(function(){ if (ritual === mine) ritualSay(1); }, ctrl ? INTRO_MS : 0);
+      });
+    });
+  }
+  // Duck the music, then ask the model for exactly one of the two lines.
+  function ritualSay(n){
+    var r = ritual;
+    if (!r.active || r.gen !== liveGeneration) return;
+    r.line = n; r.awaiting = true; r.respId = null; r.retries = 0;
+    musicActive = false; // the orb follows the Professor's voice while he talks
+    if (r.ctrl) r.ctrl.duck(DUCK_LEVEL, 0.35);
+    setState('speaking');
+    setStatus('Professor falando', 'speaking');
+    setTimeout(sendRitualCreate, r.ctrl ? 380 : 0); // let the music dip first
+  }
+  function sendRitualCreate(){
+    var r = ritual;
+    if (!r.active || r.gen !== liveGeneration || !r.awaiting) return;
+    var line = r.line === 1 ? 'Bom dia, meu atleta!' : 'Como você está hoje? Como foram os treinos?';
+    sendEvent({
+      type: 'response.create',
+      response: {
+        instructions: 'Fale SOMENTE esta frase, com clareza, articulando bem cada palavra, em tom caloroso, animado e confiante: "' + line + '" Não diga mais nada antes nem depois.',
+      },
+    });
+  }
+  function rawLevel(analyser, buf){
+    if (!analyser || !buf) return 0;
+    analyser.getByteTimeDomainData(buf);
+    var sum = 0;
+    for (var i = 0; i < buf.length; i++) { var v = (buf[i] - 128) / 128; sum += v * v; }
+    return Math.min(1, Math.sqrt(sum / buf.length) * 5.5);
+  }
+  // The reply is generated faster than it is played, so response.done is
+  // NOT the end of the speech. Poll the voice analyser until the Professor
+  // has really gone quiet (about 0.7s of silence) before the next music cue.
+  function waitVoiceQuiet(mine, cb){
+    var quiet = 0, started = Date.now();
+    mine.poll = setInterval(function(){
+      if (ritual !== mine) { clearInterval(mine.poll); return; }
+      var elapsed = Date.now() - started;
+      var lvl = voiceAnalyser ? rawLevel(voiceAnalyser, voiceAnalyserBuf) : 1;
+      quiet = lvl < 0.03 ? quiet + 1 : 0;
+      var silentEnough = voiceAnalyser ? (quiet >= 9 && elapsed >= 800) : elapsed >= 3200;
+      if (silentEnough || elapsed >= 9000) {
+        clearInterval(mine.poll); mine.poll = null;
+        if (ritual === mine && mine.gen === liveGeneration) cb();
+      }
+    }, 80);
+  }
+  function ritualLineDone(){
+    var mine = ritual, line = mine.line;
+    mine.awaiting = false;
+    waitVoiceQuiet(mine, function(){ if (line === 1) ritualBump(mine); else ritualOutro(mine); });
+  }
+  function ritualBump(mine){
+    if (mine.ctrl) { musicActive = true; mine.ctrl.duck(1, 0.3); }
+    setCaption('Rock pra acordar o corpo!', true);
+    setStatus('Tocando', 'speaking');
+    setTimeout(function(){ if (ritual === mine) ritualSay(2); }, mine.ctrl ? BUMP_MS : 0);
+  }
+  function ritualOutro(mine){
+    if (mine.ctrl) { musicActive = true; mine.ctrl.duck(0.7, 0.3); mine.ctrl.fadeOut(1.4); }
+    setTimeout(function(){ if (ritual === mine) endRitual(); }, mine.ctrl ? 1500 : 0);
+  }
+  function stopMusicNow(){
+    if (musicCtx) { try { musicCtx.close(); } catch (e) {} musicCtx = null; }
+  }
+  function endRitual(){
+    var r = ritual;
+    if (!r.active) return;
+    clearTimeout(r.timer);
+    if (r.poll) clearInterval(r.poll);
+    ritual = { active: false };
+    stopMusicNow();
+    musicActive = false; musicAnalyser = null; musicAnalyserBuf = null; musicFreqBuf = null; musicLevel = 0;
+    setMicEnabled(true);
+    if (r.gen === liveGeneration && dataChannel) {
+      setSessionSpeed(NORMAL_SPEED);
+      setState('listening');
+      setCaption('Pode continuar falando…', true);
+      armInactivityTimer();
+    }
+  }
+  function abortRitual(){
+    if (ritual.active) endRitual();
+  }
+
+  // The music bed: a file when we have one, the synthesized riff otherwise.
+  // Resolves with a small controller {duck(level, sec), fadeOut(sec), stop()}
+  // (or null when Web Audio is not available). The analyser sits AFTER the
+  // duck gain so the orb follows what is really audible.
+  function startMusicBed(bytes){
+    return new Promise(function(resolve){
+      var AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) { resolve(null); return; }
+      var ac;
+      try { ac = new AC(); } catch (e) { resolve(null); return; }
+      musicCtx = ac;
+      if (ac.state === 'suspended') { try { ac.resume(); } catch (e2) {} }
+      var fade = ac.createGain(); fade.gain.value = 1;   // end-of-ritual fade
+      var duck = ac.createGain(); duck.gain.value = 1;   // under-the-voice ducking
+      var an = ac.createAnalyser();
+      an.fftSize = 128; an.smoothingTimeConstant = 0.55;
+      fade.connect(duck); duck.connect(an); an.connect(ac.destination);
+      musicAnalyser = an;
+      musicAnalyserBuf = new Uint8Array(an.frequencyBinCount);
+      musicFreqBuf = new Uint8Array(an.frequencyBinCount);
+      function ramp(node, level, sec){
+        var t = ac.currentTime;
+        try {
+          node.gain.cancelScheduledValues(t);
+          node.gain.setValueAtTime(node.gain.value, t);
+          node.gain.linearRampToValueAtTime(Math.max(0.0001, level), t + Math.max(0.02, sec));
+        } catch (e4) {}
+      }
+      var ctrl = {
+        duck: function(level, sec){ ramp(duck, level, sec); },
+        fadeOut: function(sec){ ramp(fade, 0.0001, sec); },
+        stop: function(){ if (musicCtx === ac) musicCtx = null; try { ac.close(); } catch (e5) {} },
+      };
+      function go(buffer){
+        try {
+          if (buffer) playMusicFile(ac, buffer, fade); else playRockRiff(ac, fade);
+        } catch (e6) {}
+        resolve(ctrl);
+      }
+      if (bytes) {
+        try { ac.decodeAudioData(bytes.slice(0), function(b){ go(b); }, function(){ go(null); }); }
+        catch (e7) { go(null); }
+      } else go(null);
+    });
+  }
+  function playMusicFile(ac, buffer, dest){
+    var src = ac.createBufferSource();
+    src.buffer = buffer;
+    var g = ac.createGain();
+    var t0 = ac.currentTime + 0.05, dur = buffer.duration;
+    g.gain.setValueAtTime(1, t0);
+    if (dur > 1.5) { g.gain.setValueAtTime(1, t0 + dur - 0.6); g.gain.linearRampToValueAtTime(0.0001, t0 + dur); }
+    src.connect(g); g.connect(dest);
+    src.start(t0);
+  }
+
+  // Original hard-rock riff (no real recording): distorted power chords on a
+  // stomping riff in E minor, bass, kick/snare/hats, a crash on each repeat.
+  // About 12 seconds so it can sit under the whole ritual.
+  function playRockRiff(ac, dest){
+    var BEAT = 0.5; // 120 bpm
+    var REPS = 3;
+    var t0 = ac.currentTime + 0.1;
+    var master = ac.createGain();
+    master.gain.setValueAtTime(0.0001, t0);
+    master.gain.exponentialRampToValueAtTime(0.8, t0 + 0.02);
+    var comp = ac.createDynamicsCompressor();
+    master.connect(comp); comp.connect(dest);
+
+    var pre = ac.createBiquadFilter(); pre.type = 'lowpass'; pre.frequency.value = 2600;
+    var dist = ac.createWaveShaper();
+    var curve = new Float32Array(2048);
+    for (var ci = 0; ci < 2048; ci++) { var cxv = (ci / 1024) - 1; curve[ci] = Math.tanh(cxv * 14); }
+    dist.curve = curve; dist.oversample = '4x';
+    var post = ac.createBiquadFilter(); post.type = 'lowpass'; post.frequency.value = 4200;
+    var guitarBus = ac.createGain(); guitarBus.gain.value = 0.32;
+    pre.connect(dist); dist.connect(post); post.connect(guitarBus); guitarBus.connect(master);
+
+    var noiseBuf = ac.createBuffer(1, ac.sampleRate, ac.sampleRate);
+    var nd = noiseBuf.getChannelData(0);
+    for (var ni = 0; ni < nd.length; ni++) nd[ni] = Math.random() * 2 - 1;
+    function noiseSrc(when, len){
+      var s = ac.createBufferSource(); s.buffer = noiseBuf; s.loop = true;
+      s.start(when); s.stop(when + len);
+      return s;
+    }
+    function chord(freq, when, len, vel){
+      var env = ac.createGain();
+      env.gain.setValueAtTime(0.0001, when);
+      env.gain.exponentialRampToValueAtTime(vel, when + 0.006);
+      env.gain.exponentialRampToValueAtTime(vel * 0.5, when + Math.min(len * 0.7, 0.5));
+      env.gain.exponentialRampToValueAtTime(0.0001, when + len);
+      env.connect(pre);
+      [[1, -7], [1, 7], [1.5, 0], [2, 0]].forEach(function(p){
+        var o = ac.createOscillator(); o.type = 'sawtooth';
+        o.frequency.value = freq * p[0]; o.detune.value = p[1];
+        o.connect(env); o.start(when); o.stop(when + len + 0.05);
+      });
+    }
+    function bass(freq, when, len){
+      var o = ac.createOscillator(); o.type = 'triangle'; o.frequency.value = freq;
+      var g = ac.createGain();
+      g.gain.setValueAtTime(0.0001, when);
+      g.gain.exponentialRampToValueAtTime(0.7, when + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.0001, when + len);
+      o.connect(g); g.connect(master); o.start(when); o.stop(when + len + 0.05);
+    }
+    function kick(when){
+      var o = ac.createOscillator(); o.type = 'sine';
+      o.frequency.setValueAtTime(150, when);
+      o.frequency.exponentialRampToValueAtTime(45, when + 0.12);
+      var g = ac.createGain();
+      g.gain.setValueAtTime(1.0, when);
+      g.gain.exponentialRampToValueAtTime(0.001, when + 0.3);
+      o.connect(g); g.connect(master); o.start(when); o.stop(when + 0.32);
+    }
+    function snare(when){
+      var n = noiseSrc(when, 0.22);
+      var bp = ac.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 1900; bp.Q.value = 0.7;
+      var g = ac.createGain();
+      g.gain.setValueAtTime(0.7, when);
+      g.gain.exponentialRampToValueAtTime(0.001, when + 0.2);
+      n.connect(bp); bp.connect(g); g.connect(master);
+      var o = ac.createOscillator(); o.type = 'triangle'; o.frequency.value = 190;
+      var g2 = ac.createGain();
+      g2.gain.setValueAtTime(0.5, when);
+      g2.gain.exponentialRampToValueAtTime(0.001, when + 0.12);
+      o.connect(g2); g2.connect(master); o.start(when); o.stop(when + 0.14);
+    }
+    function hat(when){
+      var n = noiseSrc(when, 0.06);
+      var hp = ac.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 7000;
+      var g = ac.createGain();
+      g.gain.setValueAtTime(0.22, when);
+      g.gain.exponentialRampToValueAtTime(0.001, when + 0.05);
+      n.connect(hp); hp.connect(g); g.connect(master);
+    }
+    function crash(when){
+      var n = noiseSrc(when, 1.7);
+      var hp = ac.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 4200;
+      var g = ac.createGain();
+      g.gain.setValueAtTime(0.55, when);
+      g.gain.exponentialRampToValueAtTime(0.001, when + 1.6);
+      n.connect(hp); hp.connect(g); g.connect(master);
+    }
+
+    var E3 = 164.81, E2 = 82.41;
+    var riff = [[0, 0, 3, 0, 5, 0, 3, null], [0, 0, 3, 0, 7, 5, 3, 0]]; // semitones above E, 8th notes
+    for (var rep = 0; rep < REPS; rep++) {
+      crash(t0 + rep * 8 * BEAT);
+      for (var bar = 0; bar < 2; bar++) {
+        var base = t0 + (rep * 2 + bar) * 4 * BEAT;
+        for (var s = 0; s < 8; s++) {
+          var n8 = riff[bar][s];
+          var when = base + s * BEAT / 2;
+          if (n8 !== null) {
+            chord(E3 * Math.pow(2, n8 / 12), when, 0.2, 0.9);
+            bass(E2 * Math.pow(2, n8 / 12), when, 0.22);
+          }
+          hat(when);
+        }
+        kick(base); kick(base + 2 * BEAT);
+        if (bar === 1) kick(base + 2.5 * BEAT);
+        snare(base + BEAT); snare(base + 3 * BEAT);
+      }
+    }
+    var fin = t0 + REPS * 8 * BEAT;
+    chord(E3, fin, 0.95, 1.0); bass(E2, fin, 0.95); kick(fin); crash(fin);
   }
 
   // Server-side events arriving on the data channel — this is what drives
@@ -882,22 +1306,50 @@ function professorPage(user, opts) {
     try { evt = JSON.parse(raw); } catch (e) { return; }
     switch (evt.type) {
       case 'input_audio_buffer.speech_started':
+        if (ritual.active) break; // the mic is muted during the bom-dia ritual; anything heard now is echo
         clearTimeout(inactivityTimer);
         stopReveal(); // real barge-in: whatever was still trickling out is now stale
         // If the athlete interrupted before a single character of the reply
-        // had actually appeared, beginLiveReply()'s row is still empty —
-        // drop it rather than leave a blank "PROFESSOR" line in the log.
-        if (history.length && history[history.length - 1].role === 'professor' && !history[history.length - 1].text) {
-          history.pop();
-          renderLog();
+        // had actually appeared, its row is still empty — drop it rather than
+        // leave a blank "PROFESSOR" line in the log. Either way that reply is
+        // over: later events for it must not touch any row.
+        if (liveReplyRow) {
+          if (!liveReplyRow.text) dropRow(liveReplyRow);
+          liveReplyRow = null;
         }
+        beginUserRow(evt.item_id); // the athlete's own line, opened now so it always sits BEFORE the reply
         setState('listening');
         setCaption('Ouvindo…', true);
         break;
-      case 'conversation.item.input_audio_transcription.completed':
-        if (evt.transcript && evt.transcript.trim()) pushLog('user', evt.transcript.trim());
+      case 'conversation.item.input_audio_transcription.completed': {
+        var said = (evt.transcript || '').trim();
+        var urow = findPendingUserRow(evt.item_id);
+        if (urow) {
+          if (said) { urow.text = said; urow.pending = false; renderLog(); }
+          else dropRow(urow); // noise / silence: nothing was actually said
+        } else if (said) {
+          // No placeholder (should be rare): put it just before the reply it triggered.
+          var late = { role: 'user', text: said };
+          var at = liveReplyRow ? history.indexOf(liveReplyRow) : -1;
+          if (at >= 0) history.splice(at, 0, late); else history.push(late);
+          capHistory();
+          renderLog();
+        }
+        if (said && BOMDIA_RE.test(said)) runBomDiaRitual(true);
         break;
+      }
       case 'response.created':
+        if (ritual.active) {
+          var cid = (evt.response && evt.response.id) || null;
+          if (ritual.awaiting && !ritual.respId) ritual.respId = cid; // the line we asked for
+          else { sendEvent({ type: 'response.cancel' }); sendEvent({ type: 'output_audio_buffer.clear' }); break; } // a stray generic answer — not now
+          currentResponseId = cid;
+          assistantTranscriptBuf = '';
+          stopReveal();
+          beginLiveReply();
+          break;
+        }
+        currentResponseId = (evt.response && evt.response.id) || null;
         assistantTranscriptBuf = '';
         stopReveal();
         setState('speaking');
@@ -911,15 +1363,37 @@ function professorPage(user, opts) {
         // authoritative final text, not a second entry appended after it.
         if (evt.transcript && evt.transcript.trim()) setLiveReplyText(evt.transcript.trim());
         break;
-      case 'response.done':
+      case 'response.done': {
+        var doneId = evt.response && evt.response.id;
+        // A response that was cancelled or superseded can finish AFTER the
+        // next one has already started — it must not reset the UI of the
+        // reply that is actually playing.
+        if (doneId && currentResponseId && doneId !== currentResponseId) break;
+        var wasCancelled = !!(evt.response && evt.response.status === 'cancelled');
         stopReveal();
+        liveReplyRow = null;
+        if (greetingSlow) { greetingSlow = false; setSessionSpeed(NORMAL_SPEED); }
+        if (ritual.active) {
+          // our own line finished generating -> wait for the voice to go quiet, then the next music cue
+          if (ritual.awaiting && ritual.respId && ritual.respId === doneId && !wasCancelled) ritualLineDone();
+          break; // never drop to "listening" in the middle of the ritual
+        }
         setState('listening');
         setCaption('Pode continuar falando…', true);
         armInactivityTimer();
         break;
-      case 'error':
+      }
+      case 'error': {
+        var emsg = (evt.error && evt.error.message) || '';
+        if (/no active response|not active/i.test(emsg)) break; // response.cancel with nothing to cancel — harmless
+        if (ritual.active && ritual.awaiting && !ritual.respId && /active response/i.test(emsg) && ritual.retries < 2) {
+          ritual.retries++;
+          setTimeout(sendRitualCreate, 700); // the cancelled answer was still winding down — try again
+          break;
+        }
         console.error('Professor (realtime):', evt);
         break;
+      }
       default:
         break; // lots of other housekeeping events we don't need for the UI
     }
@@ -942,6 +1416,7 @@ function professorPage(user, opts) {
   // shared globals here could otherwise tear down (or orphan) a different,
   // newer call that's already live.
   function startLiveCall(prefill){
+    preloadMusic(); // warm the bom-dia music file (if any) so the ritual starts on time
     // Known upfront (server-rendered flag) — skip the round trip and the
     // mic prompt entirely rather than connecting just to fail on the key
     // check a moment later.
@@ -1103,7 +1578,9 @@ function professorPage(user, opts) {
         requestWakeLock();
         armInactivityTimer();
         armHardCap();
-        if (prefill) sendUserTextTurn(prefill); else sendGreeting();
+        if (prefill && BOMDIA_RE.test(prefill)) { pushLog('user', prefill); runBomDiaRitual(false); }
+        else if (prefill) sendUserTextTurn(prefill);
+        else sendGreeting();
       }).catch(function(err){
         cleanupLocal(); // always ours to clean up, whatever went wrong or whoever's current now
         if (myGen !== liveGeneration) return; // superseded — nothing to show, the newer call owns the UI now

@@ -88,7 +88,7 @@ async function handle(req, res) {
     const filePath = path.join(PUBLIC_DIR, assetMatch[1]);
     if (!filePath.startsWith(PUBLIC_DIR) || !fs.existsSync(filePath)) return notFound(res);
     const ext = path.extname(filePath).toLowerCase();
-    const mime = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.svg': 'image/svg+xml' }[ext] || 'application/octet-stream';
+    const mime = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4', '.wav': 'audio/wav' }[ext] || 'application/octet-stream';
     res.writeHead(200, { 'content-type': mime, 'cache-control': 'public, max-age=604800' });
     return res.end(fs.readFileSync(filePath));
   }
