@@ -170,6 +170,23 @@ async function handle(req, res) {
       return redirect(res, '/login', serializeCookie('session', '', { expire: true }));
     }
 
+    // ---------- push tokens (mobile app) ----------
+    if (method === 'POST' && (pathname === '/api/push/register' || pathname === '/api/push/unregister')) {
+      if (!user) { res.writeHead(401, { 'content-type': 'application/json' }); return res.end('{"error":"auth"}'); }
+      const b = fields;
+      const token = String(fields.token || '').slice(0, 4096);
+      if (!token) { res.writeHead(400, { 'content-type': 'application/json' }); return res.end('{"error":"token"}'); }
+      if (pathname === '/api/push/register') {
+        const platform = ['ios', 'android'].includes(b.platform) ? b.platform : null;
+        db.prepare('DELETE FROM push_tokens WHERE token = ?').run(token);
+        db.prepare('INSERT INTO push_tokens (user_id, token, platform) VALUES (?,?,?)').run(user.id, token, platform);
+      } else {
+        db.prepare('DELETE FROM push_tokens WHERE token = ? AND user_id = ?').run(token, user.id);
+      }
+      res.writeHead(200, { 'content-type': 'application/json' });
+      return res.end('{"ok":true}');
+    }
+
     // ---------- legal ----------
     if (method === 'GET' && pathname === '/privacidade') return html(res, 200, views.privacyPage(user));
     // ---------- auth ----------
@@ -1223,6 +1240,7 @@ function deleteUserCompletely(db, uid) {
   db.prepare('DELETE FROM chat_messages WHERE user_id = ?').run(uid);
   db.prepare('DELETE FROM follows WHERE follower_id = ? OR followee_id = ?').run(uid, uid);
   db.prepare('DELETE FROM sessions WHERE user_id = ?').run(uid);
+  db.prepare('DELETE FROM push_tokens WHERE user_id = ?').run(uid);
   db.prepare('DELETE FROM users WHERE id = ?').run(uid);
   for (const f of files) {
     if (!/^[a-zA-Z0-9._-]+$/.test(String(f))) continue;

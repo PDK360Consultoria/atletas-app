@@ -592,6 +592,38 @@ ready(function(){
 })();
 </script>`;
 
+const NATIVE_SCRIPT = `<script defer>
+(function(){
+  try {
+    var C = window.Capacitor;
+    if (!C || !C.isNativePlatform || !C.isNativePlatform()) return;
+    document.documentElement.classList.add('is-native');
+    var P = C.Plugins || {};
+    // Light vibration on taps (reactions, buttons).
+    if (P.Haptics) document.addEventListener('click', function(e){
+      if (e.target.closest && e.target.closest('button, .react-btn, .fmt, .nav-toggle')) { try { P.Haptics.impact({ style: 'LIGHT' }); } catch (x) {} }
+    }, true);
+    // Push: ask permission, register, and send the device token to the server.
+    var Push = P.PushNotifications;
+    if (Push) {
+      var platform = C.getPlatform ? C.getPlatform() : '';
+      Push.addListener('registration', function(t){
+        var b = new URLSearchParams(); b.set('token', t.value); b.set('platform', platform);
+        fetch('/api/push/register', { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'fetch' }, body: b.toString(), credentials: 'same-origin' }).catch(function(){});
+      });
+      Push.addListener('pushNotificationActionPerformed', function(a){
+        var u = a && a.notification && a.notification.data && a.notification.data.url;
+        if (u && u.charAt(0) === '/' && u.charAt(1) !== '/') location.href = u;
+      });
+      Push.checkPermissions().then(function(s){
+        if (s.receive === 'prompt') return Push.requestPermissions();
+        return s;
+      }).then(function(s){ if (s && s.receive === 'granted') Push.register(); }).catch(function(){});
+    }
+  } catch (e) {}
+})();
+</script>`;
+
 const NOTIF_SCRIPT = `<script defer>
 (function(){
 function ready(fn){ if (document.readyState !== 'loading') fn(); else document.addEventListener('DOMContentLoaded', fn); }
@@ -727,6 +759,7 @@ ${COACH_CHAT_SCRIPT}
 ${showWidget ? COACH_WIDGET_SCRIPT : ''}
 ${user ? MOBILE_NAV_SCRIPT : ''}
 ${user ? NOTIF_SCRIPT : ''}
+${user ? NATIVE_SCRIPT : ''}
 ${user ? tourScript(['flame', 'shoe', 'mountain', 'trophy', 'camera', 'pin', 'chat', 'stopwatch', 'calendar'].reduce((o, n) => { o[n] = icon(n, 'tour-' + n); return o; }, {}), !user.tour_seen_at) : ''}
 ${bodyEnd || ''}
 <p class="site-foot"><a href="/privacidade">Privacidade</a> · Compatível com Strava</p>

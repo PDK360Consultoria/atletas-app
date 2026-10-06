@@ -399,6 +399,18 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 `);
 ensureColumn('chat_messages', 'activity_id', 'activity_id INTEGER');
 
+// Device tokens for push notifications (iOS/Android app shell).
+db.exec(`
+CREATE TABLE IF NOT EXISTS push_tokens (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  token TEXT NOT NULL UNIQUE,
+  platform TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY(user_id) REFERENCES users(id)
+);
+`);
+
 // Rota do treino: polyline codificada (formato padrão do Google Encoded
 // Polyline Algorithm — ver lib/polyline.js) com os pontos lat/lon do
 // percurso. Vem de duas fontes: upload de GPX/TCX (lib/gpx.js downsample +
