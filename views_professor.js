@@ -468,7 +468,8 @@ function professorPage(user, opts) {
   // switch to (session.update, then switched back when that line is done)
   // because Felipe could not understand the first greeting at normal pace.
   var NORMAL_SPEED = 1.08;
-  var SLOW_SPEED = 0.85;
+  var SLOW_SPEED = 0.95;
+  var RITUAL_SPEED = 1.0; // the bom-dia lines: natural pace (0.85 sounded absurdly slow)
   var greetingSlow = false;
   // The "quero meu bom dia, Professor" ritual: the Professor says "Bom dia,
   // meu atleta!" over loud rock, then asks how he is and how training went. State lives
@@ -977,7 +978,7 @@ function professorPage(user, opts) {
     sendEvent({
       type: 'response.create',
       response: {
-        instructions: 'Comece sua fala exatamente com "E aí, atleta!" (nessas palavras, em tom animado) e, na sequência, pergunte o que o atleta precisa agora. Fale BEM DEVAGAR e com calma, articulando claramente cada palavra, com uma pequena pausa depois de "E aí, atleta!".',
+        instructions: 'Comece sua fala exatamente com "E aí, atleta!" (nessas palavras, em tom animado) e, na sequência, pergunte o que o atleta precisa agora. Fale com calma e clareza, em ritmo natural, com uma pequena pausa depois de "E aí, atleta!".',
       },
     });
   }
@@ -999,7 +1000,7 @@ function professorPage(user, opts) {
   // The music is /assets/bomdia.mp3 when that file exists (a clip Felipe
   // supplies, royalty-free); otherwise an ORIGINAL rock riff synthesized
   // right here with Web Audio, so the ritual always works.
-  var INTRO_MS = 1300, BUMP_MS = 1700, DUCK_LEVEL = 0.16;
+  var INTRO_MS = 2200, BUMP_MS = 2600, TAIL_MS = 3200, DUCK_LEVEL = 0.30;
   var MUSIC_URL = '/assets/bomdia.mp3';
   var musicBytesPromise = null;
   function preloadMusic(){
@@ -1030,7 +1031,7 @@ function professorPage(user, opts) {
     setState('speaking');
     setCaption('Rock pra acordar o corpo!', true);
     setStatus('Tocando', 'speaking');
-    setSessionSpeed(SLOW_SPEED);
+    setSessionSpeed(RITUAL_SPEED);
     mine.timer = setTimeout(function(){ if (ritual === mine) abortRitual(); }, 45000);
     musicBytesWithin(1500).then(function(bytes){
       if (ritual !== mine) return null;
@@ -1060,7 +1061,7 @@ function professorPage(user, opts) {
     sendEvent({
       type: 'response.create',
       response: {
-        instructions: 'Fale SOMENTE esta frase, com clareza, articulando bem cada palavra, em tom caloroso, animado e confiante: "' + line + '" Não diga mais nada antes nem depois.',
+        instructions: 'Fale SOMENTE esta frase, com clareza, em tom caloroso, animado e confiante, em ritmo natural: "' + line + '" Não diga mais nada antes nem depois.',
       },
     });
   }
@@ -1100,8 +1101,11 @@ function professorPage(user, opts) {
     setTimeout(function(){ if (ritual === mine) ritualSay(2); }, mine.ctrl ? BUMP_MS : 0);
   }
   function ritualOutro(mine){
-    if (mine.ctrl) { musicActive = true; mine.ctrl.duck(0.7, 0.3); mine.ctrl.fadeOut(1.4); }
-    setTimeout(function(){ if (ritual === mine) endRitual(); }, mine.ctrl ? 1500 : 0);
+    if (mine.ctrl) {
+      musicActive = true; mine.ctrl.duck(1, 0.3); // music back up and plays for a bit before the end
+      setTimeout(function(){ if (ritual === mine && mine.ctrl) mine.ctrl.fadeOut(1.4); }, TAIL_MS);
+    }
+    setTimeout(function(){ if (ritual === mine) endRitual(); }, mine.ctrl ? TAIL_MS + 1500 : 0);
   }
   function stopMusicNow(){
     if (musicCtx) { try { musicCtx.close(); } catch (e) {} musicCtx = null; }
