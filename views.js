@@ -796,7 +796,7 @@ function privacyPage(user) {
 <p>Você pode acessar, corrigir, exportar e excluir seus dados, e revogar consentimentos, escrevendo para o contato abaixo. Atendemos os pedidos em até 30 dias.</p>
 
 <h2>Retenção e segurança</h2>
-<p>Mantemos seus dados enquanto a conta existir. Ao excluir a conta, removemos os dados pessoais, salvo o que a lei exigir guardar. As conexões usam HTTPS e as senhas são armazenadas de forma protegida.</p>
+<p>Mantemos seus dados enquanto a conta existir. Para excluir a conta, vá em Configurações > Excluir conta (senha e a palavra EXCLUIR); os passos completos estão em <a href="/excluir-conta">runiqx.com/excluir-conta</a>. Ao excluir, removemos os dados pessoais, salvo o que a lei exigir guardar. As conexões usam HTTPS e as senhas são armazenadas de forma protegida.</p>
 
 <h2>Contato</h2>
 <p>Dúvidas e solicitações: <a href="mailto:felipe@360consultoria.com.br">felipe@360consultoria.com.br</a>.</p>
@@ -808,6 +808,39 @@ function privacyPage(user) {
 <meta name="theme-color" content="#0B0D10">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/assets/runiqx-icon-192.png"><title>Privacidade · Runiqx</title><link rel="stylesheet" href="/style.css"></head>
+<body><div class="wrap" style="max-width:760px; margin:0 auto; padding:24px 16px;"><div class="center-logo"><a href="/" style="color:inherit; text-decoration:none;">Runiqx</a></div>${body}</div></body></html>`;
+}
+
+function deleteAccountPage(user) {
+  const body = `<div class="card legal">
+<h1>Como excluir sua conta no Runiqx</h1>
+<p class="muted">App: Runiqx · Desenvolvedor: 360 Consultoria Empresarial</p>
+
+<h2>Excluir pelo app ou pelo site</h2>
+<p>1. Entre na sua conta em <a href="/login">runiqx.com</a> ou no app Runiqx.</p>
+<p>2. Abra <b>Configurações</b> e vá até o cartão <b>Excluir conta</b>.</p>
+<p>3. Digite a sua senha e a palavra <b>EXCLUIR</b> e confirme.</p>
+<p>A exclusão é imediata e não pode ser desfeita.</p>
+
+<h2>Não consegue entrar?</h2>
+<p>Envie um e-mail para <a href="mailto:felipe@360consultoria.com.br">felipe@360consultoria.com.br</a> a partir do e-mail cadastrado, com o assunto “Excluir conta Runiqx”. Atendemos em até 30 dias.</p>
+
+<h2>O que é apagado</h2>
+<p>Perfil (nome, e-mail, foto e bio), treinos registrados ou importados, dados vindos da Strava, provas e metas, posts, fotos, comentários e reações, mensagens do treinador virtual, quem você segue e quem segue você, notificações, sessões e tokens de notificação push.</p>
+
+<h2>O que pode ser mantido</h2>
+<p>Apenas o que a lei exigir guardar, pelo prazo legal. Cópias de segurança da infraestrutura são sobrescritas no ciclo normal de rotação.</p>
+
+<h2>Conexão com a Strava</h2>
+<p>Ao excluir a conta, a conexão e os dados da Strava no Runiqx são apagados. Você também pode revogar o acesso em strava.com/settings/apps.</p>
+<p class="muted" style="font-size:12.5px;"><a href="/privacidade">Política de privacidade</a></p>
+</div>`;
+  if (user) return layout({ title: 'Excluir conta', user, body });
+  return `<!DOCTYPE html>
+<html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0B0D10">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/assets/runiqx-icon-192.png"><title>Excluir conta · Runiqx</title><link rel="stylesheet" href="/style.css"></head>
 <body><div class="wrap" style="max-width:760px; margin:0 auto; padding:24px 16px;"><div class="center-logo"><a href="/" style="color:inherit; text-decoration:none;">Runiqx</a></div>${body}</div></body></html>`;
 }
 
@@ -3259,7 +3292,7 @@ function adminUserDetailPage(user, { athlete, activities, posts }) {
 }
 
 module.exports = {
-  layout, privacyPage, loginPage, signupPage, dashboardPage, racesPage,
+  layout, privacyPage, deleteAccountPage,loginPage, signupPage, dashboardPage, racesPage,
   activitiesPage, activityNewPage, activityDetailPage, feedPage, settingsPage, coachChatPage,
   publicProfilePage, storyPage, landingPage, welcomePage, discoverPage,
   adminPage, adminUserDetailPage, readerPage,

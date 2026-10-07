@@ -189,6 +189,7 @@ async function handle(req, res) {
 
     // ---------- legal ----------
     if (method === 'GET' && pathname === '/privacidade') return html(res, 200, views.privacyPage(user));
+    if (method === 'GET' && pathname === '/excluir-conta') return html(res, 200, views.deleteAccountPage(user));
     // ---------- auth ----------
     if (method === 'GET' && pathname === '/login') return html(res, 200, views.loginPage(parsed.query.error));
     if (method === 'POST' && pathname === '/login') {
