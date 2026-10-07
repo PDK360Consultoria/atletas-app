@@ -984,3 +984,10 @@ body.tour-open{overflow:hidden;}
 .nav{padding-top:calc(18px + env(safe-area-inset-top));}
 body{padding-left:env(safe-area-inset-left); padding-right:env(safe-area-inset-right);}
 .site-foot{padding-bottom:env(safe-area-inset-bottom);}
+
+.report-link{background:none; border:0; padding:0; font:inherit; font-size:12px; color:var(--ink-faint, #8a8f98); text-decoration:underline; cursor:pointer;}
+.report-link:hover{color:var(--red, #FF6B6B);}
+.report-link.xs{font-size:11px; margin-left:6px;}
+.post-head .report-link{margin-left:auto;}
+.profile-mod{display:flex; gap:14px; align-items:center; margin-top:10px; width:100%;}
+.profile-mod form{margin:0;}
