@@ -445,4 +445,28 @@ ensureColumn('users', 'member_number', 'member_number INTEGER');
   if (!had) db.exec("UPDATE users SET tour_seen_at = datetime('now') WHERE tour_seen_at IS NULL");
 }
 
+// Moderação: bloqueio entre usuários e denúncias (ver lib/moderation.js).
+db.exec(`
+CREATE TABLE IF NOT EXISTS user_blocks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  blocker_id INTEGER NOT NULL,
+  blocked_id INTEGER NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(blocker_id, blocked_id)
+);
+CREATE TABLE IF NOT EXISTS reports (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  reporter_id INTEGER NOT NULL,
+  target_type TEXT NOT NULL,
+  target_id INTEGER NOT NULL,
+  target_user_id INTEGER,
+  reason TEXT NOT NULL,
+  details TEXT,
+  preview TEXT,
+  status TEXT NOT NULL DEFAULT 'open',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  resolved_at TEXT
+);
+`);
+
 module.exports = db;

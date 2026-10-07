@@ -762,7 +762,7 @@ ${user ? NOTIF_SCRIPT : ''}
 ${user ? NATIVE_SCRIPT : ''}
 ${user ? tourScript(['flame', 'shoe', 'mountain', 'trophy', 'camera', 'pin', 'chat', 'stopwatch', 'calendar'].reduce((o, n) => { o[n] = icon(n, 'tour-' + n); return o; }, {}), !user.tour_seen_at) : ''}
 ${bodyEnd || ''}
-<p class="site-foot"><a href="/privacidade">Privacidade</a> · Compatível com Strava</p>
+<p class="site-foot"><a href="/privacidade">Privacidade</a> · <a href="/termos">Termos</a> · Compatível com Strava</p>
 </body>
 </html>`;
 }
@@ -860,7 +860,7 @@ function authLayout(title, body) {
 <div class="auth-box">
 <div class="center-logo">Runiqx</div>
 ${body}
-<p class="site-foot"><a href="/privacidade">Política de privacidade</a></p>
+<p class="site-foot"><a href="/privacidade">Política de privacidade</a> · <a href="/termos">Termos de uso</a></p>
 </div>
 </body>
 </html>`;
@@ -911,7 +911,8 @@ ${error ? `<div class="err">${esc(error)}</div>` : ''}
   <label>Histórico de lesão ou algo que devemos saber</label>
   <textarea name="injury_notes" placeholder="Se não tiver nada, pode deixar em branco.">${esc(prev.injury_notes || '')}</textarea>
 
-  <div style="margin-top:20px"><button type="submit" style="width:100%">Criar conta</button></div>
+  <p class="muted" style="font-size:12.5px; margin:16px 0 0;">Ao criar a conta você concorda com os <a href="/termos" target="_blank" rel="noopener">Termos de uso</a> (sem conteúdo ofensivo ou abusivo) e com a <a href="/privacidade" target="_blank" rel="noopener">Política de privacidade</a>.</p>
+  <div style="margin-top:14px"><button type="submit" style="width:100%">Criar conta</button></div>
 </form>
 <p class="muted" style="text-align:center; margin-top:18px;">Já tem conta? <a href="/login">Entrar</a></p>
 `);
@@ -2580,6 +2581,7 @@ function postCard(user, p, returnTo, mentionMap) {
       <div class="post-time" title="${esc(fmtDate(p.created_at))}">${isAct ? `${esc(workoutLabel(p.activity_workout_type))} · ` : ''}${p.activity_started_at ? esc(fmtStartLine(p.activity_started_at)) : timeAgo(p.created_at)}${p.location ? ` · <span class="post-loc">${icon('pin', 'loc' + p.id)}${esc(p.location)}</span>` : (p.author_city ? ` · ${esc(p.author_city)}` : '')}</div>
     </div>
     ${p.is_pr ? `<span class="pill pr-badge" title="${p.pr_label ? esc(p.pr_label) : ''}">${icon('trophy', 'pr' + p.id)}Recorde</span>` : ''}
+    ${!mine ? `<a class="report-link" href="/denunciar?type=post&id=${p.id}&return_to=${encodeURIComponent(returnTo)}" title="Denunciar post" aria-label="Denunciar post">Denunciar</a>` : ''}
     ${mine ? `<form method="POST" action="/feed/${p.id}/delete" class="post-delete-form" onsubmit="return confirm('Excluir este post? Essa ação não pode ser desfeita.')">
       <input type="hidden" name="return_to" value="${esc(returnTo)}">
       <button class="post-delete-btn" type="submit" title="Excluir post" aria-label="Excluir post">${icon('trash', 'del' + p.id)}</button>
@@ -2594,7 +2596,7 @@ function postCard(user, p, returnTo, mentionMap) {
     <span class="post-comment-count">${icon('chat', 'c' + p.id)}<span>${comments.length}</span></span>
   </div>
   ${comments.length ? `<div class="post-comments">
-    ${comments.map((c) => `<div class="comment-item">${avatarHtml(c.author_name, c.user_id, c.author_avatar_path, 'comment-avatar')}<span class="comment-main"><span class="comment-author">${esc(c.author_name)}</span> <span class="comment-body">${esc(c.body)}</span><span class="comment-time">${timeAgo(c.created_at)}</span></span></div>`).join('')}
+    ${comments.map((c) => `<div class="comment-item">${avatarHtml(c.author_name, c.user_id, c.author_avatar_path, 'comment-avatar')}<span class="comment-main"><span class="comment-author">${esc(c.author_name)}</span> <span class="comment-body">${esc(c.body)}</span><span class="comment-time">${timeAgo(c.created_at)}</span>${c.user_id !== user.id ? ` <a class="report-link xs" href="/denunciar?type=comment&id=${c.id}&return_to=${encodeURIComponent(returnTo)}">Denunciar</a>` : ''}</span></div>`).join('')}
   </div>` : ''}
   <form method="POST" action="/feed/${p.id}/comment" class="comment-form">
     ${avatarHtml(user.name, user.id, user.avatar_path, 'comment-avatar')}
@@ -2766,6 +2768,10 @@ function publicProfilePage(viewer, profileUser, evolution, races, medals, social
     <input type="hidden" name="return_to" value="/u/${esc(profileUser.public_slug)}">
     <button class="${social.isFollowing ? 'ghost' : ''} btn" type="submit">${social.isFollowing ? 'Seguindo ✓' : 'Seguir'}</button>
   </form>` : ''}
+  ${canFollow ? `<div class="profile-mod">
+    <a class="report-link" href="/denunciar?type=user&id=${profileUser.id}&return_to=${encodeURIComponent('/u/' + profileUser.public_slug)}">Denunciar</a>
+    <form method="POST" action="/u/${esc(profileUser.public_slug)}/block" onsubmit="return confirm('Bloquear esta pessoa? Vocês deixam de ver um ao outro.')"><input type="hidden" name="return_to" value="/discover"><button class="report-link" type="submit">Bloquear</button></form>
+  </div>` : ''}
 </div>
 
 ${medals ? `<div class="card">
@@ -2995,6 +3001,12 @@ ${flags.publicUrl ? `<div class="card">
   </form>
 </div>
 
+<div class="card">
+  <h2>Usuários bloqueados</h2>
+  <p class="muted">Veja e desbloqueie as pessoas que você bloqueou. Para denunciar ou bloquear alguém, use os botões nos posts e nos perfis. <a href="/termos">Termos de uso</a>.</p>
+  <a class="btn ghost" href="/bloqueados">Gerenciar bloqueios</a>
+</div>
+
 <div class="card" id="excluir-conta">
   <h2>Excluir conta</h2>
   <p class="muted">Apaga de forma permanente a sua conta e tudo o que está ligado a ela: treinos, posts, fotos, comentários e a conexão com a Strava. Essa ação não pode ser desfeita.</p>
@@ -3212,6 +3224,11 @@ function adminPage(user, { users, stats }) {
   <div class="card stat"><div class="k">Treinos registrados</div><div class="v">${stats.totalActivities}</div></div>
   <div class="card stat"><div class="k">Conectados ao Strava</div><div class="v">${stats.stravaConnected}</div></div>
   <div class="card stat"><div class="k">Com chave própria</div><div class="v">${stats.withOwnKey}</div></div>
+</div>
+
+<div class="card" style="display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;">
+  <div><h2 style="margin:0;">Denúncias</h2><p class="muted" style="margin:4px 0 0;">${stats.openReports || 0} em aberto (meta: responder em até 24h)</p></div>
+  <a class="btn" href="/admin/reports">Abrir fila</a>
 </div>
 
 <div class="card">

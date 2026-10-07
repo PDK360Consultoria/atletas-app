@@ -21,6 +21,8 @@ const { fetchNearbyRaces } = require('./lib/races');
 const { buildMonthCalendar } = require('./lib/calendar');
 const { ensurePublicSlug, buildShareDraft, buildPRShareDraft, REACTION_KEYS, notify, safePath, memberNumber, buildDiagnosis } = require('./lib/social');
 const views = require('./views');
+const mod = require('./lib/moderation');
+const modViews = require('./views_moderation');
 const { coachPage } = require('./views_coach');
 const { professorPage } = require('./views_professor');
 
@@ -190,6 +192,38 @@ async function handle(req, res) {
     // ---------- legal ----------
     if (method === 'GET' && pathname === '/privacidade') return html(res, 200, views.privacyPage(user));
     if (method === 'GET' && pathname === '/excluir-conta') return html(res, 200, views.deleteAccountPage(user));
+    if (method === 'GET' && pathname === '/termos') return html(res, 200, modViews.termsPage(user));
+
+    // ---------- moderação: denunciar e bloquear ----------
+    if (method === 'GET' && pathname === '/denunciar') {
+      if (!requireAuth()) return;
+      const target = mod.resolveTarget(db, parsed.query.type, parsed.query.id);
+      if (!target) return notFound(res);
+      return html(res, 200, modViews.reportPage(user, target, { returnTo: safePath(parsed.query.return_to, ['/feed', '/u/', '/discover'], '/feed') }));
+    }
+    if (method === 'POST' && pathname === '/denunciar') {
+      if (!requireAuth()) return;
+      const target = mod.resolveTarget(db, fields.type, fields.id);
+      if (!target) return notFound(res);
+      mod.createReport(db, user.id, target, fields.reason, fields.details);
+      let blocked = false;
+      if (fields.block === '1' && target.userId && target.userId !== user.id) blocked = mod.blockUser(db, user.id, target.userId);
+      return html(res, 200, modViews.reportDonePage(user, { blocked, returnTo: safePath(fields.return_to, ['/feed', '/u/', '/discover'], '/feed') }));
+    }
+    const blockM = method === 'POST' ? /^\/u\/([a-zA-Z0-9-]+)\/(block|unblock)$/.exec(pathname) : null;
+    if (blockM) {
+      if (!requireAuth()) return;
+      const target = db.prepare('SELECT id FROM users WHERE public_slug = ?').get(blockM[1]);
+      if (!target) return notFound(res);
+      if (blockM[2] === 'block') mod.blockUser(db, user.id, target.id); else mod.unblockUser(db, user.id, target.id);
+      return redirect(res, safePath(fields.return_to, ['/discover', '/bloqueados', '/feed'], '/discover'));
+    }
+    if (method === 'GET' && pathname === '/bloqueados') {
+      if (!requireAuth()) return;
+      const rows = db.prepare(`SELECT u.id, u.name, u.city, u.public_slug FROM user_blocks b JOIN users u ON u.id = b.blocked_id WHERE b.blocker_id = ? ORDER BY b.id DESC`).all(user.id);
+      rows.forEach((u) => { if (!u.public_slug) { const full = db.prepare('SELECT * FROM users WHERE id = ?').get(u.id); ensurePublicSlug(db, full); u.public_slug = db.prepare('SELECT public_slug FROM users WHERE id = ?').get(u.id).public_slug; } });
+      return html(res, 200, modViews.blockedPage(user, rows));
+    }
     // ---------- auth ----------
     if (method === 'GET' && pathname === '/login') return html(res, 200, views.loginPage(parsed.query.error));
     if (method === 'POST' && pathname === '/login') {
@@ -249,10 +283,10 @@ async function handle(req, res) {
       const q = (parsed.query.q || '').trim();
       let rows;
       if (q) {
-        rows = db.prepare(`SELECT * FROM users WHERE id != ? AND (name LIKE ? OR city LIKE ?) ORDER BY name ASC LIMIT 40`)
-          .all(user.id, `%${q}%`, `%${q}%`);
+        rows = db.prepare(`SELECT * FROM users WHERE id != ? AND (name LIKE ? OR city LIKE ?) AND ${mod.notHiddenSql('id')} ORDER BY name ASC LIMIT 40`)
+          .all(user.id, `%${q}%`, `%${q}%`, user.id, user.id);
       } else {
-        rows = db.prepare(`SELECT * FROM users WHERE id != ? ORDER BY created_at DESC LIMIT 40`).all(user.id);
+        rows = db.prepare(`SELECT * FROM users WHERE id != ? AND ${mod.notHiddenSql('id')} ORDER BY created_at DESC LIMIT 40`).all(user.id, user.id, user.id);
       }
       const followingIds = new Set(db.prepare('SELECT followee_id FROM follows WHERE follower_id = ?').all(user.id).map((r) => r.followee_id));
       const athletes = rows.map((u) => {
@@ -472,8 +506,8 @@ async function handle(req, res) {
       const beforeId = parsed.query.before_id ? parseInt(parsed.query.before_id, 10) : null;
 
       const view = parsed.query.view === 'meu' ? 'meu' : 'pub';
-      const where = [];
-      const params = [];
+      const where = [mod.notHiddenSql('p.user_id')];
+      const params = [user.id, user.id];
       if (beforeId) { where.push('p.id < ?'); params.push(beforeId); }
       if (view === 'meu') {
         where.push('p.user_id = ?');
@@ -552,7 +586,7 @@ async function handle(req, res) {
         const postIds = posts.map((p) => p.id);
         const comments = db.prepare(`SELECT c.*, u.name as author_name, u.avatar_path as author_avatar_path FROM comments c
           JOIN users u ON u.id = c.user_id
-          WHERE c.post_id IN (${placeholders}) ORDER BY c.created_at ASC`).all(...postIds);
+          WHERE c.post_id IN (${placeholders}) AND ${mod.notHiddenSql('c.user_id')} ORDER BY c.created_at ASC`).all(...postIds, user.id, user.id);
         const byPost = new Map();
         for (const c of comments) {
           if (!byPost.has(c.post_id)) byPost.set(c.post_id, []);
@@ -679,7 +713,7 @@ async function handle(req, res) {
     if (method === 'POST' && (m = /^\/feed\/(\d+)\/react$/.exec(pathname))) {
       if (!requireAuth()) return;
       const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(m[1]);
-      if (!post) return notFound(res);
+      if (!post || mod.isHidden(db, user.id, post.user_id)) return notFound(res);
       const type = REACTION_KEYS.includes(fields.type) ? fields.type : 'kudos';
       const existing = db.prepare('SELECT id FROM reactions WHERE post_id = ? AND user_id = ? AND type = ?').get(post.id, user.id, type);
       if (existing) {
@@ -694,7 +728,7 @@ async function handle(req, res) {
     if (method === 'POST' && (m = /^\/feed\/(\d+)\/comment$/.exec(pathname))) {
       if (!requireAuth()) return;
       const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(m[1]);
-      if (!post) return notFound(res);
+      if (!post || mod.isHidden(db, user.id, post.user_id)) return notFound(res);
       const body = (fields.body || '').trim();
       if (body) {
         db.prepare('INSERT INTO comments (post_id, user_id, body) VALUES (?,?,?)').run(post.id, user.id, body);
@@ -725,6 +759,7 @@ async function handle(req, res) {
     if (method === 'GET' && (m = /^\/u\/([a-zA-Z0-9-]+)$/.exec(pathname))) {
       const profileUser = db.prepare('SELECT * FROM users WHERE public_slug = ?').get(m[1]);
       if (!profileUser) return notFound(res);
+      if (user && mod.isHidden(db, user.id, profileUser.id)) return notFound(res);
       let activities = db.prepare('SELECT * FROM activities WHERE user_id = ?').all(profileUser.id);
       // Strava policy: Strava-sourced data is visible only to its owner.
       if (!user || user.id !== profileUser.id) activities = activities.filter((a) => a.source !== 'strava');
@@ -742,7 +777,7 @@ async function handle(req, res) {
       if (!requireAuth()) return;
       const profileUser = db.prepare('SELECT * FROM users WHERE public_slug = ?').get(m[1]);
       if (!profileUser) return notFound(res);
-      if (profileUser.id !== user.id) {
+      if (profileUser.id !== user.id && !mod.isHidden(db, user.id, profileUser.id)) {
         const existing = db.prepare('SELECT id FROM follows WHERE follower_id = ? AND followee_id = ?').get(user.id, profileUser.id);
         if (existing) {
           db.prepare('DELETE FROM follows WHERE id = ?').run(existing.id);
@@ -1161,8 +1196,45 @@ async function handle(req, res) {
         totalActivities: db.prepare('SELECT COUNT(*) AS n FROM activities').get().n,
         stravaConnected: users.filter((u) => u.strava_refresh_token).length,
         withOwnKey: users.filter((u) => u.anthropic_api_key).length,
+        openReports: db.prepare("SELECT COUNT(*) AS n FROM reports WHERE status = 'open'").get().n,
       };
       return html(res, 200, views.adminPage(user, { users, stats }));
+    }
+    if (method === 'GET' && pathname === '/admin/reports') {
+      if (!requireAdmin()) return;
+      const reports = db.prepare(`SELECT r.*, ru.name AS reporter_name, tu.name AS target_user_name
+        FROM reports r LEFT JOIN users ru ON ru.id = r.reporter_id LEFT JOIN users tu ON tu.id = r.target_user_id
+        ORDER BY (r.status = 'open') DESC, r.id DESC LIMIT 200`).all();
+      return html(res, 200, modViews.adminReportsPage(user, reports));
+    }
+    if (method === 'POST' && (m = /^\/admin\/reports\/(\d+)\/(resolve|remove)$/.exec(pathname))) {
+      if (!requireAdmin()) return;
+      const rep = db.prepare('SELECT * FROM reports WHERE id = ?').get(m[1]);
+      if (!rep) return notFound(res);
+      if (m[2] === 'remove') {
+        if (rep.target_type === 'post') {
+          const post = db.prepare('SELECT * FROM posts WHERE id = ?').get(rep.target_id);
+          if (post) {
+            const files = [];
+            if (post.photo_path) files.push(post.photo_path);
+            try { (JSON.parse(post.photos_json || '[]') || []).forEach((f) => files.push(f)); } catch (e) { /* ignore */ }
+            db.prepare('DELETE FROM reactions WHERE post_id = ?').run(post.id);
+            db.prepare('DELETE FROM comments WHERE post_id = ?').run(post.id);
+            db.prepare('DELETE FROM notifications WHERE post_id = ?').run(post.id);
+            db.prepare('DELETE FROM posts WHERE id = ?').run(post.id);
+            for (const f of files) {
+              if (!/^[a-zA-Z0-9._-]+$/.test(String(f))) continue;
+              fs.promises.unlink(path.join(UPLOAD_DIR, String(f))).catch(() => {});
+            }
+          }
+        } else if (rep.target_type === 'comment') {
+          db.prepare('DELETE FROM comments WHERE id = ?').run(rep.target_id);
+        }
+        db.prepare("UPDATE reports SET status = 'removed', resolved_at = datetime('now') WHERE target_type = ? AND target_id = ? AND status = 'open'").run(rep.target_type, rep.target_id);
+      } else {
+        db.prepare("UPDATE reports SET status = 'resolved', resolved_at = datetime('now') WHERE id = ?").run(rep.id);
+      }
+      return redirect(res, '/admin/reports');
     }
     if (method === 'GET' && (m = /^\/admin\/users\/(\d+)$/.exec(pathname))) {
       if (!requireAdmin()) return;
@@ -1199,6 +1271,8 @@ async function handle(req, res) {
       db.prepare('DELETE FROM chat_messages WHERE user_id = ?').run(targetId);
       db.prepare('DELETE FROM follows WHERE follower_id = ? OR followee_id = ?').run(targetId, targetId);
       db.prepare('DELETE FROM sessions WHERE user_id = ?').run(targetId);
+      db.prepare('DELETE FROM push_tokens WHERE user_id = ?').run(targetId);
+      mod.removeUserModerationData(db, targetId);
       db.prepare('DELETE FROM users WHERE id = ?').run(targetId);
       return redirect(res, '/admin');
     }
@@ -1242,6 +1316,7 @@ function deleteUserCompletely(db, uid) {
   db.prepare('DELETE FROM follows WHERE follower_id = ? OR followee_id = ?').run(uid, uid);
   db.prepare('DELETE FROM sessions WHERE user_id = ?').run(uid);
   db.prepare('DELETE FROM push_tokens WHERE user_id = ?').run(uid);
+  mod.removeUserModerationData(db, uid);
   db.prepare('DELETE FROM users WHERE id = ?').run(uid);
   for (const f of files) {
     if (!/^[a-zA-Z0-9._-]+$/.test(String(f))) continue;
