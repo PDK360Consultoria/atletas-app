@@ -767,7 +767,7 @@ ${bodyEnd || ''}
 </html>`;
 }
 
-const STRAVA_NOTE = `<p class="muted" style="font-size:12.5px; margin:10px 0 0;">Seus dados da Strava ficam visíveis só para você e não são usados por inteligência artificial. Ao desconectar, eles são apagados. <a href="/privacidade">Saiba mais</a>.</p>`;
+const STRAVA_NOTE = `<p class="muted" style="font-size:12.5px; margin:10px 0 0;">Seus dados da Strava ficam visíveis só para você. Se você pedir a análise técnica ou conversar com o coach sobre um treino, os dados desse treino são enviados ao provedor de IA. Ao desconectar, eles são apagados. <a href="/privacidade">Saiba mais</a>.</p>`;
 
 function privacyPage(user) {
   const body = `<div class="card legal">
@@ -786,7 +786,7 @@ function privacyPage(user) {
 
 <h2>Dados da Strava</h2>
 <p>Os dados que vêm da sua conta Strava são exibidos somente para você. Outros atletas não veem o mapa, o pace, as zonas nem as métricas dos seus treinos da Strava, mesmo quando você publica no feed: nesse caso aparece apenas o que você escrever e as fotos que adicionar.</p>
-<p>Os dados da Strava não são usados para treinar, ajustar ou operar modelos de inteligência artificial, nem alimentam o treinador virtual ou as análises automáticas.</p>
+<p>Quando você pede a análise técnica de um treino da Strava ou abre a conversa com o treinador virtual sobre ele, os dados desse treino (distância, tempo, pace, frequência cardíaca, parciais) são enviados ao provedor de inteligência artificial para gerar a resposta. Isso só acontece por ação sua, em treinos seus. Não usamos esses dados para treinar modelos.</p>
 <p>Você pode desconectar a Strava a qualquer momento em Configurações. Ao desconectar, apagamos de forma permanente os treinos importados da Strava. Você também pode revogar o acesso em strava.com/settings/apps.</p>
 
 <h2>Compartilhamento</h2>
@@ -2144,9 +2144,7 @@ function paceBarsHtml(activity, laps, limit) {
 }
 
 function activityDetailPage({ user, activity, laps, intervals, evolution, prInfo, alreadyShared, aiEnabled }) {
-  // Strava policy: Strava-sourced activities are never used by AI features.
   const fromStrava = activity.source === 'strava';
-  if (fromStrava) aiEnabled = false;
   const tiros = summarizeIntervals(intervals);
   const vo2max = estimateVO2max(activity.distance_km, activity.duration_sec);
   const bars = paceBarsHtml(activity, laps);
@@ -2246,7 +2244,7 @@ ${(!tiros && laps.length) ? `<div class="card">
 
 ${trainingCompareChart(activity, evolution)}
 
-${fromStrava ? `<div class="card"><p class="muted" style="margin:0;">Treino importado da Strava: por regra da Strava, ele não é analisado por inteligência artificial e só você o vê.</p></div>` : `<div class="card">
+<div class="card">
   <h2><span class="h-icon">${icon('heart', 'ai')}</span>Análise com IA</h2>
   ${activity.ai_analysis ? `<div class="ai-analysis">${renderMarkdownLite(activity.ai_analysis)}</div>
     ${aiEnabled ? `<form method="POST" action="/activities/${activity.id}/analyze" style="margin-top:14px;" onsubmit="var b=this.querySelector('button'); b.disabled=true; b.textContent='Gerando análise…';"><button class="ghost" type="submit">↻ Gerar nova análise</button></form>` : ''}` : `
@@ -2254,7 +2252,8 @@ ${fromStrava ? `<div class="card"><p class="muted" style="margin:0;">Treino impo
       ? `<form method="POST" action="/activities/${activity.id}/analyze" onsubmit="var b=this.querySelector('button'); b.disabled=true; b.textContent='Gerando análise… (pode levar até 30s)';"><button type="submit">Gerar análise técnica</button></form>`
       : `<p class="muted" style="margin:0;">Cadastre sua chave da API da Anthropic em <a href="/settings">Config</a> para gerar análises técnicas automáticas.</p>`}
   `}
-</div>`}
+${fromStrava ? `<p class="muted" style="font-size:12.5px; margin:12px 0 0;">Este treino veio da Strava e continua visível só para você. Quando você pede a análise ou abre a conversa, os dados dele são enviados ao provedor de IA para gerar a resposta. <a href="/privacidade">Saiba mais</a>.</p>` : ''}
+</div>
 
 ${aiEnabled ? `<div class="card">
   <h2><span class="h-icon">${icon('heart', 'ca')}</span>Conversar com o coach sobre este treino</h2>

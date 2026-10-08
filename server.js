@@ -455,7 +455,6 @@ async function handle(req, res) {
       if (!requireAuth()) return;
       const activity = db.prepare('SELECT * FROM activities WHERE id = ? AND user_id = ?').get(m[1], user.id);
       if (!activity) return notFound(res);
-      if (activity.source === 'strava') return redirect(res, `/activities/${activity.id}`);
       const laps = activity.laps_json ? JSON.parse(activity.laps_json) : [];
       const intervals = activity.intervals_json ? JSON.parse(activity.intervals_json) : [];
       try {
@@ -1061,11 +1060,10 @@ async function handle(req, res) {
       let full = '';
       try {
         const races = db.prepare('SELECT * FROM races WHERE user_id = ? ORDER BY race_date ASC').all(user.id);
-        // Strava policy: no Strava-sourced data may be used by AI features.
-        const activities = db.prepare("SELECT * FROM activities WHERE user_id = ? AND source != 'strava' ORDER BY COALESCE(started_at, created_at) DESC").all(user.id);
+        const activities = db.prepare("SELECT * FROM activities WHERE user_id = ? ORDER BY COALESCE(started_at, created_at) DESC").all(user.id);
         const evolution = computeEvolution(activities);
         let context = buildContext(user, races, activities, evolution);
-        if (activity && activity.source !== 'strava') {
+        if (activity) {
           const laps = activity.laps_json ? JSON.parse(activity.laps_json) : [];
           const intervals = activity.intervals_json ? JSON.parse(activity.intervals_json) : [];
           context += '\n' + buildActivityFocusContext(activity, laps, intervals);
