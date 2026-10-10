@@ -10,6 +10,7 @@ const { readBody, parseUrlEncoded, parseMultipart, serializeCookie } = require('
 const { parseClock, secToPace } = require('./lib/format');
 const { parseActivityFile } = require('./lib/gpx');
 const { analyzeActivity } = require('./lib/anthropic');
+const aicontext = require('./lib/aicontext');
 const strava = require('./lib/strava');
 const { computeEvolution, computeMedals, detectPersonalRecord, computeWeeklyStreak } = require('./lib/stats');
 const { buildContext, buildActivityFocusContext, buildVoiceInstructions, streamChatWithAssistant, computeHumanDelayMs, detectImageRequest, extractWorkoutCard } = require('./lib/assistant');
@@ -441,7 +442,7 @@ async function handle(req, res) {
       const evolution = computeEvolution(allActivities);
       const prInfo = detectPersonalRecord(activity, allActivities);
       const alreadyShared = !!db.prepare('SELECT 1 FROM posts WHERE activity_id = ?').get(activity.id);
-      return html(res, 200, views.activityDetailPage({ user, activity, laps, intervals, evolution, prInfo, alreadyShared, aiEnabled: !!apiKeyFor(user) }));
+      return html(res, 200, views.activityDetailPage({ user, activity, laps, intervals, evolution, prInfo, alreadyShared, aiEnabled: !!apiKeyFor(user), missing: String(parsed.query.faltou || '').split(',').filter(Boolean) }));
     }
     if (method === 'POST' && (m = /^\/activities\/(\d+)\/rename$/.exec(pathname))) {
       if (!requireAuth()) return;
@@ -457,8 +458,14 @@ async function handle(req, res) {
       if (!activity) return notFound(res);
       const laps = activity.laps_json ? JSON.parse(activity.laps_json) : [];
       const intervals = activity.intervals_json ? JSON.parse(activity.intervals_json) : [];
+      // Perguntas obrigatorias: sem todas as respostas, nao chama a IA.
+      const parsedCtx = aicontext.parseFields(fields);
+      if (!parsedCtx.ok) {
+        return redirect(res, `/activities/${activity.id}?faltou=${parsedCtx.missing.join(',')}#analise`);
+      }
+      db.prepare('UPDATE activities SET ai_context_json = ? WHERE id = ?').run(JSON.stringify(parsedCtx.ctx), activity.id);
       try {
-        const text = await analyzeActivity(apiKeyFor(user), activity, laps, intervals);
+        const text = await analyzeActivity(apiKeyFor(user), activity, laps, intervals, parsedCtx.ctx);
         db.prepare('UPDATE activities SET ai_analysis = ? WHERE id = ?').run(text, activity.id);
       } catch (e) {
         db.prepare('UPDATE activities SET ai_analysis = ? WHERE id = ?').run(`Não foi possível gerar a análise agora (${e.message}).`, activity.id);

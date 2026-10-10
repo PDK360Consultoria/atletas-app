@@ -112,6 +112,7 @@ ensureColumn('users', 'is_admin', 'is_admin INTEGER NOT NULL DEFAULT 0');
 ensureColumn('activities', 'external_id', 'external_id TEXT');
 db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_activities_external ON activities(user_id, external_id) WHERE external_id IS NOT NULL`);
 ensureColumn('activities', 'intervals_json', 'intervals_json TEXT');
+ensureColumn('activities', 'ai_context_json', 'ai_context_json TEXT');
 // Running cadence (steps/min) — captured from Strava's average_cadence when
 // available (see lib/strava.js); null for manual/GPX entries, which is fine,
 // the UI just shows '—'.

@@ -28,6 +28,7 @@ function zonesForActivity(a, zonesJson, obsMax) {
   return zoneSeconds({ laps: a.laps_json, intervals: a.intervals_json, avg_hr: a.avg_hr, duration_sec: a.duration_sec }, bounds);
 }
 const { summarizeIntervals } = require('./lib/intervals');
+const aictx = require('./lib/aicontext');
 const { estimateVO2max } = require('./lib/stats');
 const { decode: decodePolyline } = require('./lib/polyline');
 const { REGION_LABELS, autoRegionLabel } = require('./lib/races');
@@ -2143,7 +2144,7 @@ function paceBarsHtml(activity, laps, limit) {
   return `<div class="bars">${bars}</div>`;
 }
 
-function activityDetailPage({ user, activity, laps, intervals, evolution, prInfo, alreadyShared, aiEnabled }) {
+function activityDetailPage({ user, activity, laps, intervals, evolution, prInfo, alreadyShared, aiEnabled, missing = [] }) {
   const fromStrava = activity.source === 'strava';
   const tiros = summarizeIntervals(intervals);
   const vo2max = estimateVO2max(activity.distance_km, activity.duration_sec);
@@ -2244,14 +2245,14 @@ ${(!tiros && laps.length) ? `<div class="card">
 
 ${trainingCompareChart(activity, evolution)}
 
-<div class="card">
+<div class="card" id="analise">
   <h2><span class="h-icon">${icon('heart', 'ai')}</span>Análise com IA</h2>
-  ${activity.ai_analysis ? `<div class="ai-analysis">${renderMarkdownLite(activity.ai_analysis)}</div>
-    ${aiEnabled ? `<form method="POST" action="/activities/${activity.id}/analyze" style="margin-top:14px;" onsubmit="var b=this.querySelector('button'); b.disabled=true; b.textContent='Gerando análise…';"><button class="ghost" type="submit">↻ Gerar nova análise</button></form>` : ''}` : `
-    ${aiEnabled
-      ? `<form method="POST" action="/activities/${activity.id}/analyze" onsubmit="var b=this.querySelector('button'); b.disabled=true; b.textContent='Gerando análise… (pode levar até 30s)';"><button type="submit">Gerar análise técnica</button></form>`
-      : `<p class="muted" style="margin:0;">Cadastre sua chave da API da Anthropic em <a href="/settings">Config</a> para gerar análises técnicas automáticas.</p>`}
-  `}
+  ${!aiEnabled
+    ? `<p class="muted" style="margin:0;">Cadastre sua chave da API da Anthropic em <a href="/settings">Config</a> para gerar análises técnicas automáticas.</p>`
+    : activity.ai_analysis
+      ? `${aictx.pillsHtml(aictx.parseStored(activity.ai_context_json))}<div class="ai-analysis">${renderMarkdownLite(activity.ai_analysis)}</div>
+        <details style="margin-top:14px;"${missing.length ? ' open' : ''}><summary class="ghost-summary">↻ Gerar nova análise</summary><div style="margin-top:14px;">${aictx.formHtml(activity.id, aictx.parseStored(activity.ai_context_json), { missing, buttonLabel: 'Gerar nova análise' })}</div></details>`
+      : aictx.formHtml(activity.id, aictx.parseStored(activity.ai_context_json), { missing })}
 ${fromStrava ? `<p class="muted" style="font-size:12.5px; margin:12px 0 0;">Este treino veio da Strava e continua visível só para você. Quando você pede a análise ou abre a conversa, os dados dele são enviados ao provedor de IA para gerar a resposta. <a href="/privacidade">Saiba mais</a>.</p>` : ''}
 </div>
 
