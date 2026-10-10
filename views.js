@@ -29,6 +29,7 @@ function zonesForActivity(a, zonesJson, obsMax) {
 }
 const { summarizeIntervals } = require('./lib/intervals');
 const aictx = require('./lib/aicontext');
+const { STORYCARD_JS } = require('./lib/storycard_client');
 const { estimateVO2max } = require('./lib/stats');
 const { decode: decodePolyline } = require('./lib/polyline');
 const { REGION_LABELS, autoRegionLabel } = require('./lib/races');
@@ -198,113 +199,8 @@ function wrapLines(ctx, text, maxWidth, maxLines){
   if (line.trim()) lines.push(line.trim());
   return lines.slice(0, maxLines);
 }
-function roundRect(ctx, x, y, w, h, r){
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
-  ctx.closePath();
-}
-// Draws the same dark/gold "stories" visual language used elsewhere in the
-// app (see storyPage) onto a canvas sized for a quick in-chat reference
-// during a run — a title, a stack of label/value rows pulled straight from
-// what the coach just said, and an optional closing line.
-//
-// The canvas height used to be FIXED (640x420) while the number of rows it
-// had to fit was not — with 4+ blocks and a 2-line title, the computed row
-// height shrank below the text's own line height and labels literally
-// printed on top of the previous row's value. Now the height is computed
-// FROM the content (title line count, block count, closer line count)
-// before anything is drawn, so there's always room, and it's rendered at 2x
-// and downscaled via CSS for a crisp download instead of a soft/blurry one.
-var CARD_W = 640, CARD_SCALE = 2;
-function drawStoryCard(canvas, card){
-  var W = CARD_W, pad = 36, rowH = 64;
-  var measure = canvas.getContext('2d');
-
-  measure.font = '800 36px Arial, sans-serif';
-  var titleLines = wrapLines(measure, card.title || '', W - pad * 2, 3);
-
-  var closerLines = [];
-  if (card.closer) {
-    measure.font = '500 16px Arial, sans-serif';
-    closerLines = wrapLines(measure, card.closer, W - pad * 2, 3);
-  }
-
-  var blocks = (card.blocks || []).slice(0, 6);
-
-  var eyebrowY = 48;
-  var titleTop = eyebrowY + 38;
-  var blocksTop = titleTop + titleLines.length * 44 + 20;
-  var closerTop = blocksTop + blocks.length * rowH + 22;
-  var H = closerTop + (closerLines.length ? closerLines.length * 22 + 12 : 10) + 32;
-
-  canvas.width = W * CARD_SCALE;
-  canvas.height = H * CARD_SCALE;
-  canvas.style.width = '100%';
-  canvas.style.aspectRatio = W + ' / ' + H;
-
-  var ctx = canvas.getContext('2d');
-  ctx.setTransform(CARD_SCALE, 0, 0, CARD_SCALE, 0, 0);
-
-  var grad = ctx.createLinearGradient(0, 0, W, H);
-  grad.addColorStop(0, '#1c1006');
-  grad.addColorStop(0.55, '#2a1608');
-  grad.addColorStop(1, '#150c05');
-  ctx.fillStyle = grad;
-  ctx.fillRect(0, 0, W, H);
-
-  ctx.fillStyle = 'rgba(255,255,255,0.05)';
-  for (var i = 0; i < 3; i++) { ctx.beginPath(); ctx.arc(W * 0.2 + i * 90, H * 0.1 + i * 30, 70, 0, Math.PI * 2); ctx.fill(); }
-
-  ctx.fillStyle = '#FFC24E';
-  ctx.font = '700 20px Arial, sans-serif';
-  ctx.fillText((card.eyebrow || 'TREINO').toUpperCase(), pad, eyebrowY);
-
-  ctx.fillStyle = '#ffffff';
-  ctx.font = '800 36px Arial, sans-serif';
-  titleLines.forEach(function(l, i){ ctx.fillText(l, pad, titleTop + i * 44); });
-
-  blocks.forEach(function(b, i){
-    var by = blocksTop + i * rowH;
-    ctx.fillStyle = 'rgba(255,255,255,0.04)';
-    roundRect(ctx, pad - 12, by - 6, W - (pad - 12) * 2, rowH - 14, 14);
-    ctx.fill();
-    ctx.fillStyle = 'rgba(255,255,255,0.55)';
-    ctx.font = '600 14px Arial, sans-serif';
-    ctx.fillText(String(b.label || '').toUpperCase(), pad, by + 18);
-    ctx.fillStyle = '#ffffff';
-    ctx.font = '800 27px Arial, sans-serif';
-    ctx.fillText(String(b.value || ''), pad, by + 48);
-  });
-
-  if (closerLines.length) {
-    ctx.fillStyle = 'rgba(255,255,255,0.7)';
-    ctx.font = '500 16px Arial, sans-serif';
-    closerLines.forEach(function(l, i){ ctx.fillText(l, pad, closerTop + i * 22); });
-  }
-}
-function renderStoryCard(container, card){
-  var wrap = document.createElement('div');
-  wrap.className = 'chat-story-card';
-  var canvas = document.createElement('canvas');
-  wrap.appendChild(canvas);
-  var btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = 'ghost btn xs chat-story-download';
-  btn.textContent = 'Baixar imagem';
-  btn.addEventListener('click', function(){
-    var link = document.createElement('a');
-    link.download = 'treino.png';
-    link.href = canvas.toDataURL('image/png');
-    link.click();
-  });
-  wrap.appendChild(btn);
-  container.appendChild(wrap);
-  try { drawStoryCard(canvas, card); } catch (e) { console.error('[dbg]', e); }
-}
+${STORYCARD_JS}
+function renderStoryCard(container, card){ RunStory.render(container, card); }
 function mount(opts){
   var msgsEl = document.getElementById(opts.msgsId);
   var formEl = document.getElementById(opts.formId);

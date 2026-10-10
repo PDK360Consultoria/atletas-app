@@ -13,7 +13,20 @@ const { analyzeActivity } = require('./lib/anthropic');
 const aicontext = require('./lib/aicontext');
 const strava = require('./lib/strava');
 const { computeEvolution, computeMedals, detectPersonalRecord, computeWeeklyStreak } = require('./lib/stats');
-const { buildContext, buildActivityFocusContext, buildVoiceInstructions, streamChatWithAssistant, computeHumanDelayMs, detectImageRequest, extractWorkoutCard } = require('./lib/assistant');
+const { buildContext, buildActivityFocusContext, buildVoiceInstructions, streamChatWithAssistant, computeHumanDelayMs } = require('./lib/assistant');
+const { resolveCard, detectImageRequest } = require('./lib/storycard');
+const STORY_TOOLS = [{
+  type: 'function',
+  name: 'gerar_imagem_treino',
+  description: 'Gera uma imagem (card de Stories) de um treino do atleta e mostra na tela dele. Use quando ele pedir imagem, card, stories, print ou post de um treino: o treino que ele já fez (hoje, o último), o treino que ele vai fazer (preparação, treino de amanhã, plano) ou a preparação para a prova.',
+  parameters: {
+    type: 'object',
+    properties: {
+      pedido: { type: 'string', description: 'O que o atleta quer na imagem, nas palavras dele. Ex: "o treino que fiz hoje", "o treino de amanhã, 8 tiros de 400", "preparação para a prova".' },
+    },
+    required: ['pedido'],
+  },
+}];
 const { mintRealtimeSession, synthesizeSpeech } = require('./lib/openai');
 const { weekSummary, recentStories, mentionMapFor } = require('./lib/feedextras');
 const { getNews } = require('./lib/news');
@@ -1103,7 +1116,15 @@ async function handle(req, res) {
         // (no sentinel at all) when the conversation doesn't actually pin
         // down a specific workout to draw.
         if (detectImageRequest(text)) {
-          const card = await extractWorkoutCard(apiKeyFor(user), context, history, text).catch(() => null);
+          let focusLaps = [], focusIntervals = [];
+          if (activity) {
+            focusLaps = activity.laps_json ? JSON.parse(activity.laps_json) : [];
+            focusIntervals = activity.intervals_json ? JSON.parse(activity.intervals_json) : [];
+          }
+          const card = await resolveCard({
+            apiKey: apiKeyFor(user), user, races, activities, activity,
+            laps: focusLaps, intervals: focusIntervals, context, history, userMessage: text,
+          }).catch(() => null);
           if (card) {
             const sentinel = `\n[[STORY_CARD]]${JSON.stringify(card)}[[/STORY_CARD]]`;
             res.write(sentinel);
@@ -1164,6 +1185,37 @@ async function handle(req, res) {
       return res.end('{"ok":true}');
     }
 
+    // O Professor ao vivo (voz) pede uma imagem do treino: monta o card (treino
+    // realizado = dados reais; preparacao/treino planejado = extraido da conversa),
+    // devolve para a tela do Professor desenhar e grava no MESMO historico do
+    // chat (com o card), entao a imagem tambem aparece em /assistant.
+    if (method === 'POST' && pathname === '/api/professor/story-card') {
+      if (!user) { res.writeHead(401, { 'content-type': 'application/json; charset=utf-8' }); return res.end('{"error":"auth"}'); }
+      let body = {};
+      try {
+        const raw = await readBody(req);
+        body = JSON.parse(raw.toString('utf8') || '{}');
+      } catch (e) { body = {}; }
+      const pedido = String(body.pedido || 'imagem do treino').replace(/\s+/g, ' ').trim().slice(0, 400);
+      try {
+        const races = db.prepare('SELECT * FROM races WHERE user_id = ? ORDER BY race_date ASC').all(user.id);
+        const activities = db.prepare("SELECT * FROM activities WHERE user_id = ? ORDER BY COALESCE(started_at, created_at) DESC").all(user.id);
+        const evolution = computeEvolution(activities);
+        const context = buildContext(user, races, activities, evolution);
+        const priorRows = db.prepare('SELECT role, content FROM chat_messages WHERE user_id = ? AND activity_id IS NULL ORDER BY created_at DESC, id DESC LIMIT 14').all(user.id).reverse();
+        const history = priorRows.map((m) => ({ role: m.role, content: String(m.content || '').replace(/\n?\[\[STORY_CARD\]\][\s\S]*?\[\[\/STORY_CARD\]\]/g, '') }));
+        const card = await resolveCard({ apiKey: apiKeyFor(user), user, races, activities, activity: null, context, history, userMessage: pedido });
+        res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+        if (!card) return res.end(JSON.stringify({ ok: false, error: 'no_workout' }));
+        db.prepare('INSERT INTO chat_messages (user_id, role, content, activity_id, channel) VALUES (?,?,?,NULL,?)').run(user.id, 'assistant', `[[STORY_CARD]]${JSON.stringify(card)}[[/STORY_CARD]]`, 'voice');
+        return res.end(JSON.stringify({ ok: true, card }));
+      } catch (e) {
+        console.error('story-card error', e);
+        res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' });
+        return res.end(JSON.stringify({ ok: false, error: 'failed' }));
+      }
+    }
+
     if (method === 'POST' && pathname === '/api/professor/realtime-session') {
       if (!user) { res.writeHead(401); return res.end(JSON.stringify({ error: 'auth' })); }
       const key = openaiApiKeyFor(user);
@@ -1174,7 +1226,7 @@ async function handle(req, res) {
         const evolution = computeEvolution(activities);
         const recentChat = db.prepare('SELECT role, content FROM chat_messages WHERE user_id = ? AND activity_id IS NULL ORDER BY created_at DESC, id DESC LIMIT 14').all(user.id).reverse();
         const instructions = buildVoiceInstructions(user, races, activities, evolution, recentChat);
-        const session = await mintRealtimeSession(key, instructions);
+        const session = await mintRealtimeSession(key, instructions, { tools: STORY_TOOLS });
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
         return res.end(JSON.stringify(session));
       } catch (e) {

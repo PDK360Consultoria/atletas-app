@@ -1,4 +1,5 @@
 const { esc } = require('./lib/format');
+const { STORYCARD_JS } = require('./lib/storycard_client');
 
 // "Professor" — the JARVIS-style voice interface for the coach, requested by
 // Felipe as an alternative way into the same persona/backend that powers the
@@ -250,6 +251,14 @@ function professorPage(user, opts) {
   .log .row.active .txt{display:block; color:var(--ink); overflow:visible;}
   .log .row.pending .txt{opacity:0.55; font-style:italic;}
 
+  .story-panel{position:fixed; inset:0; z-index:60; background:rgba(0,0,0,0.78); display:flex; align-items:center; justify-content:center; padding:16px; overflow:auto;}
+  .story-panel[hidden]{display:none;}
+  .story-box{display:flex; flex-direction:column; align-items:center; gap:12px; max-width:min(92vw, 360px);}
+  .story-close{align-self:flex-end; background:transparent; border:1px solid rgba(255,255,255,0.25); color:var(--ink); border-radius:999px; padding:7px 14px; font-family:'IBM Plex Mono',monospace; font-size:12px; letter-spacing:0.06em; text-transform:uppercase; cursor:pointer;}
+  .runstory{display:flex; flex-direction:column; align-items:center; gap:12px;}
+  .runstory-full{width:min(70vw, 300px); aspect-ratio:1080/1920; border-radius:14px; box-shadow:0 18px 40px -16px rgba(0,0,0,0.6);}
+  .runstory-actions{display:flex; gap:8px; flex-wrap:wrap; justify-content:center;}
+  .runstory-actions button{background:var(--gold); color:#111; border:0; border-radius:10px; padding:10px 14px; font-family:'Archivo',sans-serif; font-weight:700; font-size:13px; cursor:pointer;}
   .meter{display:flex; flex-direction:column; align-items:flex-end; gap:8px; flex:none;}
   .meter .lbl{font-family:'IBM Plex Mono',monospace; font-size:10px; letter-spacing:0.12em; color:var(--ink-faint); text-transform:uppercase;}
   .meter .bars{display:flex; align-items:flex-end; gap:3px; height:26px;}
@@ -338,6 +347,13 @@ function professorPage(user, opts) {
   </div>
 </div>
 
+<div class="story-panel" id="storyPanel" hidden>
+  <div class="story-box">
+    <button type="button" class="story-close" id="storyClose" aria-label="Fechar">Fechar</button>
+    <div id="storyHolder"></div>
+  </div>
+</div>
+
 <div class="footer">
   TOQUE NO ORBE PRA FALAR<span class="sep">·</span>DIGA <kbd>"HEY PROFESSOR"</kbd> TAMBÉM FUNCIONA<span class="sep">·</span><kbd>ESC</kbd> ENCERRA<span class="sep">·</span>VERSÃO 9
 </div>
@@ -345,6 +361,44 @@ function professorPage(user, opts) {
 <script>
 (function(){
   'use strict';
+
+  ${STORYCARD_JS}
+
+  // ---------- imagens do treino (ferramenta gerar_imagem_treino) ----------
+  var storyHandled = {};
+  var storyPanel = document.getElementById('storyPanel');
+  var storyHolder = document.getElementById('storyHolder');
+  document.getElementById('storyClose').addEventListener('click', function(){ storyPanel.hidden = true; });
+  function showStoryCard(card){
+    storyHolder.innerHTML = '';
+    RunStory.render(storyHolder, card);
+    storyPanel.hidden = false;
+  }
+  function toolResult(callId, obj){
+    sendEvent({ type: 'conversation.item.create', item: { type: 'function_call_output', call_id: callId, output: JSON.stringify(obj) } });
+    sendEvent({ type: 'response.create' });
+  }
+  function handleToolCall(call){
+    var id = call && call.call_id;
+    if (!id || storyHandled[id]) return;
+    storyHandled[id] = true;
+    if (call.name !== 'gerar_imagem_treino') { toolResult(id, { ok: false, erro: 'ferramenta desconhecida' }); return; }
+    var args = {};
+    try { args = JSON.parse(call.arguments || '{}'); } catch (e) { args = {}; }
+    fetch('/api/professor/story-card', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ pedido: args.pedido || '' })
+    }).then(function(r){ return r.json(); }).then(function(d){
+      if (d && d.ok && d.card) {
+        showStoryCard(d.card);
+        toolResult(id, { ok: true, resumo: 'Imagem gerada e já está na tela do atleta, com botões para baixar.' });
+      } else {
+        toolResult(id, { ok: false, erro: 'Não havia um treino claro para desenhar. Pergunte qual treino o atleta quer na imagem.' });
+      }
+    }).catch(function(){ toolResult(id, { ok: false, erro: 'Falha ao gerar a imagem agora.' }); });
+  }
 
   var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   var canListen = !!SR;
@@ -1633,6 +1687,7 @@ function professorPage(user, opts) {
         break;
       case 'response.done': {
         var doneId = evt.response && evt.response.id;
+        ((evt.response && evt.response.output) || []).forEach(function(it){ if (it && it.type === 'function_call') handleToolCall(it); });
         // A response that was cancelled or superseded can finish AFTER the
         // next one has already started — it must not reset the UI of the
         // reply that is actually playing.
@@ -1652,6 +1707,9 @@ function professorPage(user, opts) {
         armInactivityTimer();
         break;
       }
+      case 'response.function_call_arguments.done':
+        handleToolCall(evt);
+        break;
       case 'error': {
         var emsg = (evt.error && evt.error.message) || '';
         if (/no active response|not active/i.test(emsg)) break; // response.cancel with nothing to cancel — harmless
