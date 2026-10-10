@@ -30,6 +30,7 @@ function zonesForActivity(a, zonesJson, obsMax) {
 const { summarizeIntervals } = require('./lib/intervals');
 const aictx = require('./lib/aicontext');
 const { STORYCARD_JS } = require('./lib/storycard_client');
+const { CHATMEDIA_JS } = require('./lib/chatmedia_client');
 const { estimateVO2max } = require('./lib/stats');
 const { decode: decodePolyline } = require('./lib/polyline');
 const { REGION_LABELS, autoRegionLabel } = require('./lib/races');
@@ -200,6 +201,7 @@ function wrapLines(ctx, text, maxWidth, maxLines){
   return lines.slice(0, maxLines);
 }
 ${STORYCARD_JS}
+${CHATMEDIA_JS}
 function renderStoryCard(container, card){ RunStory.render(container, card); }
 function mount(opts){
   var msgsEl = document.getElementById(opts.msgsId);
@@ -209,6 +211,8 @@ function mount(opts){
   var aiEnabled = !!opts.aiEnabled;
   var activityId = opts.activityId != null ? opts.activityId : null;
   var sending = false;
+  var media = null;
+  try { media = ChatMedia.attach(formEl, inputEl, msgsEl); } catch (e) { media = null; console.error('[chatmedia]', e); }
 
   function scrollBottom(){ msgsEl.scrollTop = msgsEl.scrollHeight; }
 
@@ -250,12 +254,14 @@ function mount(opts){
         b.insertBefore(vt, b.firstChild);
       }
       if (split.card) renderStoryCard(b, split.card);
+      if (m.attachments && m.attachments.length) ChatMedia.renderThumbs(b, m.attachments);
     });
     scrollBottom();
   }
 
-  async function send(text){
-    if (sending || !text.trim()) return;
+  async function send(text, imgs){
+    imgs = imgs || [];
+    if (sending || (!text.trim() && !imgs.length)) return;
     if (!aiEnabled) {
       clearEmpty();
       var warn = bubble(msgsEl, 'assistant');
@@ -267,6 +273,7 @@ function mount(opts){
     clearEmpty();
     var userB = bubble(msgsEl, 'user');
     userB.textContent = text;
+    if (imgs.length) ChatMedia.renderThumbs(userB, imgs.map(function(i){ return i.dataUrl; }));
     var replyB = bubble(msgsEl, 'assistant');
     replyB.appendChild(typingDots());
     scrollBottom();
@@ -278,7 +285,7 @@ function mount(opts){
       var res = await fetch('/api/coach/send', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ message: text, activity_id: activityId }),
+        body: JSON.stringify({ message: text, activity_id: activityId, images: imgs.map(function(i){ return { media_type: 'image/jpeg', data: i.data }; }) }),
       });
       if (!res.ok || !res.body) {
         replyB.textContent = res.status === 412
@@ -322,10 +329,11 @@ function mount(opts){
   formEl.addEventListener('submit', function(e){
     e.preventDefault();
     var text = inputEl.value;
-    if (!text.trim()) return;
+    var imgs = media ? media.take() : [];
+    if (!text.trim() && !imgs.length) return;
     inputEl.value = '';
     inputEl.style.height = 'auto';
-    send(text);
+    send(text, imgs);
   });
   inputEl.addEventListener('keydown', function(e){
     if (e.key === 'Enter' && !e.shiftKey) {

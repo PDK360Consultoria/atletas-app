@@ -27,7 +27,7 @@ const STORY_TOOLS = [{
     required: ['pedido'],
   },
 }];
-const { mintRealtimeSession, synthesizeSpeech } = require('./lib/openai');
+const { mintRealtimeSession, synthesizeSpeech, transcribeAudio } = require('./lib/openai');
 const { weekSummary, recentStories, mentionMapFor } = require('./lib/feedextras');
 const { getNews } = require('./lib/news');
 const { readArticle } = require('./lib/reader');
@@ -42,6 +42,44 @@ const { professorPage } = require('./views_professor');
 
 const PORT = process.env.PORT || 3000;
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, 'uploads');
+
+// ---- anexos de imagem no chat do coach ----
+// O navegador reduz tudo para JPEG; aqui so aceitamos JPEG de verdade (assinatura
+// FF D8 FF), no maximo 4 por mensagem e 4,5MB cada, salvos com nome aleatorio.
+function saveChatImages(images) {
+  const out = [];
+  for (const img of (Array.isArray(images) ? images : []).slice(0, 4)) {
+    if (!img || typeof img.data !== 'string' || !/^[A-Za-z0-9+/=]+$/.test(img.data)) continue;
+    const buf = Buffer.from(img.data, 'base64');
+    if (buf.length < 100 || buf.length > 4.5 * 1024 * 1024) continue;
+    if (!(buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff)) continue;
+    const name = `chat-${crypto.randomBytes(10).toString('hex')}.jpg`;
+    fs.writeFileSync(path.join(UPLOAD_DIR, name), buf);
+    out.push({ name, b64: img.data });
+  }
+  return out;
+}
+function chatFilesOf(rows) {
+  const files = [];
+  for (const r of rows || []) {
+    try { (JSON.parse(r.attachments_json || '[]') || []).forEach((f) => { if (/^chat-[a-f0-9]+\.jpg$/.test(f)) files.push(f); }); } catch (e) { /* ignore */ }
+  }
+  return files;
+}
+function removeUploadFiles(files) {
+  for (const f of files) { try { fs.unlinkSync(path.join(UPLOAD_DIR, f)); } catch (e) { /* ignore */ } }
+}
+function chatHistoryRows(rows) {
+  return rows.map((m) => {
+    let attachments = [];
+    try { attachments = (JSON.parse(m.attachments_json || '[]') || []).map((f) => `/uploads/${f}`); } catch (e) { attachments = []; }
+    const out = { role: m.role, content: m.content, created_at: m.created_at };
+    if (m.channel) out.channel = m.channel;
+    if (attachments.length) out.attachments = attachments;
+    return out;
+  });
+}
+
 if (!fs.existsSync(UPLOAD_DIR)) fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 function html(res, status, body) {
@@ -920,6 +958,7 @@ async function handle(req, res) {
       for (const aid of sIds) {
         db.prepare('DELETE FROM blocks WHERE activity_id = ?').run(aid);
         db.prepare('UPDATE posts SET activity_id = NULL, is_pr = 0 WHERE activity_id = ?').run(aid);
+        removeUploadFiles(chatFilesOf(db.prepare('SELECT attachments_json FROM chat_messages WHERE activity_id = ?').all(aid)));
         db.prepare('DELETE FROM chat_messages WHERE activity_id = ?').run(aid);
         db.prepare('DELETE FROM activities WHERE id = ?').run(aid);
       }
@@ -953,6 +992,7 @@ async function handle(req, res) {
       if (!requireAuth()) return;
       const rawId = (fields.activity_id || '').trim();
       const activityId = rawId ? Number(rawId) : null;
+      removeUploadFiles(chatFilesOf(db.prepare('SELECT attachments_json FROM chat_messages WHERE user_id = ? AND activity_id IS ?').all(user.id, activityId)));
       db.prepare('DELETE FROM chat_messages WHERE user_id = ? AND activity_id IS ?').run(user.id, activityId);
       return redirect(res, activityId ? `/assistant?activity=${activityId}` : '/assistant');
     }
@@ -1010,6 +1050,7 @@ async function handle(req, res) {
         body = JSON.parse(raw.toString('utf8') || '{}');
       } catch (e) { body = {}; }
       const activityId = body.activity_id ? Number(body.activity_id) : null;
+      removeUploadFiles(chatFilesOf(db.prepare('SELECT attachments_json FROM chat_messages WHERE user_id = ? AND activity_id IS ?').all(user.id, activityId)));
       db.prepare('DELETE FROM chat_messages WHERE user_id = ? AND activity_id IS ?').run(user.id, activityId);
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
       return res.end(JSON.stringify({ ok: true }));
@@ -1019,7 +1060,7 @@ async function handle(req, res) {
     // slow down every page load).
     if (method === 'GET' && pathname === '/api/coach/history') {
       if (!user) { res.writeHead(401); return res.end('{"error":"auth"}'); }
-      const messages = db.prepare('SELECT role, content, created_at, channel FROM chat_messages WHERE user_id = ? AND activity_id IS NULL ORDER BY created_at ASC, id ASC').all(user.id);
+      const messages = chatHistoryRows(db.prepare('SELECT role, content, created_at, channel, attachments_json FROM chat_messages WHERE user_id = ? AND activity_id IS NULL ORDER BY created_at ASC, id ASC').all(user.id));
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
       return res.end(JSON.stringify({ messages, aiEnabled: !!apiKeyFor(user) }));
     }
@@ -1030,7 +1071,7 @@ async function handle(req, res) {
       if (!user) { res.writeHead(401); return res.end('{"error":"auth"}'); }
       const activity = db.prepare('SELECT id FROM activities WHERE id = ? AND user_id = ?').get(m[1], user.id);
       if (!activity) { res.writeHead(404); return res.end('{"error":"not_found"}'); }
-      const messages = db.prepare('SELECT role, content, created_at FROM chat_messages WHERE user_id = ? AND activity_id = ? ORDER BY created_at ASC, id ASC').all(user.id, activity.id);
+      const messages = chatHistoryRows(db.prepare('SELECT role, content, created_at, channel, attachments_json FROM chat_messages WHERE user_id = ? AND activity_id = ? ORDER BY created_at ASC, id ASC').all(user.id, activity.id));
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
       return res.end(JSON.stringify({ messages, aiEnabled: !!apiKeyFor(user) }));
     }
@@ -1050,8 +1091,11 @@ async function handle(req, res) {
         body = JSON.parse(raw.toString('utf8') || '{}');
       } catch (e) { body = {}; }
       const text = (body.message || '').trim();
-      if (!text) { res.writeHead(400); return res.end('empty'); }
+      const hasImages = Array.isArray(body.images) && body.images.length > 0;
+      if (!text && !hasImages) { res.writeHead(400); return res.end('empty'); }
       if (!apiKeyFor(user)) { res.writeHead(412); return res.end('missing_key'); }
+      const savedImages = hasImages ? saveChatImages(body.images) : [];
+      if (!text && !savedImages.length) { res.writeHead(400); return res.end('bad_image'); }
       // The Professor page sends voice:true — it's a live spoken
       // conversation during a run, not a WhatsApp-style text thread, so the
       // reply needs to start (and read aloud) differently: no artificial
@@ -1069,7 +1113,7 @@ async function handle(req, res) {
       }
       const activityId = activity ? activity.id : null;
 
-      db.prepare('INSERT INTO chat_messages (user_id, role, content, activity_id) VALUES (?,?,?,?)').run(user.id, 'user', text, activityId);
+      db.prepare('INSERT INTO chat_messages (user_id, role, content, activity_id, attachments_json) VALUES (?,?,?,?,?)').run(user.id, 'user', text, activityId, savedImages.length ? JSON.stringify(savedImages.map((i) => i.name)) : null);
 
       res.writeHead(200, {
         'content-type': 'text/plain; charset=utf-8',
@@ -1092,7 +1136,15 @@ async function handle(req, res) {
           context += '\n\nEsta conversa está acontecendo por VOZ, ao vivo, durante a corrida do atleta — ele está te ouvindo por um sintetizador de fala, não lendo texto na tela. Isso muda a forma da resposta: 1 frase, no máximo 2, bem curtas; NUNCA liste splits/paces em sequência separados por "·" ou vírgula (regra 9 não se aplica aqui — isso é ilegível em voz alta), cite no máximo um número, falado como alguém falaria em voz alta; nunca use qualquer formatação visual. Se a pergunta pedir uma análise longa, responda só o ponto mais importante e diga que pode detalhar mais se ele quiser.';
         }
         const priorRows = db.prepare('SELECT * FROM chat_messages WHERE user_id = ? AND activity_id IS ? ORDER BY created_at ASC, id ASC').all(user.id, activityId);
-        const history = priorRows.slice(0, -1).slice(-20).map((m) => ({ role: m.role, content: m.content }));
+        const history = priorRows.slice(0, -1).slice(-20).map((m) => {
+          let n = 0;
+          try { n = (JSON.parse(m.attachments_json || '[]') || []).length; } catch (e) { n = 0; }
+          const note = n ? `[o atleta anexou ${n} imagem${n > 1 ? 'ns' : ''} nesta mensagem]` : '';
+          return { role: m.role, content: [m.content, note].filter(Boolean).join('\n') || '(mensagem sem texto)' };
+        });
+        if (savedImages.length) {
+          context += '\n\nO atleta anexou ' + savedImages.length + ' imagem(ns) NESTA mensagem. Pode ser print de relógio/app, foto de treino, prova, comida, tênis, exame ou lesão. Olhe com atenção, diga o que de fato aparece e relacione com o treino dele. Não invente números que não estejam legíveis; se algo estiver ilegível, diga. Se a imagem mostrar lesão, dor ou exame, oriente procurar profissional de saúde em vez de diagnosticar.';
+        }
         // A human treinador never replies the instant a WhatsApp message
         // lands — hold briefly before the reply starts streaming in. That
         // realism is backwards for a live spoken exchange: dead air after
@@ -1101,7 +1153,10 @@ async function handle(req, res) {
         if (!isVoice) {
           await new Promise((resolve) => setTimeout(resolve, computeHumanDelayMs(text.length)));
         }
-        full = await streamChatWithAssistant(apiKeyFor(user), context, history, text, (delta) => {
+        const userContent = savedImages.length
+          ? [...savedImages.map((i) => ({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: i.b64 } })), { type: 'text', text: text || 'Veja a(s) imagem(ns) que enviei.' }]
+          : text;
+        full = await streamChatWithAssistant(apiKeyFor(user), context, history, userContent, (delta) => {
           res.write(delta);
         }, { effort: isVoice ? 'low' : 'medium' });
 
@@ -1166,6 +1221,25 @@ async function handle(req, res) {
     // ephemeral client secret this returns expires in minutes and can only
     // open a Realtime session, so it's safe to hand to the browser (unlike
     // the athlete's real OpenAI key, which never leaves this server).
+    // Audio gravado no chat (botao de microfone) -> texto, com a chave OpenAI do atleta.
+    if (method === 'POST' && pathname === '/api/coach/transcribe') {
+      if (!user) { res.writeHead(401, { 'content-type': 'application/json; charset=utf-8' }); return res.end('{"error":"auth"}'); }
+      const key = openaiApiKeyFor(user);
+      if (!key) { res.writeHead(412, { 'content-type': 'application/json; charset=utf-8' }); return res.end('{"error":"missing_openai_key"}'); }
+      let buf = null;
+      try { buf = await readBody(req, 12 * 1024 * 1024); } catch (e) { buf = null; }
+      if (!buf || buf.length < 500) { res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' }); return res.end('{"error":"empty"}'); }
+      try {
+        const text = await transcribeAudio(key, buf, req.headers['content-type'] || 'audio/webm');
+        res.writeHead(text ? 200 : 422, { 'content-type': 'application/json; charset=utf-8' });
+        return res.end(JSON.stringify(text ? { text } : { error: 'empty' }));
+      } catch (e) {
+        console.error('transcribe error', e.message);
+        res.writeHead(502, { 'content-type': 'application/json; charset=utf-8' });
+        return res.end(JSON.stringify({ error: 'transcribe_failed' }));
+      }
+    }
+
     // Salva no MESMO historico do chat (chat_messages, conversa geral) cada
     // fala da ligacao por voz: o que o atleta disse e o que o Professor
     // respondeu, marcadas com channel='voice'. Assim /assistant e /professor
@@ -1389,6 +1463,7 @@ function deleteUserCompletely(db, uid) {
   db.prepare('DELETE FROM blocks WHERE activity_id IN (SELECT id FROM activities WHERE user_id = ?)').run(uid);
   db.prepare('DELETE FROM activities WHERE user_id = ?').run(uid);
   db.prepare('DELETE FROM races WHERE user_id = ?').run(uid);
+  removeUploadFiles(chatFilesOf(db.prepare('SELECT attachments_json FROM chat_messages WHERE user_id = ?').all(uid)));
   db.prepare('DELETE FROM chat_messages WHERE user_id = ?').run(uid);
   db.prepare('DELETE FROM follows WHERE follower_id = ? OR followee_id = ?').run(uid, uid);
   db.prepare('DELETE FROM sessions WHERE user_id = ?').run(uid);
