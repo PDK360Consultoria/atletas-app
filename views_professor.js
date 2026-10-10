@@ -617,6 +617,20 @@ function professorPage(user, opts) {
   //   2. the Professor's reply is tracked by an explicit reference
   //      (liveReplyRow), never by position.
   var liveReplyRow = null;
+  // Grava cada fala da ligacao no mesmo historico do chat (/assistant).
+  // Fila sequencial para a ordem das mensagens nunca se inverter; falha
+  // silenciosa (o historico e um extra, nunca pode derrubar a chamada).
+  var voiceLogChain = Promise.resolve();
+  function saveVoiceLog(role, text){
+    voiceLogChain = voiceLogChain.then(function(){
+      return fetch('/api/professor/voice-log', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ role: role, text: text })
+      }).catch(function(){});
+    });
+  }
   function capHistory(){ while (history.length > 6) history.shift(); }
   function pushLog(role, text){
     var row = { role: role, text: text };
@@ -1582,6 +1596,7 @@ function professorPage(user, opts) {
           capHistory();
           renderLog();
         }
+        if (said && !ritual.active) saveVoiceLog('user', said);
         if (said && BOMDIA_RE.test(said)) startBomDia(true);
         break;
       }
@@ -1614,6 +1629,7 @@ function professorPage(user, opts) {
         // Overwrites the same row queueReveal has been filling in — the
         // authoritative final text, not a second entry appended after it.
         if (evt.transcript && evt.transcript.trim()) setLiveReplyText(evt.transcript.trim());
+        if (!ritual.active && evt.transcript && evt.transcript.trim()) saveVoiceLog('assistant', evt.transcript.trim());
         break;
       case 'response.done': {
         var doneId = evt.response && evt.response.id;

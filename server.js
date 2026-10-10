@@ -1006,7 +1006,7 @@ async function handle(req, res) {
     // slow down every page load).
     if (method === 'GET' && pathname === '/api/coach/history') {
       if (!user) { res.writeHead(401); return res.end('{"error":"auth"}'); }
-      const messages = db.prepare('SELECT role, content, created_at FROM chat_messages WHERE user_id = ? AND activity_id IS NULL ORDER BY created_at ASC, id ASC').all(user.id);
+      const messages = db.prepare('SELECT role, content, created_at, channel FROM chat_messages WHERE user_id = ? AND activity_id IS NULL ORDER BY created_at ASC, id ASC').all(user.id);
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
       return res.end(JSON.stringify({ messages, aiEnabled: !!apiKeyFor(user) }));
     }
@@ -1145,6 +1145,25 @@ async function handle(req, res) {
     // ephemeral client secret this returns expires in minutes and can only
     // open a Realtime session, so it's safe to hand to the browser (unlike
     // the athlete's real OpenAI key, which never leaves this server).
+    // Salva no MESMO historico do chat (chat_messages, conversa geral) cada
+    // fala da ligacao por voz: o que o atleta disse e o que o Professor
+    // respondeu, marcadas com channel='voice'. Assim /assistant e /professor
+    // mostram uma unica conversa, e o texto continua de onde a voz parou.
+    if (method === 'POST' && pathname === '/api/professor/voice-log') {
+      if (!user) { res.writeHead(401); return res.end('{"error":"auth"}'); }
+      let body = {};
+      try {
+        const raw = await readBody(req);
+        body = JSON.parse(raw.toString('utf8') || '{}');
+      } catch (e) { body = {}; }
+      const role = body.role === 'assistant' ? 'assistant' : (body.role === 'user' ? 'user' : null);
+      const text = String(body.text || '').replace(/\s+/g, ' ').trim().slice(0, 4000);
+      if (!role || !text) { res.writeHead(400, { 'content-type': 'application/json; charset=utf-8' }); return res.end('{"error":"bad_request"}'); }
+      db.prepare('INSERT INTO chat_messages (user_id, role, content, activity_id, channel) VALUES (?,?,?,NULL,?)').run(user.id, role, text, 'voice');
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+      return res.end('{"ok":true}');
+    }
+
     if (method === 'POST' && pathname === '/api/professor/realtime-session') {
       if (!user) { res.writeHead(401); return res.end(JSON.stringify({ error: 'auth' })); }
       const key = openaiApiKeyFor(user);
@@ -1153,7 +1172,8 @@ async function handle(req, res) {
         const races = db.prepare('SELECT * FROM races WHERE user_id = ? ORDER BY race_date ASC').all(user.id);
         const activities = db.prepare("SELECT * FROM activities WHERE user_id = ? AND source != 'strava' ORDER BY COALESCE(started_at, created_at) DESC").all(user.id);
         const evolution = computeEvolution(activities);
-        const instructions = buildVoiceInstructions(user, races, activities, evolution);
+        const recentChat = db.prepare('SELECT role, content FROM chat_messages WHERE user_id = ? AND activity_id IS NULL ORDER BY created_at DESC, id DESC LIMIT 14').all(user.id).reverse();
+        const instructions = buildVoiceInstructions(user, races, activities, evolution, recentChat);
         const session = await mintRealtimeSession(key, instructions);
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
         return res.end(JSON.stringify(session));

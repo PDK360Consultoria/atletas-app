@@ -399,6 +399,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 );
 `);
 ensureColumn('chat_messages', 'activity_id', 'activity_id INTEGER');
+ensureColumn('chat_messages', 'channel', 'channel TEXT');
 
 // Device tokens for push notifications (iOS/Android app shell).
 db.exec(`

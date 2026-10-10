@@ -347,6 +347,12 @@ function mount(opts){
       var b = bubble(msgsEl, m.role === 'user' ? 'user' : 'assistant');
       var split = splitStoryCard(m.content);
       b.textContent = split.text;
+      if (m.channel === 'voice') {
+        var vt = document.createElement('span');
+        vt.textContent = 'por voz';
+        vt.style.cssText = 'display:block; font-size:11px; opacity:.6; margin-bottom:3px; letter-spacing:.04em; text-transform:uppercase;';
+        b.insertBefore(vt, b.firstChild);
+      }
       if (split.card) renderStoryCard(b, split.card);
     });
     scrollBottom();
