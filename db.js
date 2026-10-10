@@ -398,6 +398,17 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   FOREIGN KEY(user_id) REFERENCES users(id)
 );
 `);
+db.exec(`
+CREATE TABLE IF NOT EXISTS coach_plans (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  user_id INTEGER NOT NULL,
+  source TEXT NOT NULL DEFAULT 'coach',
+  title TEXT,
+  content TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY(user_id) REFERENCES users(id)
+);
+`);
 ensureColumn('chat_messages', 'activity_id', 'activity_id INTEGER');
 ensureColumn('chat_messages', 'channel', 'channel TEXT');
 ensureColumn('chat_messages', 'attachments_json', 'attachments_json TEXT');

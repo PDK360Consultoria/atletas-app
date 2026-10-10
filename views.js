@@ -678,7 +678,7 @@ ${bodyEnd || ''}
 </html>`;
 }
 
-const STRAVA_NOTE = `<p class="muted" style="font-size:12.5px; margin:10px 0 0;">Seus dados da Strava ficam visíveis só para você. Se você pedir a análise técnica ou conversar com o coach sobre um treino, os dados desse treino são enviados ao provedor de IA. Ao desconectar, eles são apagados. <a href="/privacidade">Saiba mais</a>.</p>`;
+const STRAVA_NOTE = `<p class="muted" style="font-size:12.5px; margin:10px 0 0;">Seus dados da Strava ficam visíveis só para você. Se você pedir a análise técnica ou conversar com o coach (por texto ou voz), os dados dos seus treinos recentes, inclusive os da Strava, são enviados ao provedor de IA para ele responder. Ao desconectar, eles são apagados. <a href="/privacidade">Saiba mais</a>.</p>`;
 
 function privacyPage(user) {
   const body = `<div class="card legal">
@@ -697,7 +697,7 @@ function privacyPage(user) {
 
 <h2>Dados da Strava</h2>
 <p>Os dados que vêm da sua conta Strava são exibidos somente para você. Outros atletas não veem o mapa, o pace, as zonas nem as métricas dos seus treinos da Strava, mesmo quando você publica no feed: nesse caso aparece apenas o que você escrever e as fotos que adicionar.</p>
-<p>Quando você pede a análise técnica de um treino da Strava ou abre a conversa com o treinador virtual sobre ele, os dados desse treino (distância, tempo, pace, frequência cardíaca, parciais) são enviados ao provedor de inteligência artificial para gerar a resposta. Isso só acontece por ação sua, em treinos seus. Não usamos esses dados para treinar modelos.</p>
+<p>Quando você pede a análise técnica de um treino da Strava ou conversa com o treinador virtual (por texto ou por voz), os dados dos seus treinos recentes, inclusive os da Strava (distância, tempo, pace, frequência cardíaca, parciais), são enviados ao provedor de inteligência artificial para gerar a resposta. Isso só acontece por ação sua, em treinos seus. Não usamos esses dados para treinar modelos.</p>
 <p>Você pode desconectar a Strava a qualquer momento em Configurações. Ao desconectar, apagamos de forma permanente os treinos importados da Strava. Você também pode revogar o acesso em strava.com/settings/apps.</p>
 
 <h2>Compartilhamento</h2>
@@ -2163,7 +2163,7 @@ ${trainingCompareChart(activity, evolution)}
       ? `${aictx.pillsHtml(aictx.parseStored(activity.ai_context_json))}<div class="ai-analysis">${renderMarkdownLite(activity.ai_analysis)}</div>
         <details style="margin-top:14px;"${missing.length ? ' open' : ''}><summary class="ghost-summary">↻ Gerar nova análise</summary><div style="margin-top:14px;">${aictx.formHtml(activity.id, aictx.parseStored(activity.ai_context_json), { missing, buttonLabel: 'Gerar nova análise' })}</div></details>`
       : aictx.formHtml(activity.id, aictx.parseStored(activity.ai_context_json), { missing })}
-${fromStrava ? `<p class="muted" style="font-size:12.5px; margin:12px 0 0;">Este treino veio da Strava e continua visível só para você. Quando você pede a análise ou abre a conversa, os dados dele são enviados ao provedor de IA para gerar a resposta. <a href="/privacidade">Saiba mais</a>.</p>` : ''}
+${fromStrava ? `<p class="muted" style="font-size:12.5px; margin:12px 0 0;">Este treino veio da Strava e continua visível só para você. Quando você pede a análise ou conversa com o coach, os dados dele (e dos seus treinos recentes) são enviados ao provedor de IA para gerar a resposta. <a href="/privacidade">Saiba mais</a>.</p>` : ''}
 </div>
 
 ${aiEnabled ? `<div class="card">

@@ -13,6 +13,7 @@ const { analyzeActivity } = require('./lib/anthropic');
 const aicontext = require('./lib/aicontext');
 const strava = require('./lib/strava');
 const { computeEvolution, computeMedals, detectPersonalRecord, computeWeeklyStreak } = require('./lib/stats');
+const plansLib = require('./lib/plans');
 const { buildContext, buildActivityFocusContext, buildVoiceInstructions, streamChatWithAssistant, computeHumanDelayMs } = require('./lib/assistant');
 const { resolveCard, detectImageRequest } = require('./lib/storycard');
 const STORY_TOOLS = [{
@@ -994,6 +995,7 @@ async function handle(req, res) {
       const activityId = rawId ? Number(rawId) : null;
       removeUploadFiles(chatFilesOf(db.prepare('SELECT attachments_json FROM chat_messages WHERE user_id = ? AND activity_id IS ?').all(user.id, activityId)));
       db.prepare('DELETE FROM chat_messages WHERE user_id = ? AND activity_id IS ?').run(user.id, activityId);
+      if (!activityId) db.prepare('DELETE FROM coach_plans WHERE user_id = ?').run(user.id);
       return redirect(res, activityId ? `/assistant?activity=${activityId}` : '/assistant');
     }
 
@@ -1052,6 +1054,7 @@ async function handle(req, res) {
       const activityId = body.activity_id ? Number(body.activity_id) : null;
       removeUploadFiles(chatFilesOf(db.prepare('SELECT attachments_json FROM chat_messages WHERE user_id = ? AND activity_id IS ?').all(user.id, activityId)));
       db.prepare('DELETE FROM chat_messages WHERE user_id = ? AND activity_id IS ?').run(user.id, activityId);
+      if (!activityId) db.prepare('DELETE FROM coach_plans WHERE user_id = ?').run(user.id);
       res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
       return res.end(JSON.stringify({ ok: true }));
     }
@@ -1126,7 +1129,18 @@ async function handle(req, res) {
         const races = db.prepare('SELECT * FROM races WHERE user_id = ? ORDER BY race_date ASC').all(user.id);
         const activities = db.prepare("SELECT * FROM activities WHERE user_id = ? ORDER BY COALESCE(started_at, created_at) DESC").all(user.id);
         const evolution = computeEvolution(activities);
-        let context = buildContext(user, races, activities, evolution);
+        // Treinos que o coach ja prescreveu (ou que o atleta informou como
+        // combinados): voltam no contexto para ele retomar o plano em vez de recriar.
+        const planRequest = !isVoice && plansLib.detectPlanRequest(text);
+        if (!isVoice && plansLib.looksLikePlan(text, 160)) {
+          try { plansLib.savePlan(db, user.id, { source: 'atleta', title: 'Plano informado pelo atleta', content: text }); } catch (e) { /* memoria e opcional */ }
+        }
+        let plans = [];
+        try { plans = plansLib.recentPlans(db, user.id); } catch (e) { plans = []; }
+        let context = buildContext(user, races, activities, evolution, plans);
+        if (planRequest) {
+          context += '\n\nO atleta está pedindo um treino, um plano ou uma orientação de treino agora. Aplique a regra 13 (prescrição completa, em linhas curtas, com os números dele) e a regra 14 (se existe plano combinado na seção acima, retome-o; se não existe e ele não disse o que é, pergunte antes de inventar).';
+        }
         if (activity) {
           const laps = activity.laps_json ? JSON.parse(activity.laps_json) : [];
           const intervals = activity.intervals_json ? JSON.parse(activity.intervals_json) : [];
@@ -1158,7 +1172,10 @@ async function handle(req, res) {
           : text;
         full = await streamChatWithAssistant(apiKeyFor(user), context, history, userContent, (delta) => {
           res.write(delta);
-        }, { effort: isVoice ? 'low' : 'medium' });
+        }, { effort: isVoice ? 'low' : (planRequest ? 'high' : 'medium') });
+        if (planRequest && plansLib.looksLikePlan(full, 200)) {
+          try { plansLib.savePlan(db, user.id, { source: 'coach', title: text, content: full }); } catch (e) { /* memoria e opcional */ }
+        }
 
         // A request for a visual ("manda uma imagem desse treino", "quero em
         // stories"...) gets a second, separate, non-streaming call that
@@ -1275,7 +1292,7 @@ async function handle(req, res) {
         const races = db.prepare('SELECT * FROM races WHERE user_id = ? ORDER BY race_date ASC').all(user.id);
         const activities = db.prepare("SELECT * FROM activities WHERE user_id = ? ORDER BY COALESCE(started_at, created_at) DESC").all(user.id);
         const evolution = computeEvolution(activities);
-        const context = buildContext(user, races, activities, evolution);
+        const context = buildContext(user, races, activities, evolution, plansLib.recentPlans(db, user.id));
         const priorRows = db.prepare('SELECT role, content FROM chat_messages WHERE user_id = ? AND activity_id IS NULL ORDER BY created_at DESC, id DESC LIMIT 14').all(user.id).reverse();
         const history = priorRows.map((m) => ({ role: m.role, content: String(m.content || '').replace(/\n?\[\[STORY_CARD\]\][\s\S]*?\[\[\/STORY_CARD\]\]/g, '') }));
         const card = await resolveCard({ apiKey: apiKeyFor(user), user, races, activities, activity: null, context, history, userMessage: pedido });
@@ -1296,10 +1313,10 @@ async function handle(req, res) {
       if (!key) { res.writeHead(412, { 'content-type': 'application/json; charset=utf-8' }); return res.end(JSON.stringify({ error: 'missing_key' })); }
       try {
         const races = db.prepare('SELECT * FROM races WHERE user_id = ? ORDER BY race_date ASC').all(user.id);
-        const activities = db.prepare("SELECT * FROM activities WHERE user_id = ? AND source != 'strava' ORDER BY COALESCE(started_at, created_at) DESC").all(user.id);
+        const activities = db.prepare("SELECT * FROM activities WHERE user_id = ? ORDER BY COALESCE(started_at, created_at) DESC").all(user.id);
         const evolution = computeEvolution(activities);
         const recentChat = db.prepare('SELECT role, content FROM chat_messages WHERE user_id = ? AND activity_id IS NULL ORDER BY created_at DESC, id DESC LIMIT 14').all(user.id).reverse();
-        const instructions = buildVoiceInstructions(user, races, activities, evolution, recentChat);
+        const instructions = buildVoiceInstructions(user, races, activities, evolution, recentChat, plansLib.recentPlans(db, user.id));
         const session = await mintRealtimeSession(key, instructions, { tools: STORY_TOOLS });
         res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
         return res.end(JSON.stringify(session));
@@ -1420,6 +1437,7 @@ async function handle(req, res) {
       db.prepare('DELETE FROM activities WHERE user_id = ?').run(targetId);
       db.prepare('DELETE FROM races WHERE user_id = ?').run(targetId);
       db.prepare('DELETE FROM chat_messages WHERE user_id = ?').run(targetId);
+      db.prepare('DELETE FROM coach_plans WHERE user_id = ?').run(targetId);
       db.prepare('DELETE FROM follows WHERE follower_id = ? OR followee_id = ?').run(targetId, targetId);
       db.prepare('DELETE FROM sessions WHERE user_id = ?').run(targetId);
       db.prepare('DELETE FROM push_tokens WHERE user_id = ?').run(targetId);
@@ -1465,6 +1483,7 @@ function deleteUserCompletely(db, uid) {
   db.prepare('DELETE FROM races WHERE user_id = ?').run(uid);
   removeUploadFiles(chatFilesOf(db.prepare('SELECT attachments_json FROM chat_messages WHERE user_id = ?').all(uid)));
   db.prepare('DELETE FROM chat_messages WHERE user_id = ?').run(uid);
+  db.prepare('DELETE FROM coach_plans WHERE user_id = ?').run(uid);
   db.prepare('DELETE FROM follows WHERE follower_id = ? OR followee_id = ?').run(uid, uid);
   db.prepare('DELETE FROM sessions WHERE user_id = ?').run(uid);
   db.prepare('DELETE FROM push_tokens WHERE user_id = ?').run(uid);
