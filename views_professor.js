@@ -329,7 +329,7 @@ function professorPage(user, opts) {
 </div>
 
 <div class="quickchips" id="quickChips">
-  <button type="button" class="feat" data-q="Quero meu bom dia, Professor!">Quero meu bom dia</button>
+  <button type="button" class="feat" data-q="Quero minha saudação, Professor!">Quero minha saudação</button>
   <button type="button" data-q="Qual é meu treino de hoje?">Treino de hoje</button>
   <button type="button" data-q="Analise meu último treino.">Analisar último treino</button>
   <button type="button" data-q="Estou com dores. Pode me ajudar?">Estou com dores</button>
@@ -521,14 +521,21 @@ function professorPage(user, opts) {
   // session with; SLOW_SPEED is what the opening line and the "bom dia" line
   // switch to (session.update, then switched back when that line is done)
   // because Felipe could not understand the first greeting at normal pace.
-  var NORMAL_SPEED = 1.08;
-  var SLOW_SPEED = 0.95;
-  var RITUAL_SPEED = 1.2; // the bom-dia lines: brisk conversational pace (0.85 and even 1.0 sounded far too slow)
+  var NORMAL_SPEED = 1.05;
+  var SLOW_SPEED = 1.05;
+  var RITUAL_SPEED = 1.05; // the bom-dia lines: brisk conversational pace (0.85 and even 1.0 sounded far too slow)
   var greetingSlow = false;
   // The "quero meu bom dia, Professor" ritual: the Professor says "Bom dia,
   // meu atleta!" over loud rock, then asks how he is and how training went. State lives
   // here; the logic is in runBomDiaRitual() and friends further down.
-  var BOMDIA_RE = /(quero|manda|solta|me\\s+d[aá])\\s+(o\\s+)?(meu\\s+)?bom[\\s-]+dia/i;
+  var BOMDIA_RE = /(quero|manda|solta|me\\s+d[aá])\\s+(a\\s+|o\\s+)?(minha\\s+|meu\\s+)?(sauda[cç][aã]o|bom[\\s-]+dia|boa[\\s-]+(tarde|noite))/i;
+  // The greeting follows the athlete's own clock: bom dia until 11:59, boa tarde from 12:00 to 17:59, boa noite after that.
+  function dayPeriod(){ var h = new Date().getHours(); return (h >= 5 && h < 12) ? 'manha' : ((h >= 12 && h < 18) ? 'tarde' : 'noite'); }
+  function greetWord(){ var p = dayPeriod(); return p === 'manha' ? 'Bom dia' : (p === 'tarde' ? 'Boa tarde' : 'Boa noite'); }
+  function ritualLineText(n){
+    if (n === 1) return greetWord() + ', meu atleta!';
+    return dayPeriod() === 'noite' ? 'Como foi o seu dia? Como foram os treinos?' : 'Como você está hoje? Como foram os treinos?';
+  }
   var ritual = { active: false };
   var musicActive = false;     // true while the rock stinger is playing (the orb dances to it)
   var musicCtx = null;
@@ -548,7 +555,16 @@ function professorPage(user, opts) {
   var revealBuffer = '';
   var revealShown = '';
   var revealTimer = null;
-  var REVEAL_MS_PER_CHAR = 57; // ~17.5 chars/sec — matches the voice's speed:1.08 (lib/openai.js)
+  var REVEAL_MS_PER_CHAR = 57; // ~17.5 chars/sec — about the pace of the voice (speed 1.05, lib/openai.js)
+  // The reply text is NEVER shown before the voice is actually playing: the
+  // transcript arrives long before the audio does (especially on long answers),
+  // so the gate stays closed until the audio starts (WebRTC output_audio_buffer.started,
+  // or the voice level rising as a fallback) and the text then follows the voice.
+  var revealGateOpen = false;
+  var revealGateFallback = null;
+  var revealRow = null;        // the row the reveal writes into (outlives liveReplyRow, which is cleared at response.done)
+  var audioPlaying = false;    // true between output_audio_buffer.started and .stopped
+  var pendingFinalText = '';   // authoritative transcript, shown in full only when the voice has finished
   var inactivityTimer = null; // auto-hangs-up a call nobody's talking in
   var hardCapTimer = null;    // absolute ceiling on one call's length
 
@@ -611,8 +627,33 @@ function professorPage(user, opts) {
   // log row that's since moved on to something else.
   function stopReveal(){
     if (revealTimer) { clearInterval(revealTimer); revealTimer = null; }
+    clearTimeout(revealGateFallback); revealGateFallback = null;
+    revealGateOpen = false; revealRow = null; audioPlaying = false; pendingFinalText = '';
     revealBuffer = '';
     revealShown = '';
+  }
+  function startRevealTimer(){
+    if (revealTimer || !revealBuffer) return;
+    revealTimer = setInterval(function(){
+      if (!revealBuffer) { clearInterval(revealTimer); revealTimer = null; return; }
+      revealShown += revealBuffer.slice(0, 2);
+      revealBuffer = revealBuffer.slice(2);
+      setLiveReplyText(revealShown);
+    }, REVEAL_MS_PER_CHAR * 2);
+  }
+  function openRevealGate(){
+    if (revealGateOpen) return;
+    revealGateOpen = true;
+    clearTimeout(revealGateFallback); revealGateFallback = null;
+    startRevealTimer();
+  }
+  // The voice has finished playing: whatever text is still queued appears now.
+  function flushReveal(){
+    if (revealTimer) { clearInterval(revealTimer); revealTimer = null; }
+    if (pendingFinalText) { revealShown = pendingFinalText; revealBuffer = ''; }
+    else { revealShown += revealBuffer; revealBuffer = ''; }
+    if (revealShown) setLiveReplyText(revealShown);
+    revealGateOpen = true;
   }
   // Felipe: the reply used to type itself out in the caption under the orb,
   // then the FINISHED transcript would separately land down in the log —
@@ -624,13 +665,9 @@ function professorPage(user, opts) {
   // short transient status ("Ouvindo…", "Pode continuar falando…").
   function queueReveal(deltaText){
     revealBuffer += deltaText;
-    if (revealTimer) return;
-    revealTimer = setInterval(function(){
-      if (!revealBuffer) { clearInterval(revealTimer); revealTimer = null; return; }
-      revealShown += revealBuffer.slice(0, 2);
-      revealBuffer = revealBuffer.slice(2);
-      setLiveReplyText(revealShown);
-    }, REVEAL_MS_PER_CHAR * 2);
+    if (revealGateOpen) { startRevealTimer(); return; }
+    // gate closed: hold the text back until the voice starts (fallback: 4s, in case the audio-start event never comes)
+    if (!revealGateFallback) revealGateFallback = setTimeout(openRevealGate, 4000);
   }
   // ---------- shared history (same chat_messages rows as /assistant) ----------
   // The backend already treats /professor and /assistant as one conversation
@@ -704,13 +741,15 @@ function professorPage(user, opts) {
   // text. Same row the whole time, never a second one appended after.
   function beginLiveReply(){
     liveReplyRow = { role: 'professor', text: '' };
+    revealRow = liveReplyRow;
     history.push(liveReplyRow);
     capHistory();
     renderLog();
   }
   function setLiveReplyText(text){
-    if (!liveReplyRow) return;
-    liveReplyRow.text = text;
+    var r = revealRow || liveReplyRow;
+    if (!r) return;
+    r.text = text;
     renderLog();
   }
   function beginUserRow(itemId){
@@ -865,6 +904,7 @@ function professorPage(user, opts) {
       level = micLevel;
     } else if (STATE === 'speaking') {
       voiceLevel = sampleLevel(voiceAnalyser, voiceAnalyserBuf, voiceLevel);
+      if (!revealGateOpen && revealBuffer && voiceLevel > 0.05) openRevealGate(); // the voice is audible: the text may start
       amps = freqBars(voiceAnalyser, voiceFreqBuf) || idleBars(t, tune.idle);
       level = voiceLevel;
     } else if (STATE === 'connecting') {
@@ -1073,11 +1113,12 @@ function professorPage(user, opts) {
   var ritualSkipGreeting = false; // set when the pre-recorded bom dia opened the call: no "Fala, atleta!" afterwards
   var voiceLineBytes = {};
   function fetchVoiceLine(n){
-    if (voiceLineBytes[n]) return voiceLineBytes[n];
-    voiceLineBytes[n] = fetch('/api/professor/bomdia-voice?line=' + n, { credentials: 'include' })
+    var k = dayPeriod() + n;
+    if (voiceLineBytes[k]) return voiceLineBytes[k];
+    voiceLineBytes[k] = fetch('/api/professor/bomdia-voice?line=' + n + '&p=' + dayPeriod(), { credentials: 'include' })
       .then(function(r){ if (!r.ok) throw new Error('http ' + r.status); return r.arrayBuffer(); })
-      .catch(function(){ voiceLineBytes[n] = null; return null; });
-    return voiceLineBytes[n];
+      .catch(function(){ voiceLineBytes[k] = null; return null; });
+    return voiceLineBytes[k];
   }
   function preloadBomDiaVoices(){ fetchVoiceLine(1); fetchVoiceLine(2); }
   function voiceLinesReady(){
@@ -1095,7 +1136,7 @@ function professorPage(user, opts) {
       // lines not available (no key / no credits / offline): the old live-model version
       rlog('v2-unavailable');
       if (live && dataChannel && dataChannel.readyState === 'open') runBomDiaRitual(true);
-      else { permErrEl.hidden = true; activateBlock.style.display = 'none'; startLiveCall('Quero meu bom dia, Professor!'); }
+      else { permErrEl.hidden = true; activateBlock.style.display = 'none'; startLiveCall('Quero minha saudação, Professor!'); }
     });
   }
   function decodeBuf(ac, bytes){
@@ -1196,8 +1237,8 @@ function professorPage(user, opts) {
       musicActive = true;
       rlog('v2-play', 'music=' + (music ? music.duration.toFixed(1) + 's' : 'synth') + ' v1=' + v1.duration.toFixed(2) + ' v2=' + v2.duration.toFixed(2) + ' total=' + (END - T0).toFixed(1));
       function at(sec, fn){ mine.timers.push(setTimeout(function(){ if (ritual2 === mine && !mine.ended) fn(); }, Math.max(0, (sec - ac.currentTime) * 1000))); }
-      at(a1, function(){ pushLog('professor', 'Bom dia, meu atleta!'); setCaption('Bom dia, meu atleta!', true); });
-      at(a2, function(){ pushLog('professor', 'Como você está hoje? Como foram os treinos?'); setCaption('Como você está hoje?', true); });
+      at(a1, function(){ pushLog('professor', ritualLineText(1)); setCaption(ritualLineText(1), true); });
+      at(a2, function(){ pushLog('professor', ritualLineText(2)); setCaption(ritualLineText(2).split('?')[0] + '?', true); });
       if (mine.needCall) at(END - FADE - 0.2, function(){ startLiveCall(''); }); // connect while the music fades out
       at(END, endRitual2);
       mine.timers.push(setTimeout(function(){ if (ritual2 === mine) endRitual2(); }, (END - ac.currentTime) * 1000 + 4000));
@@ -1218,7 +1259,7 @@ function professorPage(user, opts) {
     setVoiceMuted(false);
     if (dataChannel && dataChannel.readyState === 'open') {
       setMicEnabled(true);
-      sendEvent({ type: 'conversation.item.create', item: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Bom dia, meu atleta! Como você está hoje? Como foram os treinos?' }] } });
+      sendEvent({ type: 'conversation.item.create', item: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: ritualLineText(1) + ' ' + ritualLineText(2) }] } });
       setSessionSpeed(NORMAL_SPEED);
       setState('listening');
       setCaption('Pode responder…', true);
@@ -1308,8 +1349,7 @@ function professorPage(user, opts) {
     clearTimeout(r.lineTimer);
     r.lineTimer = setTimeout(function(){ if (ritual === r && r.awaiting && r.line === n) { rlog('watchdog', n); ritualLineDone(); } }, 11000);
   }
-  var RITUAL_LINES = { 1: 'Bom dia, meu atleta!', 2: 'Como você está hoje? Como foram os treinos?' };
-  function ritualNorm(t){
+    function ritualNorm(t){
     return (t || '').toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').replace(/[^a-z0-9 ]+/g, ' ').replace(/\\s+/g, ' ').replace(/^ /, '');
   }
   // The line goes out as an OUT-OF-BAND response (conversation:'none') with its
@@ -1319,7 +1359,7 @@ function professorPage(user, opts) {
     var r = ritual;
     if (!r.active || r.gen !== liveGeneration || !r.awaiting) return;
     setVoiceMuted(false);
-    var line = RITUAL_LINES[r.line];
+    var line = ritualLineText(r.line);
     var strict = r.bad > 0 ? ' Atenção: na tentativa anterior você acrescentou palavras. Diga SOMENTE o texto, nada além dele.' : '';
     var ev;
     if (r.inband) {
@@ -1329,7 +1369,7 @@ function professorPage(user, opts) {
         conversation: 'none',
         output_modalities: ['audio'],
         metadata: { ritual: String(r.line) },
-        instructions: 'Você é o Professor, treinador de corrida, cumprimentando um atleta de manhã. Diga EXATAMENTE e SOMENTE o texto que o usuário enviar, sem acrescentar, trocar ou comentar nenhuma palavra. Fale como numa conversa de verdade: voz natural, enérgica e calorosa, ritmo ágil e fluido, sem arrastar as palavras e sem soar como leitura de texto. Não responda ao texto, apenas diga-o.' + strict,
+        instructions: 'Você é o Professor, treinador de corrida, cumprimentando um atleta (' + greetWord() + '). Diga EXATAMENTE e SOMENTE o texto que o usuário enviar, sem acrescentar, trocar ou comentar nenhuma palavra. Fale como numa conversa de verdade: voz natural, enérgica e calorosa, ritmo ágil e fluido, sem arrastar as palavras e sem soar como leitura de texto. Não responda ao texto, apenas diga-o.' + strict,
         input: [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: line }] }],
       } };
     }
@@ -1340,7 +1380,7 @@ function professorPage(user, opts) {
     var r = ritual;
     if (!r.active || !r.awaiting || !r.respId) return;
     r.acc = (r.acc || '') + (delta || '');
-    var got = ritualNorm(r.acc), want = ritualNorm(RITUAL_LINES[r.line]);
+    var got = ritualNorm(r.acc), want = ritualNorm(ritualLineText(r.line));
     var gotT = got.replace(/ $/, '');
     var off = !want.startsWith(gotT) || got.length > want.length + 1;
     if (off && r.bad < 2) {
@@ -1430,7 +1470,7 @@ function professorPage(user, opts) {
     setMicEnabled(true);
     if (r.gen === liveGeneration && dataChannel) {
       // out-of-band lines are not part of the conversation — tell the model what was said
-      sendEvent({ type: 'conversation.item.create', item: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: RITUAL_LINES[1] + ' ' + RITUAL_LINES[2] }] } });
+      sendEvent({ type: 'conversation.item.create', item: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: ritualLineText(1) + ' ' + ritualLineText(2) }] } });
       setSessionSpeed(NORMAL_SPEED);
       setState('listening');
       setCaption('Pode continuar falando…', true);
@@ -1679,10 +1719,26 @@ function professorPage(user, opts) {
         if (evt.delta) { assistantTranscriptBuf += evt.delta; queueReveal(evt.delta); }
         if (ritual.active && evt.delta) ritualLineDelta(evt.delta);
         break;
+      case 'output_audio_buffer.started':
+        audioPlaying = true;
+        openRevealGate();
+        break;
+      case 'output_audio_buffer.stopped':
+        audioPlaying = false;
+        flushReveal();
+        break;
+      case 'output_audio_buffer.cleared':
+        audioPlaying = false;
+        break;
       case 'response.output_audio_transcript.done':
-        // Overwrites the same row queueReveal has been filling in — the
-        // authoritative final text, not a second entry appended after it.
-        if (evt.transcript && evt.transcript.trim()) setLiveReplyText(evt.transcript.trim());
+        // The authoritative final text. It is NOT dropped on screen at once (it
+        // arrives long before the voice finishes): the typing keeps following the
+        // voice, and the full text lands when the audio stops.
+        if (evt.transcript && evt.transcript.trim()) {
+          pendingFinalText = evt.transcript.trim();
+          if (revealGateOpen && pendingFinalText.indexOf(revealShown) === 0) revealBuffer = pendingFinalText.slice(revealShown.length);
+          if (!ritual.active && !audioPlaying && revealGateOpen) flushReveal();
+        }
         if (!ritual.active && evt.transcript && evt.transcript.trim()) saveVoiceLog('assistant', evt.transcript.trim());
         break;
       case 'response.done': {
@@ -1693,7 +1749,8 @@ function professorPage(user, opts) {
         // reply that is actually playing.
         if (doneId && currentResponseId && doneId !== currentResponseId) break;
         var wasCancelled = !!(evt.response && evt.response.status === 'cancelled');
-        stopReveal();
+        // generation finished, but the voice is probably still playing: the text must keep following it
+        if (ritual.active || wasCancelled) stopReveal();
         liveReplyRow = null;
         if (greetingSlow) { greetingSlow = false; setSessionSpeed(NORMAL_SPEED); }
         if (ritual.active) {
@@ -1786,7 +1843,7 @@ function professorPage(user, opts) {
         if (myGen !== liveGeneration) throw { kind: 'stale' };
         var ephemeralKey = session && session.value;
         if (!ephemeralKey) throw { kind: 'generic' };
-        return navigator.mediaDevices.getUserMedia({ audio: true }).then(function(stream){
+        return navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }).then(function(stream){
           if (myGen !== liveGeneration) { stream.getTracks().forEach(function(t){ t.stop(); }); throw { kind: 'stale' }; }
           localMicStream = stream;
 
@@ -1924,7 +1981,7 @@ function professorPage(user, opts) {
         else if (ritualSkipGreeting) {
           // the bom dia already played while this call was connecting
           ritualSkipGreeting = false;
-          sendEvent({ type: 'conversation.item.create', item: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Bom dia, meu atleta! Como você está hoje? Como foram os treinos?' }] } });
+          sendEvent({ type: 'conversation.item.create', item: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: ritualLineText(1) + ' ' + ritualLineText(2) }] } });
           setCaption('Pode responder…', true);
         }
         else sendGreeting();
@@ -2019,7 +2076,7 @@ function professorPage(user, opts) {
   function onDoubleClap(){
     rlog('double-clap', STATE);
     if (ritual.active) return;
-    var CMD = 'Quero meu bom dia, Professor!';
+    var CMD = 'Quero minha saudação, Professor!';
     if (ritual2.active) return;
     if (STATE === 'listening' || STATE === 'speaking') startBomDia(true);
     else if (STATE === 'standby' || STATE === 'ambient') { stopRecognition(function(){ startBomDia(false); }); }
@@ -2077,7 +2134,7 @@ function professorPage(user, opts) {
   function startAmbient(){
     stopRecognition(function(){
       setState('ambient');
-      setCaption(canListen ? 'Diga "Hey Professor" quando quiser perguntar algo — ou bata duas palmas pro seu bom dia.' : 'Toque no orbe quando quiser falar com o Professor.', true);
+      setCaption(canListen ? 'Diga "Hey Professor" quando quiser perguntar algo — ou bata duas palmas pra sua saudação.' : 'Toque no orbe quando quiser falar com o Professor.', true);
       if (!canListen) return;
 
       recognition = new SR();
