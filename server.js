@@ -127,7 +127,11 @@ function openaiApiKeyFor(user) {
 
 // The two fixed lines of the Professor's "bom dia" ritual, synthesized once
 // (by whichever athlete's OpenAI key hits it first) and kept in memory.
-const BOMDIA_LINES = { '1': 'Bom dia, meu atleta!', '2': 'Como você está hoje? Como foram os treinos?' };
+const BOMDIA_LINES = {
+  manha: { '1': 'Bom dia, meu atleta!', '2': 'Como você está hoje? Como foram os treinos?' },
+  tarde: { '1': 'Boa tarde, meu atleta!', '2': 'Como você está hoje? Como foram os treinos?' },
+  noite: { '1': 'Boa noite, meu atleta!', '2': 'Como foi o seu dia? Como foram os treinos?' },
+};
 const bomdiaVoiceCache = new Map(); // line -> Promise<Buffer>
 
 async function handle(req, res) {
@@ -1331,15 +1335,17 @@ async function handle(req, res) {
     if (method === 'GET' && pathname === '/api/professor/bomdia-voice') {
       if (!user) { res.writeHead(401); return res.end(JSON.stringify({ error: 'auth' })); }
       const line = String((parsed.query && parsed.query.line) || '');
-      const text = BOMDIA_LINES[line];
+      const period = BOMDIA_LINES[String((parsed.query && parsed.query.p) || '')] ? String(parsed.query.p) : 'manha';
+      const text = BOMDIA_LINES[period][line];
       if (!text) { res.writeHead(400); return res.end(JSON.stringify({ error: 'bad_line' })); }
-      let pending = bomdiaVoiceCache.get(line);
+      const cacheKey = period + ':' + line;
+      let pending = bomdiaVoiceCache.get(cacheKey);
       if (!pending) {
         const key = openaiApiKeyFor(user);
         if (!key) { res.writeHead(412, { 'content-type': 'application/json; charset=utf-8' }); return res.end(JSON.stringify({ error: 'missing_key' })); }
-        pending = synthesizeSpeech(key, text);
-        bomdiaVoiceCache.set(line, pending);
-        pending.catch(() => { if (bomdiaVoiceCache.get(line) === pending) bomdiaVoiceCache.delete(line); }); // never cache a failure
+        pending = synthesizeSpeech(key, text, { period });
+        bomdiaVoiceCache.set(cacheKey, pending);
+        pending.catch(() => { if (bomdiaVoiceCache.get(cacheKey) === pending) bomdiaVoiceCache.delete(cacheKey); }); // never cache a failure
       }
       try {
         const buf = await pending;
