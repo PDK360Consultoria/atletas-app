@@ -38,6 +38,8 @@ const { ensurePublicSlug, buildShareDraft, buildPRShareDraft, REACTION_KEYS, not
 const views = require('./views');
 const mod = require('./lib/moderation');
 const modViews = require('./views_moderation');
+const billing = require('./lib/billing');
+const premiumViews = require('./views_premium');
 const { coachPage } = require('./views_coach');
 const { professorPage } = require('./views_professor');
 
@@ -227,6 +229,38 @@ async function handle(req, res) {
       if (!ok) return redirect(res, '/settings?delete_error=1');
       deleteUserCompletely(db, user.id);
       return redirect(res, '/login', serializeCookie('session', '', { expire: true }));
+    }
+
+    // ---------- assinatura Premium (Apple / Google) ----------
+    const jsonOut = (code, obj) => { res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' }); return res.end(JSON.stringify(obj)); };
+    if (method === 'GET' && pathname === '/premium') {
+      if (!requireAuth()) return;
+      return html(res, 200, premiumViews.premiumPage(user, billing.statusFor(user)));
+    }
+    if (method === 'GET' && pathname === '/api/billing/status') {
+      if (!user) return jsonOut(401, { error: 'auth' });
+      return jsonOut(200, billing.statusFor(user));
+    }
+    if (method === 'POST' && (pathname === '/api/billing/ios/verify' || pathname === '/api/billing/android/verify')) {
+      if (!user) return jsonOut(401, { error: 'auth' });
+      let body = {};
+      try { body = JSON.parse((await readBody(req, 256 * 1024)).toString('utf8') || '{}'); } catch (e) { body = {}; }
+      try {
+        if (pathname === '/api/billing/ios/verify') {
+          const list = Array.isArray(body.signedTransactions) ? body.signedTransactions : [body.signedTransaction];
+          let last = null;
+          for (const jws of list.filter(Boolean).slice(0, 10)) last = await billing.verifyAppleTransaction(user.id, jws);
+          if (!last) return jsonOut(400, { error: 'empty' });
+        } else {
+          if (!billing.googleConfigured()) return jsonOut(501, { error: 'google_not_configured' });
+          if (!body.purchaseToken) return jsonOut(400, { error: 'empty' });
+          await billing.verifyGooglePurchase(user.id, String(body.purchaseToken));
+        }
+        return jsonOut(200, billing.statusFor(user));
+      } catch (e) {
+        console.error('billing verify error', e.message);
+        return jsonOut(422, { error: 'verify_failed', message: e.message });
+      }
     }
 
     // ---------- push tokens (mobile app) ----------
@@ -510,6 +544,7 @@ async function handle(req, res) {
     }
     if (method === 'POST' && (m = /^\/activities\/(\d+)\/analyze$/.exec(pathname))) {
       if (!requireAuth()) return;
+      if (!billing.hasPremium(user)) return redirect(res, '/premium');
       const activity = db.prepare('SELECT * FROM activities WHERE id = ? AND user_id = ?').get(m[1], user.id);
       if (!activity) return notFound(res);
       const laps = activity.laps_json ? JSON.parse(activity.laps_json) : [];
@@ -1092,6 +1127,7 @@ async function handle(req, res) {
     // kept separate from the athlete's general coach conversation.
     if (method === 'POST' && pathname === '/api/coach/send') {
       if (!user) { res.writeHead(401); return res.end('auth'); }
+      if (!billing.hasPremium(user)) { res.writeHead(402, { 'content-type': 'application/json; charset=utf-8' }); return res.end('{"error":"premium_required"}'); }
       let body = {};
       try {
         const raw = await readBody(req);
@@ -1245,6 +1281,7 @@ async function handle(req, res) {
     // Audio gravado no chat (botao de microfone) -> texto, com a chave OpenAI do atleta.
     if (method === 'POST' && pathname === '/api/coach/transcribe') {
       if (!user) { res.writeHead(401, { 'content-type': 'application/json; charset=utf-8' }); return res.end('{"error":"auth"}'); }
+      if (!billing.hasPremium(user)) { res.writeHead(402, { 'content-type': 'application/json; charset=utf-8' }); return res.end('{"error":"premium_required"}'); }
       const key = openaiApiKeyFor(user);
       if (!key) { res.writeHead(412, { 'content-type': 'application/json; charset=utf-8' }); return res.end('{"error":"missing_openai_key"}'); }
       let buf = null;
@@ -1313,6 +1350,7 @@ async function handle(req, res) {
 
     if (method === 'POST' && pathname === '/api/professor/realtime-session') {
       if (!user) { res.writeHead(401); return res.end(JSON.stringify({ error: 'auth' })); }
+      if (!billing.hasPremium(user)) { res.writeHead(402, { 'content-type': 'application/json; charset=utf-8' }); return res.end('{"error":"premium_required"}'); }
       const key = openaiApiKeyFor(user);
       if (!key) { res.writeHead(412, { 'content-type': 'application/json; charset=utf-8' }); return res.end(JSON.stringify({ error: 'missing_key' })); }
       try {
@@ -1493,6 +1531,7 @@ function deleteUserCompletely(db, uid) {
   db.prepare('DELETE FROM follows WHERE follower_id = ? OR followee_id = ?').run(uid, uid);
   db.prepare('DELETE FROM sessions WHERE user_id = ?').run(uid);
   db.prepare('DELETE FROM push_tokens WHERE user_id = ?').run(uid);
+  db.prepare('DELETE FROM subscriptions WHERE user_id = ?').run(uid);
   mod.removeUserModerationData(db, uid);
   db.prepare('DELETE FROM users WHERE id = ?').run(uid);
   for (const f of files) {
