@@ -358,6 +358,7 @@ function professorPage(user, opts) {
   TOQUE NO ORBE PRA FALAR<span class="sep">·</span>DIGA <kbd>"HEY PROFESSOR"</kbd> TAMBÉM FUNCIONA<span class="sep">·</span><kbd>ESC</kbd> ENCERRA<span class="sep">·</span>VERSÃO 9
 </div>
 
+<script>(function(){var f=window.fetch;if(!f)return;window.fetch=function(){return f.apply(this,arguments).then(function(r){if(r.status===402&&location.pathname.indexOf('/premium')!==0){location.href='/premium';}return r;});};})();</script>
 <script>
 (function(){
   'use strict';
