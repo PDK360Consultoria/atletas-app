@@ -671,6 +671,7 @@ ${showWidget ? COACH_WIDGET_SCRIPT : ''}
 ${user ? MOBILE_NAV_SCRIPT : ''}
 ${user ? NOTIF_SCRIPT : ''}
 ${user ? NATIVE_SCRIPT : ''}
+${user ? `<script>(function(){var f=window.fetch;if(!f)return;window.fetch=function(){return f.apply(this,arguments).then(function(r){if(r.status===402&&location.pathname.indexOf('/premium')!==0){location.href='/premium';}return r;});};})();</script>` : ''}
 ${user ? tourScript(['flame', 'shoe', 'mountain', 'trophy', 'camera', 'pin', 'chat', 'stopwatch', 'calendar'].reduce((o, n) => { o[n] = icon(n, 'tour-' + n); return o; }, {}), !user.tour_seen_at) : ''}
 ${bodyEnd || ''}
 <p class="site-foot"><a href="/privacidade">Privacidade</a> · <a href="/termos">Termos</a> · Compatível com Strava</p>
