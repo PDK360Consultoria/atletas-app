@@ -30,6 +30,9 @@ function termsPage(user) {
 <h2>Sua conta</h2>
 <p>Você pode excluir sua conta a qualquer momento em Configurações > Excluir conta. Os passos completos estão em <a href="/excluir-conta">runiqx.com/excluir-conta</a>.</p>
 
+<h2>Assinatura Premium</h2>
+<p>Os recursos de inteligência artificial (Professor ao vivo, Professor Chat e Análise com IA) fazem parte do <b>Runiqx Premium</b>, uma assinatura mensal de <b>R$ 19,90</b>, com renovação automática, comprada pela App Store ou pelo Google Play. O pagamento é cobrado na sua conta da loja na confirmação da compra e renovado a cada mês, a menos que você cancele pelo menos 24 horas antes do fim do período. Você gerencia e cancela a assinatura nos ajustes da sua conta da Apple (Ajustes &gt; seu nome &gt; Assinaturas) ou do Google Play (Pagamentos e assinaturas &gt; Assinaturas). Excluir a conta no Runiqx não cancela a assinatura: cancele antes na loja. Reembolsos seguem as regras da Apple e do Google.</p>
+
 <h2>Strava</h2>
 <p>Os dados que vêm da sua conta Strava são exibidos somente para você. O Runiqx não é afiliado à Strava.</p>
 
