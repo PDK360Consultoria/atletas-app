@@ -496,7 +496,7 @@ ready(function(){
     if (toggle && links && !links.contains(e.target) && !toggle.contains(e.target)) setOpen(false);
   });
   window.addEventListener('resize', function(){
-    if (window.innerWidth > 760) setOpen(false);
+    if (window.innerWidth > 1180) setOpen(false);
     setMoreOpen(false);
   });
 });
