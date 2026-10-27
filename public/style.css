@@ -60,7 +60,7 @@ a{color:inherit;}
 .nav-toggle[aria-expanded="true"] .nav-toggle-bar:nth-child(2){opacity:0;}
 .nav-toggle[aria-expanded="true"] .nav-toggle-bar:nth-child(3){transform:translateY(-6px) rotate(-45deg);}
 
-@media (max-width:760px){
+@media (max-width:1180px){
   .nav-toggle{display:flex;}
   .nav .links{
     display:none; position:absolute; left:0; right:0; top:100%;
