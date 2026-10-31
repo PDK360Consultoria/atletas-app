@@ -152,6 +152,10 @@ select{
 .hr-card .v{font-family:'IBM Plex Mono',monospace; font-weight:700; font-size:20px}
 
 footer{color:var(--muted); font-size:12.5px; border-top:1px solid var(--line); padding-top:14px; line-height:1.5}
+
+  /* iOS: campos < 16px provocam zoom ao focar */
+  @media (pointer:coarse){ input, textarea, select{font-size:16px;} }
+  body{padding-bottom:env(safe-area-inset-bottom,0px);}
 </style>
 </head>
 <body>
