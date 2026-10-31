@@ -1041,3 +1041,13 @@ body{padding-left:env(safe-area-inset-left); padding-right:env(safe-area-inset-r
   .coach-launcher{width:46px; height:46px; padding:11px;}
   .wrap{padding-bottom:120px;}
 }
+
+
+/* iOS: campos com fonte < 16px fazem o Safari dar zoom ao focar e cortar a tela. */
+@media (pointer:coarse){
+  input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]),
+  textarea, select{font-size:16px !important;}
+}
+@media (max-width:480px){
+  html,body{max-width:100%; overflow-x:hidden;}
+}
