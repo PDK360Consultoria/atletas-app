@@ -287,6 +287,26 @@ function professorPage(user, opts) {
     .log{width:100%;}
     .meter{flex-direction:row; align-items:center; justify-content:flex-end;}
   }
+
+  /* iPhone/iPad fixes: safe-area, no overlap on short screens, header fits 320px */
+  .topbar{padding-top:calc(22px + env(safe-area-inset-top,0px));}
+  body{padding-bottom:env(safe-area-inset-bottom,0px);}
+  @media (max-width:480px),(max-height:760px){
+    html,body{height:auto; min-height:100dvh;}
+    body{overflow-y:auto; overflow-x:hidden;}
+    .stage{flex:none; min-height:min(52vh,420px);}
+  }
+  @media (max-width:480px){
+    .topbar{padding-left:14px; padding-right:14px; gap:8px;}
+    .topleft{min-width:0; flex:1 1 auto;}
+    .brandblock{min-width:0;}
+    .brandblock .brand{font-size:18px; letter-spacing:0.14em;}
+    .brandblock .tag{font-size:9.5px; letter-spacing:0.06em;}
+    .topright{flex:none; gap:8px;}
+    .topnav{gap:11px;}
+    .topnav a{font-size:10.5px; letter-spacing:0.05em;}
+  }
+  @media (pointer:coarse){ input, textarea, select{font-size:16px;} }
 </style>
 </head>
 <body>
