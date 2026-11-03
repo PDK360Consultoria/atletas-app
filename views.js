@@ -265,7 +265,7 @@ function mount(opts){
     if (!aiEnabled) {
       clearEmpty();
       var warn = bubble(msgsEl, 'assistant');
-      warn.textContent = 'Cadastre sua chave da API da Anthropic em Config para conversar com o coach.';
+      warn.textContent = 'Para usar a IA, aceite o aviso de uso de IA de terceiros. Abrindo o aviso...'; setTimeout(function () { window.location.href = '/ai-consent?next=' + encodeURIComponent(location.pathname); }, 700);
       scrollBottom();
       return;
     }
@@ -289,7 +289,7 @@ function mount(opts){
       });
       if (!res.ok || !res.body) {
         replyB.textContent = res.status === 412
-          ? 'Cadastre sua chave da API da Anthropic em Config para conversar com o coach.'
+          ? 'Para usar a IA, aceite o aviso de uso de IA de terceiros em Config.'
           : 'Não consegui responder agora. Tenta de novo?';
       } else {
         var reader = res.body.getReader();
@@ -703,6 +703,10 @@ function privacyPage(user) {
 
 <h2>Compartilhamento</h2>
 <p>O que você publica no feed é visível para os outros atletas do app. Usamos provedores de infraestrutura para hospedar o serviço. Não compartilhamos seus dados com terceiros para publicidade.</p>
+
+<h2>Inteligência artificial de terceiros</h2>
+<p>Os recursos de IA do Runiqx (Professor, Coach por chat, análise de treino e voz) só funcionam depois que você lê e aceita o aviso de uso de IA, dentro do app. Se aceitar, enviamos para esses serviços: seu nome e perfil de corrida (nível, metas e provas), os dados dos treinos usados na conversa ou análise (distância, tempo, ritmo, frequência cardíaca, voltas e anotações) e as mensagens, imagens e o áudio que você enviar ao Professor ou ao Coach. Não enviamos senha, e-mail nem dados de pagamento.</p>
+<p>Os destinatários são a <strong>Anthropic PBC</strong> (modelo Claude, EUA), para o chat e a análise de treino, e a <strong>OpenAI</strong> (EUA), para a voz do Professor. Esses provedores usam os dados apenas para gerar a resposta pedida e oferecem proteção de dados equivalente à descrita nesta política. Você pode revogar o consentimento a qualquer momento em Config, e a IA deixa de receber seus dados.</p>
 
 <h2>Seus direitos</h2>
 <p>Você pode acessar, corrigir, exportar e excluir seus dados, e revogar consentimentos, escrevendo para o contato abaixo. Atendemos os pedidos em até 30 dias.</p>
@@ -2159,7 +2163,7 @@ ${trainingCompareChart(activity, evolution)}
 <div class="card" id="analise">
   <h2><span class="h-icon">${icon('heart', 'ai')}</span>Análise com IA</h2>
   ${!aiEnabled
-    ? `<p class="muted" style="margin:0;">Cadastre sua chave da API da Anthropic em <a href="/settings">Config</a> para gerar análises técnicas automáticas.</p>`
+    ? `<p class="muted" style="margin:0;">Para gerar análises com IA, <a href="/ai-consent?next=/activities/${activity.id}">leia e aceite o aviso de uso de IA de terceiros</a>.</p>`
     : activity.ai_analysis
       ? `${aictx.pillsHtml(aictx.parseStored(activity.ai_context_json))}<div class="ai-analysis">${renderMarkdownLite(activity.ai_analysis)}</div>
         <details style="margin-top:14px;"${missing.length ? ' open' : ''}><summary class="ghost-summary">↻ Gerar nova análise</summary><div style="margin-top:14px;">${aictx.formHtml(activity.id, aictx.parseStored(activity.ai_context_json), { missing, buttonLabel: 'Gerar nova análise' })}</div></details>`
@@ -2885,6 +2889,12 @@ ${flags.publicUrl ? `<div class="card">
     <a class="ghost btn" href="${esc(flags.publicUrl)}" target="_blank" rel="noopener">Abrir</a>
   </div>
 </div>` : ''}
+
+<div class="card">
+  <h2><span class="h-icon">${icon('heart', 'ai2')}</span>Uso de IA de terceiros</h2>
+  <p class="muted">Os recursos de IA enviam seus dados de treino e mensagens para a Anthropic e a OpenAI. Veja o aviso completo e gerencie seu consentimento.</p>
+  <a class="ghost btn" href="/ai-consent?next=/settings">Ver aviso e gerenciar consentimento</a>
+</div>
 
 <div class="card">
   <h2><span class="h-icon">${icon('heart', 'ai2')}</span>Chave da API da Anthropic (opcional)</h2>
