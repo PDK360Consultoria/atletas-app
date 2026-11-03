@@ -111,7 +111,30 @@ function baseUrl(req) {
 // Configurações to use their own account/billing instead — that choice
 // always wins when present.
 const SHARED_ANTHROPIC_KEY = (process.env.ANTHROPIC_SHARED_API_KEY || '').trim();
+try { db.exec('CREATE TABLE IF NOT EXISTS ai_consents (user_id INTEGER PRIMARY KEY, consented_at TEXT)'); } catch (e) { console.error('ai_consents table', e); }
+function hasAiConsent(user) {
+  if (!user) return false;
+  try { return !!db.prepare('SELECT 1 FROM ai_consents WHERE user_id = ?').get(user.id); } catch (e) { return false; }
+}
+function aiConsentPage(nextUrl, already) {
+  const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+  return '<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Uso de IA - Runiqx</title><style>' +
+    'body{margin:0;background:#0b0b0f;color:#f2f2f5;font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;font-size:16px;line-height:1.5;padding:max(20px,env(safe-area-inset-top)) 20px max(24px,env(safe-area-inset-bottom))}' +
+    '.w{max-width:560px;margin:0 auto}h1{font-size:24px;margin:8px 0 12px}h2{font-size:17px;margin:20px 0 6px}p,li{color:#c9c9d1}ul{padding-left:20px}a{color:#ffb020}' +
+    'button{font-size:16px;font-family:inherit;border-radius:12px;padding:14px 18px;border:0;width:100%;margin-top:10px;cursor:pointer}.ok{background:#ffb020;color:#111;font-weight:700}.no{background:#22222a;color:#f2f2f5}' +
+    '</style></head><body><div class="w"><h1>Uso de IA de terceiros</h1>' +
+    '<p>Os recursos de inteligência artificial do Runiqx (Professor, Coach por chat, análise de treino e voz) enviam dados para serviços de IA de terceiros. Leia e escolha se quer ativar.</p>' +
+    '<h2>Quais dados são enviados</h2><ul><li>Seu nome e perfil de corrida (nível, metas e provas cadastradas).</li><li>Dados dos treinos usados na conversa ou na análise: distância, tempo, ritmo, frequência cardíaca, voltas e anotações.</li><li>As mensagens, imagens e o áudio da sua fala que você enviar ao Professor ou ao Coach.</li></ul>' +
+    '<p>Não enviamos sua senha, seu e-mail nem dados de pagamento.</p>' +
+    '<h2>Para quem são enviados</h2><ul><li><b>Anthropic PBC</b> (Claude), nos EUA: chat do Coach e do Professor e análise de treino.</li><li><b>OpenAI</b>, nos EUA: voz do Professor (transcrição e fala).</li></ul>' +
+    '<p>Eles usam os dados apenas para gerar a resposta pedida, com proteção equivalente à descrita na nossa <a href="/privacidade">Política de Privacidade</a>. Nada é enviado antes do seu aceite, e você pode revogar quando quiser em Config.</p>' +
+    (already
+      ? '<form method="post" action="/ai-consent"><input type="hidden" name="action" value="revoke"><button class="no" type="submit">Revogar meu consentimento</button></form><form method="get" action="' + esc(nextUrl) + '"><button class="ok" type="submit">Voltar</button></form>'
+      : '<form method="post" action="/ai-consent"><input type="hidden" name="next" value="' + esc(nextUrl) + '"><input type="hidden" name="action" value="accept"><button class="ok" type="submit">Concordo e quero usar a IA</button></form><form method="get" action="/"><button class="no" type="submit">Agora não</button></form>') +
+    '</div></body></html>';
+}
 function apiKeyFor(user) {
+  if (!hasAiConsent(user)) return '';
   return (user && user.anthropic_api_key) || SHARED_ANTHROPIC_KEY || '';
 }
 
@@ -124,6 +147,7 @@ function apiKeyFor(user) {
 // until then, each athlete pastes their own OpenAI key in Configurações).
 const SHARED_OPENAI_KEY = (process.env.OPENAI_SHARED_API_KEY || '').trim();
 function openaiApiKeyFor(user) {
+  if (!hasAiConsent(user)) return '';
   return (user && user.openai_api_key) || SHARED_OPENAI_KEY || '';
 }
 
@@ -211,6 +235,27 @@ async function handle(req, res) {
   }
 
   const requireAuth = () => { if (!user) { redirect(res, '/login'); return false; } return true; };
+    if (pathname === '/ai-consent') {
+      if (!requireAuth()) return;
+      const nextRaw = new URL(req.url, 'http://x').searchParams.get('next') || String(fields.next || '');
+      const nextUrl = (nextRaw.startsWith('/') && !nextRaw.startsWith('//')) ? nextRaw : '/';
+      if (method === 'POST') {
+        if (fields.action === 'revoke') {
+          db.prepare('DELETE FROM ai_consents WHERE user_id = ?').run(user.id);
+          return redirect(res, '/settings');
+        }
+        if (fields.action === 'accept') {
+          db.prepare('INSERT OR REPLACE INTO ai_consents (user_id, consented_at) VALUES (?, ?)').run(user.id, new Date().toISOString());
+          return redirect(res, nextUrl);
+        }
+        return redirect(res, '/');
+      }
+      if (method === 'GET') return html(res, 200, aiConsentPage(nextUrl, hasAiConsent(user)));
+    }
+    if (user && !hasAiConsent(user)) {
+      const needsAi = (method === 'GET' && pathname === '/professor') || (method === 'POST' && /^\/activities\/\d+\/analyze$/.test(pathname));
+      if (needsAi) return redirect(res, '/ai-consent?next=' + encodeURIComponent(method === 'GET' ? pathname : pathname.replace(/\/analyze$/, '')));
+    }
   // 404s (not a redirect) for a logged-in non-admin — the admin dashboard's
   // existence isn't something a regular athlete needs to know about.
   const requireAdmin = () => {
