@@ -542,9 +542,9 @@ function professorPage(user, opts) {
   // session with; SLOW_SPEED is what the opening line and the "bom dia" line
   // switch to (session.update, then switched back when that line is done)
   // because Felipe could not understand the first greeting at normal pace.
-  var NORMAL_SPEED = 1.05;
-  var SLOW_SPEED = 1.05;
-  var RITUAL_SPEED = 1.05; // the bom-dia lines: brisk conversational pace (0.85 and even 1.0 sounded far too slow)
+  var NORMAL_SPEED = 1.12;
+  var SLOW_SPEED = 1.15;
+  var RITUAL_SPEED = 1.15; // the bom-dia lines: brisk conversational pace (0.85 and even 1.0 sounded far too slow)
   var greetingSlow = false;
   // The "quero meu bom dia, Professor" ritual: the Professor says "Bom dia,
   // meu atleta!" over loud rock, then asks how he is and how training went. State lives
@@ -576,7 +576,7 @@ function professorPage(user, opts) {
   var revealBuffer = '';
   var revealShown = '';
   var revealTimer = null;
-  var REVEAL_MS_PER_CHAR = 57; // ~17.5 chars/sec — about the pace of the voice (speed 1.05, lib/openai.js)
+  var REVEAL_MS_PER_CHAR = 53; // ~17.5 chars/sec — about the pace of the voice (speed 1.05, lib/openai.js)
   // The reply text is NEVER shown before the voice is actually playing: the
   // transcript arrives long before the audio does (especially on long answers),
   // so the gate stays closed until the audio starts (WebRTC output_audio_buffer.started,
@@ -1309,7 +1309,7 @@ function professorPage(user, opts) {
   // The music is /assets/bomdia.mp3 when that file exists (a clip Felipe
   // supplies, royalty-free); otherwise an ORIGINAL rock riff synthesized
   // right here with Web Audio, so the ritual always works.
-  var INTRO_MS = 3500, BUMP_MS = 2200, TAIL_MS = 3000, DUCK_LEVEL = 0.55;
+  var INTRO_MS = 2200, BUMP_MS = 1300, TAIL_MS = 3000, DUCK_LEVEL = 0.55;
   var MUSIC_URL = '/assets/bomdia.mp3?v=21s'; // versioned: browsers keep /assets files for 7 days, and the old 9-second clip was still cached
   var musicBytesPromise = null;
   function preloadMusic(){
