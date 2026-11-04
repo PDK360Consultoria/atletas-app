@@ -2551,7 +2551,7 @@ function postCard(user, p, returnTo, mentionMap) {
   } else if (photos.length) {
     media = fx.carousel(photos.map(fx.photoSlide), '4/3');
   }
-  const stravaNote = p.strava_hidden ? `<p class="muted strava-note" style="font-size:12.5px; margin:8px 0 0;">Treino registrado pelo Strava. Os detalhes (mapa, pace, zonas) ficam visíveis só para o atleta.</p>` : '';
+  const stravaNote = p.strava_hidden ? `<div class="strava-hidden"><span class="shb-ico">${icon('shoe', 'shb' + p.id)}</span><div class="shb-txt"><b>Treino concluído</b><span>Mapa, pace e zonas ficam visíveis só para o atleta (regra da Strava).</span></div></div>` : '';
   const caption = p.body && !isAct ? `<div class="post-body${kind === 'texto' ? ' post-body-x' : ''}">${fx.linkify(p.body, mentionMap)}</div>` : '';
   return `<div class="card post-card post-${kind}${isAct ? ' post-card-auto' : ''}${p.is_pr ? ' post-pr' : ''}">
   <div class="post-head">
@@ -2574,6 +2574,7 @@ function postCard(user, p, returnTo, mentionMap) {
   <div class="post-actions">
     ${reactionPicker(p, returnTo)}
     <span class="post-comment-count">${icon('chat', 'c' + p.id)}<span>${comments.length}</span></span>
+        <button type="button" class="post-share-btn" data-share-user="${esc(p.author_name)}" data-share-url="${p.author_slug ? '/u/' + esc(p.author_slug) : '/'}" aria-label="Compartilhar">Compartilhar ↗</button>
   </div>
   ${comments.length ? `<div class="post-comments">
     ${comments.map((c) => `<div class="comment-item">${avatarHtml(c.author_name, c.user_id, c.author_avatar_path, 'comment-avatar')}<span class="comment-main"><span class="comment-author">${esc(c.author_name)}</span> <span class="comment-body">${esc(c.body)}</span><span class="comment-time">${timeAgo(c.created_at)}</span>${c.user_id !== user.id ? ` <a class="report-link xs" href="/denunciar?type=comment&id=${c.id}&return_to=${encodeURIComponent(returnTo)}">Denunciar</a>` : ''}</span></div>`).join('')}
@@ -2586,6 +2587,8 @@ function postCard(user, p, returnTo, mentionMap) {
   </form>
 </div>`;
 }
+
+const FEED_SHARE_SCRIPT = '<script>(function(){document.addEventListener("click",function(e){var b=e.target.closest&&e.target.closest(".post-share-btn");if(!b)return;e.preventDefault();var url=location.origin+(b.getAttribute("data-share-url")||"/");var text=(b.getAttribute("data-share-user")||"Um atleta")+" compartilhou um treino no Runiqx";if(navigator.share){navigator.share({title:"Runiqx",text:text,url:url}).catch(function(){});return;}if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(url).then(function(){var o=b.textContent;b.textContent="Link copiado";setTimeout(function(){b.textContent=o;},1800);});}else{window.prompt("Copie o link:",url);}});})();</script>';
 
 function feedPage(user, posts, opts) {
   opts = opts || {};
@@ -2677,15 +2680,13 @@ ${fx.FEED_SCRIPT}
 ${mainTabs}
 ${scopeTabs}
 ${opts.tag ? `<div class="tag-filter"><span class="pill"><span class="dot"></span>#${esc(opts.tag)}</span> <a href="/feed">limpar filtro</a></div>` : ''}
-${!opts.tag ? fx.storiesBar(opts.stories, user, avatarHtml) : ''}
-${!opts.tag ? fx.weekCard(opts.week, user, avatarHtml) : ''}
-${fx.composer(user, opts, avatarHtml)}
+<div class="feed-grid"><aside class="feed-rail">${!opts.tag ? fx.storiesBar(opts.stories, user, avatarHtml) : ''} ${!opts.tag ? fx.weekCard(opts.week, user, avatarHtml) : ''}</aside><div class="feed-main">${fx.composer(user, opts, avatarHtml)}
 ${list(emptyHtml(opts.tag ? 'Nenhum post com essa hashtag' : (scope === 'following' ? 'Ninguém que você segue postou ainda' : 'Nenhum post ainda'), scope === 'following' ? 'Siga outros atletas pelo perfil público deles para ver os treinos aqui.' : 'Seja o primeiro a compartilhar com a galera.'))}
-${pagination}
+${pagination}</div></div>
 ${LIVE_MAP_SCRIPT}
-${fx.FEED_SCRIPT}
+${fx.FEED_SCRIPT} ${FEED_SHARE_SCRIPT}
 `;
-  return layout({ title: 'Feed', user, body, active: 'feed' });
+  return layout({ title: 'Feed', user, body, active: 'feed', wrapClass: view === 'pub' ? 'wrap-feed' : undefined });
 }
 
 function readerPage(user, a, meta) {
