@@ -1,3 +1,4 @@
+const { STRIP_EMBED } = require('./lib/stripembed');
 const { esc } = require('./lib/format');
 const { STORYCARD_JS } = require('./lib/storycard_client');
 
@@ -310,6 +311,7 @@ function professorPage(user, opts) {
 </style>
 </head>
 <body>
+${STRIP_EMBED}
 <div class="bgwash"></div>
 <div class="scan"></div>
 
