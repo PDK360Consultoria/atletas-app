@@ -598,6 +598,67 @@ ready(function(){
 })();
 </script>`;
 
+const THEME_INIT_SCRIPT = '<script>try{var t=localStorage.getItem("rq-theme");if(t==="light"||t==="dark"){document.documentElement.setAttribute("data-theme",t);}}catch(e){}</script>';
+
+function topStripHtml(active) {
+  return [
+    '<div class="rq-strip" id="rqStrip" data-home="' + (active === 'home' ? '1' : '0') + '" aria-label="Resumo do atleta">',
+    '<div class="rq-strip-in">',
+    '<span class="rq-strip-name" id="rqsName"></span>',
+    '<span class="rq-chip"><b id="rqsDays">—</b><i>dias p/ prova</i></span>',
+    '<span class="rq-chip"><b id="rqsGoal">—</b><i>meta</i></span>',
+    '<span class="rq-chip"><b id="rqsKm">—</b><i>km na semana</i></span>',
+    '</div></div>',
+  ].join('');
+}
+
+const TOP_STRIP_SCRIPT = [
+  '<script>(function(){',
+  'var strip=document.getElementById("rqStrip"),nav=document.querySelector(".nav");',
+  'if(!strip)return;',
+  'function setH(){if(nav){document.documentElement.style.setProperty("--nav-h",nav.offsetHeight+"px");}}',
+  'setH();window.addEventListener("resize",setH);window.addEventListener("load",setH);',
+  'if(window.ResizeObserver&&nav){try{new ResizeObserver(setH).observe(nav);}catch(e){}}',
+  'function pad(n){return n<10?"0"+n:""+n;}',
+  'function clock(s){s=Math.round(s);var h=Math.floor(s/3600),m=Math.floor((s%3600)/60);return h+":"+pad(m)+":"+pad(s%60);}',
+  'function el(id){return document.getElementById(id);}',
+  'function paint(d){',
+  'if(!d)return;',
+  'if(el("rqsName"))el("rqsName").textContent=d.name?("Olá, "+d.name):"";',
+  'if(el("rqsDays"))el("rqsDays").textContent=(d.days===null||d.days===undefined)?"—":d.days;',
+  'if(el("rqsGoal"))el("rqsGoal").textContent=d.goalSec?clock(d.goalSec):"—";',
+  'if(el("rqsKm"))el("rqsKm").textContent=(d.weekKm===null||d.weekKm===undefined)?"—":String(d.weekKm).replace(".",",");',
+  'strip.classList.add("ready");vis();}',
+  'function vis(){var home=strip.getAttribute("data-home")==="1";strip.classList.toggle("on",strip.classList.contains("ready")&&(!home||window.scrollY>240));}',
+  'window.addEventListener("scroll",vis,{passive:true});',
+  'var cached=null;try{cached=JSON.parse(sessionStorage.getItem("rq-strip")||"null");}catch(e){}',
+  'if(cached)paint(cached);',
+  'fetch("/api/strip",{credentials:"same-origin",cache:"no-store"}).then(function(r){return r.ok?r.json():null;}).then(function(d){if(d&&!d.error){try{sessionStorage.setItem("rq-strip",JSON.stringify(d));}catch(e){}paint(d);}}).catch(function(){});',
+  '})();</script>',
+].join('\n');
+
+const THEME_SCRIPT = [
+  '<script>(function(){',
+  'var btn=document.getElementById("themeToggle");if(!btn)return;',
+  'var root=document.documentElement;',
+  'function cur(){var t=null;try{t=localStorage.getItem("rq-theme");}catch(e){}return(t==="light"||t==="dark")?t:"auto";}',
+  'function apply(t){',
+  'if(t==="auto"){root.removeAttribute("data-theme");}else{root.setAttribute("data-theme",t);}',
+  'var dark=t==="dark"||(t==="auto"&&window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches);',
+  'var m=document.querySelector("meta[name=theme-color]");if(m)m.setAttribute("content",dark?"#0B0D10":"#F4F3EF");',
+  'btn.textContent=t==="light"?"☀":(t==="dark"?"☾":"◐");',
+  'var nome=t==="light"?"claro":(t==="dark"?"escuro":"automático");',
+  'btn.setAttribute("title","Tema: "+nome);btn.setAttribute("aria-label","Tema: "+nome+". Toque para alternar");}',
+  'btn.addEventListener("click",function(){',
+  'var c=cur(),n=c==="auto"?"light":(c==="light"?"dark":"auto");',
+  'try{if(n==="auto"){localStorage.removeItem("rq-theme");}else{localStorage.setItem("rq-theme",n);}}catch(e){}',
+  'apply(n);',
+  'if(document.getElementById("hero-canvas")){location.reload();}',
+  '});',
+  'apply(cur());',
+  '})();</script>',
+].join('\n');
+
 function layout({ title, user, body, active, extraHead, bodyEnd, hideCoachWidget, bodyClass, wrapClass, navVariant }) {
   const nav = user
     ? `<nav class="nav">
@@ -632,6 +693,7 @@ function layout({ title, user, body, active, extraHead, bodyEnd, hideCoachWidget
               <div class="notif-list" id="notifList"><p class="muted" style="margin:10px 14px;">Carregando…</p></div>
             </div>
           </div>
+          <button class="theme-toggle" id="themeToggle" type="button" aria-label="Alternar tema" title="Tema">◐</button>
           <a class="link" href="/logout">Sair</a>
         </div>
       </nav>`
@@ -657,10 +719,11 @@ function layout({ title, user, body, active, extraHead, bodyEnd, hideCoachWidget
 <link rel="apple-touch-icon" href="/assets/runiqx-icon-192.png">
 <title>${esc(title)} · Runiqx</title>
 <link rel="stylesheet" href="/style.css">
-${extraHead || ''}
+${THEME_INIT_SCRIPT}
+  ${extraHead || ''}
 </head>
 <body${bodyClass ? ` class="${bodyClass}"` : ''}>
-${nav}
+${nav}${user ? topStripHtml(active) : ''}
 <div class="wrap${wrapClass ? ` ${wrapClass}` : ''}">
 ${body}
 </div>
@@ -671,6 +734,8 @@ ${showWidget ? COACH_WIDGET_SCRIPT : ''}
 ${user ? MOBILE_NAV_SCRIPT : ''}
 ${user ? NOTIF_SCRIPT : ''}
 ${user ? NATIVE_SCRIPT : ''}
+  ${user ? TOP_STRIP_SCRIPT : ''}
+  ${user ? THEME_SCRIPT : ''}
 ${user ? `<script>(function(){var f=window.fetch;if(!f)return;window.fetch=function(){return f.apply(this,arguments).then(function(r){if(r.status===402&&location.pathname.indexOf('/premium')!==0){location.href='/premium';}return r;});};})();</script>` : ''}
 ${user ? tourScript(['flame', 'shoe', 'mountain', 'trophy', 'camera', 'pin', 'chat', 'stopwatch', 'calendar'].reduce((o, n) => { o[n] = icon(n, 'tour-' + n); return o; }, {}), !user.tour_seen_at) : ''}
 ${bodyEnd || ''}
@@ -947,7 +1012,7 @@ const HERO_SCRIPT = `<script defer>
 
       if (!canvas || !hero || typeof THREE === 'undefined') return;
 
-      var dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      var dark = document.documentElement.getAttribute('data-theme') === 'dark' || (document.documentElement.getAttribute('data-theme') !== 'light' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
       // Phones report a high devicePixelRatio (often 3) on top of a full
       // fixed-viewport canvas — combined with MSAA + shadow maps that's
       // enough framebuffer memory to make mobile Safari/Chrome silently
@@ -2486,7 +2551,7 @@ function postCard(user, p, returnTo, mentionMap) {
   } else if (photos.length) {
     media = fx.carousel(photos.map(fx.photoSlide), '4/3');
   }
-  const stravaNote = p.strava_hidden ? `<p class="muted strava-note" style="font-size:12.5px; margin:8px 0 0;">Treino registrado pelo Strava. Os detalhes (mapa, pace, zonas) ficam visíveis só para o atleta.</p>` : '';
+  const stravaNote = p.strava_hidden ? `<div class="strava-hidden"><span class="shb-ico">${icon('shoe', 'shb' + p.id)}</span><div class="shb-txt"><b>Treino concluído</b><span>Mapa, pace e zonas ficam visíveis só para o atleta (regra da Strava).</span></div></div>` : '';
   const caption = p.body && !isAct ? `<div class="post-body${kind === 'texto' ? ' post-body-x' : ''}">${fx.linkify(p.body, mentionMap)}</div>` : '';
   return `<div class="card post-card post-${kind}${isAct ? ' post-card-auto' : ''}${p.is_pr ? ' post-pr' : ''}">
   <div class="post-head">
@@ -2509,6 +2574,7 @@ function postCard(user, p, returnTo, mentionMap) {
   <div class="post-actions">
     ${reactionPicker(p, returnTo)}
     <span class="post-comment-count">${icon('chat', 'c' + p.id)}<span>${comments.length}</span></span>
+        <button type="button" class="post-share-btn" data-share-user="${esc(p.author_name)}" data-share-url="${p.author_slug ? '/u/' + esc(p.author_slug) : '/'}" aria-label="Compartilhar">Compartilhar ↗</button>
   </div>
   ${comments.length ? `<div class="post-comments">
     ${comments.map((c) => `<div class="comment-item">${avatarHtml(c.author_name, c.user_id, c.author_avatar_path, 'comment-avatar')}<span class="comment-main"><span class="comment-author">${esc(c.author_name)}</span> <span class="comment-body">${esc(c.body)}</span><span class="comment-time">${timeAgo(c.created_at)}</span>${c.user_id !== user.id ? ` <a class="report-link xs" href="/denunciar?type=comment&id=${c.id}&return_to=${encodeURIComponent(returnTo)}">Denunciar</a>` : ''}</span></div>`).join('')}
@@ -2521,6 +2587,8 @@ function postCard(user, p, returnTo, mentionMap) {
   </form>
 </div>`;
 }
+
+const FEED_SHARE_SCRIPT = '<script>(function(){document.addEventListener("click",function(e){var b=e.target.closest&&e.target.closest(".post-share-btn");if(!b)return;e.preventDefault();var url=location.origin+(b.getAttribute("data-share-url")||"/");var text=(b.getAttribute("data-share-user")||"Um atleta")+" compartilhou um treino no Runiqx";if(navigator.share){navigator.share({title:"Runiqx",text:text,url:url}).catch(function(){});return;}if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(url).then(function(){var o=b.textContent;b.textContent="Link copiado";setTimeout(function(){b.textContent=o;},1800);});}else{window.prompt("Copie o link:",url);}});})();</script>';
 
 function feedPage(user, posts, opts) {
   opts = opts || {};
@@ -2612,15 +2680,13 @@ ${fx.FEED_SCRIPT}
 ${mainTabs}
 ${scopeTabs}
 ${opts.tag ? `<div class="tag-filter"><span class="pill"><span class="dot"></span>#${esc(opts.tag)}</span> <a href="/feed">limpar filtro</a></div>` : ''}
-${!opts.tag ? fx.storiesBar(opts.stories, user, avatarHtml) : ''}
-${!opts.tag ? fx.weekCard(opts.week, user, avatarHtml) : ''}
-${fx.composer(user, opts, avatarHtml)}
+<div class="feed-grid"><aside class="feed-rail">${!opts.tag ? fx.storiesBar(opts.stories, user, avatarHtml) : ''} ${!opts.tag ? fx.weekCard(opts.week, user, avatarHtml) : ''}</aside><div class="feed-main">${fx.composer(user, opts, avatarHtml)}
 ${list(emptyHtml(opts.tag ? 'Nenhum post com essa hashtag' : (scope === 'following' ? 'Ninguém que você segue postou ainda' : 'Nenhum post ainda'), scope === 'following' ? 'Siga outros atletas pelo perfil público deles para ver os treinos aqui.' : 'Seja o primeiro a compartilhar com a galera.'))}
-${pagination}
+${pagination}</div></div>
 ${LIVE_MAP_SCRIPT}
-${fx.FEED_SCRIPT}
+${fx.FEED_SCRIPT} ${FEED_SHARE_SCRIPT}
 `;
-  return layout({ title: 'Feed', user, body, active: 'feed' });
+  return layout({ title: 'Feed', user, body, active: 'feed', wrapClass: view === 'pub' ? 'wrap-feed' : undefined });
 }
 
 function readerPage(user, a, meta) {

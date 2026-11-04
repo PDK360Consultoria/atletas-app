@@ -435,7 +435,26 @@ async function handle(req, res) {
       return html(res, 200, views.discoverPage(user, athletes, q));
     }
 
-    // ---------- dashboard ----------
+    // ---------- faixa fixa do topo (resumo do atleta) ----------
+  if (method === 'GET' && pathname === '/api/strip') {
+    if (!user) { res.writeHead(401, { 'content-type': 'application/json' }); return res.end('{"error":"auth"}'); }
+    try {
+      const sRaces = db.prepare('SELECT * FROM races WHERE user_id = ? ORDER BY race_date ASC').all(user.id);
+      const sToday = new Date();
+      const sNext = sRaces.find((r) => r.race_date && new Date(r.race_date) >= sToday) || sRaces[0] || null;
+      const sDays = sNext && sNext.race_date ? Math.max(0, Math.ceil((new Date(sNext.race_date) - sToday) / 86400000)) : null;
+      const sActs = db.prepare('SELECT * FROM activities WHERE user_id = ?').all(user.id);
+      const sEvo = computeEvolution(sActs);
+      const sWeek = sEvo && sEvo.weeks && sEvo.weeks.length ? sEvo.weeks[sEvo.weeks.length - 1].km : 0;
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
+      return res.end(JSON.stringify({ name: String(user.name || '').split(' ')[0], days: sDays, goalSec: user.goal_time_sec || null, weekKm: Math.round((sWeek || 0) * 10) / 10, race: sNext ? sNext.name : (user.goal_race_name || null) }));
+    } catch (e) {
+      res.writeHead(500, { 'content-type': 'application/json' });
+      return res.end('{"error":"strip"}');
+    }
+  }
+
+  // ---------- dashboard ----------
     if (method === 'GET' && pathname === '/') {
       if (!user) return html(res, 200, views.landingPage());
       if (user.strava_refresh_token) {
