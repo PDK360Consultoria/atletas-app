@@ -718,7 +718,7 @@ function layout({ title, user, body, active, extraHead, bodyEnd, hideCoachWidget
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/assets/runiqx-icon-192.png">
 <title>${esc(title)} · Runiqx</title>
-<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/style.css?v=3">
 ${THEME_INIT_SCRIPT}
   ${extraHead || ''}
 </head>
@@ -788,7 +788,7 @@ function privacyPage(user) {
 <html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0B0D10">
 <link rel="manifest" href="/manifest.webmanifest">
-<link rel="apple-touch-icon" href="/assets/runiqx-icon-192.png"><title>Privacidade · Runiqx</title><link rel="stylesheet" href="/style.css"></head>
+<link rel="apple-touch-icon" href="/assets/runiqx-icon-192.png"><title>Privacidade · Runiqx</title><link rel="stylesheet" href="/style.css?v=3"></head>
 <body><div class="wrap" style="max-width:760px; margin:0 auto; padding:24px 16px;"><div class="center-logo"><a href="/" style="color:inherit; text-decoration:none;">Runiqx</a></div>${body}</div></body></html>`;
 }
 
@@ -821,7 +821,7 @@ function deleteAccountPage(user) {
 <html lang="pt-BR"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0B0D10">
 <link rel="manifest" href="/manifest.webmanifest">
-<link rel="apple-touch-icon" href="/assets/runiqx-icon-192.png"><title>Excluir conta · Runiqx</title><link rel="stylesheet" href="/style.css"></head>
+<link rel="apple-touch-icon" href="/assets/runiqx-icon-192.png"><title>Excluir conta · Runiqx</title><link rel="stylesheet" href="/style.css?v=3"></head>
 <body><div class="wrap" style="max-width:760px; margin:0 auto; padding:24px 16px;"><div class="center-logo"><a href="/" style="color:inherit; text-decoration:none;">Runiqx</a></div>${body}</div></body></html>`;
 }
 
@@ -835,7 +835,7 @@ function authLayout(title, body) {
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/assets/runiqx-icon-192.png">
 <title>${esc(title)} · Runiqx</title>
-<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/style.css?v=3">
 </head>
 <body>
 <div class="auth-box">
