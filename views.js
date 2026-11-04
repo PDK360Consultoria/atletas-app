@@ -598,6 +598,67 @@ ready(function(){
 })();
 </script>`;
 
+const THEME_INIT_SCRIPT = '<script>try{var t=localStorage.getItem("rq-theme");if(t==="light"||t==="dark"){document.documentElement.setAttribute("data-theme",t);}}catch(e){}</script>';
+
+function topStripHtml(active) {
+  return [
+    '<div class="rq-strip" id="rqStrip" data-home="' + (active === 'home' ? '1' : '0') + '" aria-label="Resumo do atleta">',
+    '<div class="rq-strip-in">',
+    '<span class="rq-strip-name" id="rqsName"></span>',
+    '<span class="rq-chip"><b id="rqsDays">—</b><i>dias p/ prova</i></span>',
+    '<span class="rq-chip"><b id="rqsGoal">—</b><i>meta</i></span>',
+    '<span class="rq-chip"><b id="rqsKm">—</b><i>km na semana</i></span>',
+    '</div></div>',
+  ].join('');
+}
+
+const TOP_STRIP_SCRIPT = [
+  '<script>(function(){',
+  'var strip=document.getElementById("rqStrip"),nav=document.querySelector(".nav");',
+  'if(!strip)return;',
+  'function setH(){if(nav){document.documentElement.style.setProperty("--nav-h",nav.offsetHeight+"px");}}',
+  'setH();window.addEventListener("resize",setH);window.addEventListener("load",setH);',
+  'if(window.ResizeObserver&&nav){try{new ResizeObserver(setH).observe(nav);}catch(e){}}',
+  'function pad(n){return n<10?"0"+n:""+n;}',
+  'function clock(s){s=Math.round(s);var h=Math.floor(s/3600),m=Math.floor((s%3600)/60);return h+":"+pad(m)+":"+pad(s%60);}',
+  'function el(id){return document.getElementById(id);}',
+  'function paint(d){',
+  'if(!d)return;',
+  'if(el("rqsName"))el("rqsName").textContent=d.name?("Olá, "+d.name):"";',
+  'if(el("rqsDays"))el("rqsDays").textContent=(d.days===null||d.days===undefined)?"—":d.days;',
+  'if(el("rqsGoal"))el("rqsGoal").textContent=d.goalSec?clock(d.goalSec):"—";',
+  'if(el("rqsKm"))el("rqsKm").textContent=(d.weekKm===null||d.weekKm===undefined)?"—":String(d.weekKm).replace(".",",");',
+  'strip.classList.add("ready");vis();}',
+  'function vis(){var home=strip.getAttribute("data-home")==="1";strip.classList.toggle("on",strip.classList.contains("ready")&&(!home||window.scrollY>240));}',
+  'window.addEventListener("scroll",vis,{passive:true});',
+  'var cached=null;try{cached=JSON.parse(sessionStorage.getItem("rq-strip")||"null");}catch(e){}',
+  'if(cached)paint(cached);',
+  'fetch("/api/strip",{credentials:"same-origin",cache:"no-store"}).then(function(r){return r.ok?r.json():null;}).then(function(d){if(d&&!d.error){try{sessionStorage.setItem("rq-strip",JSON.stringify(d));}catch(e){}paint(d);}}).catch(function(){});',
+  '})();</script>',
+].join('\n');
+
+const THEME_SCRIPT = [
+  '<script>(function(){',
+  'var btn=document.getElementById("themeToggle");if(!btn)return;',
+  'var root=document.documentElement;',
+  'function cur(){var t=null;try{t=localStorage.getItem("rq-theme");}catch(e){}return(t==="light"||t==="dark")?t:"auto";}',
+  'function apply(t){',
+  'if(t==="auto"){root.removeAttribute("data-theme");}else{root.setAttribute("data-theme",t);}',
+  'var dark=t==="dark"||(t==="auto"&&window.matchMedia&&window.matchMedia("(prefers-color-scheme: dark)").matches);',
+  'var m=document.querySelector("meta[name=theme-color]");if(m)m.setAttribute("content",dark?"#0B0D10":"#F4F3EF");',
+  'btn.textContent=t==="light"?"☀":(t==="dark"?"☾":"◐");',
+  'var nome=t==="light"?"claro":(t==="dark"?"escuro":"automático");',
+  'btn.setAttribute("title","Tema: "+nome);btn.setAttribute("aria-label","Tema: "+nome+". Toque para alternar");}',
+  'btn.addEventListener("click",function(){',
+  'var c=cur(),n=c==="auto"?"light":(c==="light"?"dark":"auto");',
+  'try{if(n==="auto"){localStorage.removeItem("rq-theme");}else{localStorage.setItem("rq-theme",n);}}catch(e){}',
+  'apply(n);',
+  'if(document.getElementById("hero-canvas")){location.reload();}',
+  '});',
+  'apply(cur());',
+  '})();</script>',
+].join('\n');
+
 function layout({ title, user, body, active, extraHead, bodyEnd, hideCoachWidget, bodyClass, wrapClass, navVariant }) {
   const nav = user
     ? `<nav class="nav">
@@ -632,6 +693,7 @@ function layout({ title, user, body, active, extraHead, bodyEnd, hideCoachWidget
               <div class="notif-list" id="notifList"><p class="muted" style="margin:10px 14px;">Carregando…</p></div>
             </div>
           </div>
+          <button class="theme-toggle" id="themeToggle" type="button" aria-label="Alternar tema" title="Tema">◐</button>
           <a class="link" href="/logout">Sair</a>
         </div>
       </nav>`
@@ -657,10 +719,11 @@ function layout({ title, user, body, active, extraHead, bodyEnd, hideCoachWidget
 <link rel="apple-touch-icon" href="/assets/runiqx-icon-192.png">
 <title>${esc(title)} · Runiqx</title>
 <link rel="stylesheet" href="/style.css">
-${extraHead || ''}
+${THEME_INIT_SCRIPT}
+  ${extraHead || ''}
 </head>
 <body${bodyClass ? ` class="${bodyClass}"` : ''}>
-${nav}
+${nav}${user ? topStripHtml(active) : ''}
 <div class="wrap${wrapClass ? ` ${wrapClass}` : ''}">
 ${body}
 </div>
@@ -671,6 +734,8 @@ ${showWidget ? COACH_WIDGET_SCRIPT : ''}
 ${user ? MOBILE_NAV_SCRIPT : ''}
 ${user ? NOTIF_SCRIPT : ''}
 ${user ? NATIVE_SCRIPT : ''}
+  ${user ? TOP_STRIP_SCRIPT : ''}
+  ${user ? THEME_SCRIPT : ''}
 ${user ? `<script>(function(){var f=window.fetch;if(!f)return;window.fetch=function(){return f.apply(this,arguments).then(function(r){if(r.status===402&&location.pathname.indexOf('/premium')!==0){location.href='/premium';}return r;});};})();</script>` : ''}
 ${user ? tourScript(['flame', 'shoe', 'mountain', 'trophy', 'camera', 'pin', 'chat', 'stopwatch', 'calendar'].reduce((o, n) => { o[n] = icon(n, 'tour-' + n); return o; }, {}), !user.tour_seen_at) : ''}
 ${bodyEnd || ''}
@@ -947,7 +1012,7 @@ const HERO_SCRIPT = `<script defer>
 
       if (!canvas || !hero || typeof THREE === 'undefined') return;
 
-      var dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      var dark = document.documentElement.getAttribute('data-theme') === 'dark' || (document.documentElement.getAttribute('data-theme') !== 'light' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
       // Phones report a high devicePixelRatio (often 3) on top of a full
       // fixed-viewport canvas — combined with MSAA + shadow maps that's
       // enough framebuffer memory to make mobile Safari/Chrome silently
