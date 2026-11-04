@@ -1,3 +1,4 @@
+const { STRIP_EMBED } = require('./lib/stripembed');
 const { esc } = require('./lib/format');
 
 // Standalone page (own theme, not the shared app CSS) — ported from the
@@ -159,6 +160,7 @@ footer{color:var(--muted); font-size:12.5px; border-top:1px solid var(--line); p
 </style>
 </head>
 <body>
+${STRIP_EMBED}
 
 <div class="topbar">
   <a class="brand" href="/">Runiqx</a>
