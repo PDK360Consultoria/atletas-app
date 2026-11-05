@@ -42,6 +42,10 @@ const billing = require('./lib/billing');
 const premiumViews = require('./views_premium');
 const { coachPage } = require('./views_coach');
 const { professorPage } = require('./views_professor');
+const { parseCourse } = require('./lib/course');
+const { phaseInstructions, courseTextFor } = require('./lib/runcoach');
+const { zoneBounds } = require('./lib/zones');
+const { runPage } = require('./views_run');
 
 const PORT = process.env.PORT || 3000;
 const UPLOAD_DIR = process.env.UPLOAD_DIR || path.join(__dirname, 'uploads');
@@ -253,7 +257,7 @@ async function handle(req, res) {
       if (method === 'GET') return html(res, 200, aiConsentPage(nextUrl, hasAiConsent(user)));
     }
     if (user && !hasAiConsent(user)) {
-      const needsAi = (method === 'GET' && pathname === '/professor') || (method === 'POST' && /^\/activities\/\d+\/analyze$/.test(pathname));
+      const needsAi = (method === 'GET' && (pathname === '/professor' || pathname === '/corrida')) || (method === 'POST' && /^\/activities\/\d+\/analyze$/.test(pathname));
       if (needsAi) return redirect(res, '/ai-consent?next=' + encodeURIComponent(method === 'GET' ? pathname : pathname.replace(/\/analyze$/, '')));
     }
   // 404s (not a redirect) for a logged-in non-admin — the admin dashboard's
@@ -489,7 +493,8 @@ async function handle(req, res) {
     // ---------- races ----------
     if (method === 'GET' && pathname === '/races') {
       if (!requireAuth()) return;
-      const races = db.prepare('SELECT * FROM races WHERE user_id = ? ORDER BY race_date ASC').all(user.id);
+      const races = db.prepare(`SELECT r.*, c.gain_m AS course_gain, CASE WHEN c.race_id IS NULL THEN 0 ELSE 1 END AS has_course
+        FROM races r LEFT JOIN race_courses c ON c.race_id = r.id WHERE r.user_id = ? ORDER BY r.race_date ASC`).all(user.id);
       const region = ['auto', 'litoral', 'pr', 'custom'].includes(parsed.query.region) ? parsed.query.region : 'auto';
       const customQuery = (parsed.query.q || '').trim();
       const nearbyRaces = await fetchNearbyRaces({ city: user.city, days: 60, region, customQuery });
@@ -518,6 +523,120 @@ async function handle(req, res) {
       if (!requireAuth()) return;
       db.prepare('DELETE FROM races WHERE id = ? AND user_id = ?').run(m[1], user.id);
       return redirect(res, '/races');
+    }
+
+
+    // ---------- percurso (altimetria) da prova ----------
+    if (method === 'POST' && (m = /^\/races\/(\d+)\/course$/.exec(pathname))) {
+      if (!requireAuth()) return;
+      const race = db.prepare('SELECT * FROM races WHERE id = ? AND user_id = ?').get(m[1], user.id);
+      if (!race) return notFound(res);
+      const file = files.file;
+      if (!file || !file.data || !file.data.length) return redirect(res, '/races?course=empty');
+      try {
+        const c = parseCourse(file.data.toString('utf8'));
+        db.prepare(`INSERT OR REPLACE INTO race_courses (race_id, user_id, filename, distance_km, gain_m, loss_m, points_json, climbs_json)
+          VALUES (?,?,?,?,?,?,?,?)`).run(race.id, user.id, String(file.filename || '').slice(0, 120), c.distance_km, c.gain_m, c.loss_m, JSON.stringify(c.points), JSON.stringify(c.climbs));
+        if (!race.distance_km) db.prepare('UPDATE races SET distance_km = ? WHERE id = ?').run(Math.round(c.distance_km * 10) / 10, race.id);
+        return redirect(res, '/races?course=ok');
+      } catch (e) {
+        return redirect(res, '/races?course=bad');
+      }
+    }
+    if (method === 'POST' && (m = /^\/races\/(\d+)\/course\/delete$/.exec(pathname))) {
+      if (!requireAuth()) return;
+      db.prepare('DELETE FROM race_courses WHERE race_id = ? AND user_id = ?').run(m[1], user.id);
+      return redirect(res, '/races');
+    }
+    if (method === 'GET' && (m = /^\/api\/races\/(\d+)\/course$/.exec(pathname))) {
+      if (!user) { res.writeHead(401, { 'content-type': 'application/json' }); return res.end('{"error":"auth"}'); }
+      const row = db.prepare('SELECT * FROM race_courses WHERE race_id = ? AND user_id = ?').get(m[1], user.id);
+      if (!row) { res.writeHead(404, { 'content-type': 'application/json' }); return res.end('{"error":"no_course"}'); }
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'private, max-age=300' });
+      return res.end(JSON.stringify({ distance_km: row.distance_km, gain_m: row.gain_m, loss_m: row.loss_m, points: JSON.parse(row.points_json), climbs: JSON.parse(row.climbs_json || '[]') }));
+    }
+
+    // ---------- Professor ao vivo na corrida ----------
+    if (method === 'GET' && pathname === '/corrida') {
+      if (!requireAuth()) return;
+      const races = db.prepare(`SELECT r.*, (SELECT 1 FROM race_courses c WHERE c.race_id = r.id) AS has_course
+        FROM races r WHERE r.user_id = ? AND (r.race_date IS NULL OR r.race_date >= date('now','-1 day')) ORDER BY r.race_date ASC`).all(user.id);
+      const acts = db.prepare('SELECT max_hr FROM activities WHERE user_id = ?').all(user.id);
+      const obsMax = acts.reduce((mx, a) => Math.max(mx, a.max_hr || 0), 0);
+      const bounds = zoneBounds(user.hr_zones_json, obsMax);
+      return html(res, 200, runPage(user, { races, zoneBounds: bounds, maxHr: Math.max(obsMax, 0) || null, voiceEnabled: !!openaiApiKeyFor(user), query: parsed.query || {} }));
+    }
+
+    const runContext = (body) => {
+      const raceId = parseInt(body.raceId, 10) || null;
+      const race = raceId ? db.prepare('SELECT * FROM races WHERE id = ? AND user_id = ?').get(raceId, user.id) : null;
+      const courseRow = race ? db.prepare('SELECT * FROM race_courses WHERE race_id = ? AND user_id = ?').get(race.id, user.id) : null;
+      const goalPace = Number(body.goalPaceSec) > 0 ? Math.round(Number(body.goalPaceSec)) : null;
+      const hrCeiling = Number(body.hrCeiling) > 0 ? Math.round(Number(body.hrCeiling)) : null;
+      return {
+        race, courseRow,
+        ctx: {
+          workoutType: String(body.workoutType || 'livre').slice(0, 20),
+          goalPaceSec: goalPace, hrCeiling,
+          raceName: race ? race.name : null,
+          raceDate: race && race.race_date ? race.race_date : null,
+          courseText: courseTextFor(courseRow, race && race.name),
+        },
+      };
+    };
+    const baseVoice = () => {
+      const races = db.prepare('SELECT * FROM races WHERE user_id = ? ORDER BY race_date ASC').all(user.id);
+      const activities = db.prepare("SELECT * FROM activities WHERE user_id = ? ORDER BY COALESCE(started_at, created_at) DESC").all(user.id);
+      const evolution = computeEvolution(activities);
+      const recentChat = db.prepare('SELECT role, content FROM chat_messages WHERE user_id = ? AND activity_id IS NULL ORDER BY created_at DESC, id DESC LIMIT 14').all(user.id).reverse();
+      return buildVoiceInstructions(user, races, activities, evolution, recentChat, plansLib.recentPlans(db, user.id));
+    };
+    const runJson = async () => { try { return JSON.parse((await readBody(req, 12 * 1024 * 1024)).toString('utf8') || '{}'); } catch (e) { return {}; } };
+    const runOut = (code, obj) => { res.writeHead(code, { 'content-type': 'application/json; charset=utf-8' }); return res.end(JSON.stringify(obj)); };
+
+    if (method === 'POST' && pathname === '/api/run/realtime-session') {
+      if (!user) return runOut(401, { error: 'auth' });
+      if (!billing.hasPremium(user)) return runOut(402, { error: 'premium_required' });
+      const key = openaiApiKeyFor(user);
+      if (!key) return runOut(412, { error: 'missing_key' });
+      const body = await runJson();
+      try {
+        const { ctx } = runContext(body);
+        const session = await mintRealtimeSession(key, phaseInstructions(baseVoice(), body.phase === 'during' ? 'during' : 'before', ctx));
+        return runOut(200, session);
+      } catch (e) {
+        console.error('run realtime-session error', e);
+        return runOut(502, { error: 'realtime_failed' });
+      }
+    }
+    if (method === 'POST' && pathname === '/api/run/instructions') {
+      if (!user) return runOut(401, { error: 'auth' });
+      if (!billing.hasPremium(user)) return runOut(402, { error: 'premium_required' });
+      const body = await runJson();
+      const { ctx } = runContext(body);
+      return runOut(200, { instructions: phaseInstructions(baseVoice(), body.phase === 'after' ? 'after' : (body.phase === 'during' ? 'during' : 'before'), ctx) });
+    }
+    if (method === 'POST' && pathname === '/api/run/finish') {
+      if (!user) return runOut(401, { error: 'auth' });
+      const body = await runJson();
+      const gpx = String(body.gpx || '');
+      let summary = null;
+      try { summary = parseActivityFile(gpx, 'corrida.gpx'); } catch (e) { summary = null; }
+      if (!summary) return runOut(422, { error: 'no_data' });
+      const { ctx, race } = runContext(body);
+      const typeNames = { leve: 'Rodagem leve', longao: 'Longão', ritmo: 'Ritmo de prova', tiros: 'Tiros', livre: 'Treino' };
+      const title = String(body.title || '').slice(0, 80) || typeNames[ctx.workoutType] || 'Treino';
+      const savedName = `${Date.now()}_corrida_ao_vivo.gpx`;
+      try { fs.writeFileSync(path.join(UPLOAD_DIR, savedName), gpx); } catch (e) { /* ok */ }
+      const info = db.prepare(`INSERT INTO activities
+        (user_id, race_id, title, workout_type, source, raw_filename, distance_km, duration_sec, avg_pace_sec, avg_hr, max_hr, elevation_gain_m, started_at, laps_json, route_polyline)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+        user.id, race ? race.id : null, title, ctx.workoutType === 'livre' ? null : ctx.workoutType, summary.source || 'gpx', savedName,
+        summary.distance_km, summary.duration_sec, summary.avg_pace_sec, summary.avg_hr, summary.max_hr, summary.elevation_gain_m,
+        summary.started_at, JSON.stringify(summary.laps), summary.route_polyline || null);
+      let afterInstructions = null;
+      if (billing.hasPremium(user)) { try { afterInstructions = phaseInstructions(baseVoice(), 'after', ctx, summary); } catch (e) { afterInstructions = null; } }
+      return runOut(200, { ok: true, activity_id: info.lastInsertRowid, instructions: afterInstructions });
     }
 
     // ---------- activities ----------

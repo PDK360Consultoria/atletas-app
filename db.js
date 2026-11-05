@@ -409,6 +409,22 @@ CREATE TABLE IF NOT EXISTS coach_plans (
   FOREIGN KEY(user_id) REFERENCES users(id)
 );
 `);
+// Percurso (altimetria) de cada prova: o atleta sobe o GPX/TCX divulgado pela organização.
+db.exec(`
+CREATE TABLE IF NOT EXISTS race_courses (
+  race_id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  filename TEXT,
+  distance_km REAL,
+  gain_m REAL,
+  loss_m REAL,
+  points_json TEXT NOT NULL,
+  climbs_json TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  FOREIGN KEY(race_id) REFERENCES races(id) ON DELETE CASCADE,
+  FOREIGN KEY(user_id) REFERENCES users(id)
+);
+`);
 ensureColumn('chat_messages', 'activity_id', 'activity_id INTEGER');
 ensureColumn('chat_messages', 'channel', 'channel TEXT');
 ensureColumn('chat_messages', 'attachments_json', 'attachments_json TEXT');

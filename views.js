@@ -668,6 +668,7 @@ function layout({ title, user, body, active, extraHead, bodyEnd, hideCoachWidget
         </button>
         <div class="links" id="navLinks">
           <a class="link ${active === 'home' ? 'active' : ''}" href="/">Perfil</a>
+          <a class="link ${active === 'run' ? 'active' : ''}" href="/corrida" id="navRun" style="display:none">Correr</a><script>(function(){var c=window.Capacitor;if(c&&c.Plugins&&c.Plugins.RunniqxHeartRate){var e=document.getElementById('navRun');if(e)e.style.display='';}})();</script>
           <a class="link ${active === 'activities' ? 'active' : ''}" href="/activities">Treinos</a>
           <a class="link ${active === 'feed' ? 'active' : ''}" href="/feed">Feed</a>
           <a class="link ${active === 'discover' ? 'active' : ''}" href="/discover">Buscar</a>
@@ -1950,7 +1951,14 @@ ${added ? `<div class="ok">Prova adicionada ao seu calendário.</div>` : ''}
   <h2><span class="h-icon">${icon('trophy', 'todas')}</span>Todas as provas</h2>
   ${races.length ? races.map(r => `
     <div class="list-item">
-      <div><div class="t">${esc(r.name)}</div><div class="d">${fmtDate(r.race_date)} ${r.distance_km ? '· ' + r.distance_km + 'km' : ''} ${r.city ? '· ' + esc(r.city) : ''} ${r.goal_time_sec ? '· meta ' + fmtClock(r.goal_time_sec) : ''}</div></div>
+      <div style="flex:1; min-width:0;"><div class="t">${esc(r.name)}</div><div class="d">${fmtDate(r.race_date)} ${r.distance_km ? '· ' + r.distance_km + 'km' : ''} ${r.city ? '· ' + esc(r.city) : ''} ${r.goal_time_sec ? '· meta ' + fmtClock(r.goal_time_sec) : ''}</div>
+        <div class="d" style="margin-top:8px;">${r.has_course
+          ? `<b>Percurso carregado</b> · ${r.course_gain != null ? '+' + r.course_gain + ' m de subida · ' : ''}o Professor avisa as subidas · <a href="/corrida?race=${r.id}">Correr agora</a>
+             <form method="POST" action="/races/${r.id}/course/delete" style="display:inline;"><button class="ghost xs" type="submit">Remover percurso</button></form>`
+          : `<form method="POST" action="/races/${r.id}/course" enctype="multipart/form-data" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+               <span>Altimetria da prova:</span><input type="file" name="file" accept=".gpx,.tcx,.xml" required style="max-width:230px;"><button class="ghost xs" type="submit">Enviar GPX/TCX</button>
+             </form>`}</div>
+      </div>
       <form method="POST" action="/races/${r.id}/delete" onsubmit="return confirm('Remover esta prova?')">
         <button class="ghost danger" type="submit">Remover</button>
       </form>
@@ -1969,7 +1977,8 @@ ${added ? `<div class="ok">Prova adicionada ao seu calendário.</div>` : ''}
   <p class="race-source">Dados via Corrida Perfeita.${region === 'auto' && !user.city ? ' Defina sua cidade em <a href="/settings">Config</a> para ver corridas perto de você.' : ' "Inscrição" leva à busca pela página oficial da prova; "+ Agenda" inclui no seu calendário aqui no app.'}</p>
 </div>
 `;
-  return layout({ title: 'Provas', user, body, active: 'races' });
+  const courseMsg = `<script>(function(){var q=new URLSearchParams(location.search).get('course');if(!q)return;var m={ok:'Percurso carregado. O Professor vai avisar as subidas dessa prova.',bad:'Não consegui ler esse arquivo. Envie o GPX ou TCX oficial da prova (com altitude).',empty:'Escolha o arquivo GPX ou TCX da prova.'}[q];if(m)alert(m);history.replaceState(null,'','/races');})();</script>`;
+  return layout({ title: 'Provas', user, body: body + courseMsg, active: 'races' });
 }
 
 function activitiesPage(user, activities, synced) {
