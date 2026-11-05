@@ -20,19 +20,19 @@ function premiumPage(user, status) {
   <li><b>Análise com IA</b> dos seus treinos e planos de treino.</li>
 </ul>
 
-<p style="font-size:1.35rem; margin:18px 0 4px;"><b>R$ 19,90</b> por mês</p>
+<p style="font-size:1.35rem; margin:18px 0 4px;"><b>7 dias grátis</b>, depois <b>R$ 19,90</b> por mês</p>
 <p class="muted" style="margin-top:0;">Assinatura mensal com renovação automática. Cancele quando quiser.</p>
 
 ${active ? `<div class="card" style="padding:12px 14px; margin:14px 0;"><b>Você é Premium.</b>${until ? ` Renova ou expira em ${esc(until)}.` : ''}</div>` : ''}
 
 <div id="buyBox">
-  <button class="btn" id="buyBtn" type="button" style="width:100%;">Assinar por R$ 19,90/mês</button>
+  <button class="btn" id="buyBtn" type="button" style="width:100%;">Começar 7 dias grátis</button>
   <button class="btn ghost" id="restoreBtn" type="button" style="width:100%; margin-top:10px;">Restaurar compras</button>
   <p id="msg" class="muted" style="min-height:1.4em; margin-top:12px;"></p>
 </div>
 
 <p class="muted" style="font-size:.82rem; line-height:1.5;">
-O pagamento é cobrado na sua conta da App Store ou do Google Play na confirmação da compra. A assinatura renova automaticamente a cada mês, a menos que seja cancelada pelo menos 24 horas antes do fim do período atual. Você gerencia e cancela em Ajustes &gt; seu nome &gt; Assinaturas (iPhone) ou Google Play &gt; Pagamentos e assinaturas (Android).
+O teste gratuito dura 7 dias. Depois, a assinatura é cobrada a R$ 19,90 por mês. Cancele pelo menos 24 horas antes do fim do teste para não ser cobrado. O pagamento é cobrado na sua conta da App Store ou do Google Play na confirmação da compra. A assinatura renova automaticamente a cada mês, a menos que seja cancelada pelo menos 24 horas antes do fim do período atual. Você gerencia e cancela em Ajustes &gt; seu nome &gt; Assinaturas (iPhone) ou Google Play &gt; Pagamentos e assinaturas (Android).
 </p>
 <p class="muted" style="font-size:.82rem;"><a href="/termos">Termos de uso</a> · <a href="/privacidade">Política de privacidade</a></p>
 </div>
